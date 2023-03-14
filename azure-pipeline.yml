@@ -8,16 +8,56 @@ trigger:
     include:
       - main
 
+
+variables:
+  # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
+  serviceConnection : terraform-umbraco-load-testing-azure-connection
+  # Terraform settings
+  terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
+  terraformVersion: '3.34.0'
+
 stages:
-- stage: CI_Checks
+- stage: Load Testing
+  displayName: Terraform Module - CI
   jobs:
-  - job:
-    displayName: yamllint_checks
+  - job: TerraformJob
+    continueOnError: false
+    displayName: Terraform
     pool:
       vmImage: 'ubuntu-latest'
     steps:
-    - script: |
-        python -m pip install --upgrade pip
-        pip install yamllint
-        yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}, new-line-at-end-of-file: disable, new-lines: disable}}" .
-      displayName: 'YAML Lint Checks'
+  
+    # Step 1: install Terraform on the Azure Pipelines agent
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: $(terraformVersion)
+
+    # Step 2: run Terraform init to initialize the workspace
+    - task: TerraformTaskV1@0
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: terraformWorkingDirectory
+        backendServiceArm: 'terraform-umbraco-load-testing-tstate-azure-connection'
+        backendAzureRmResourceGroupName: 'andreas-load-test-tstate-rg'
+        backendAzureRmStorageAccountName: 'loadtesttstate'
+        backendAzureRmContainerName: 'tfstate'
+        backendAzureRmKey: 'fhaj3vRuoP8h/FTOHfg4AD84kExOPI+EL9cvoyl2KBl1ZGd5d0uAzoMiPntW10YTHMpvZhwR1RFT+AStKxULfQ=='
+
+    # Step 3: run Terraform validate to validate the HCL(low-level syntax of the Terraform language) syntax
+    - task: TerraformTaskV1@0
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: terraformWorkingDirectory
+
+    # Step 4: run Terraform plan to create an execution plan for the terraform code
+    - task: TerraformTaskV1@0
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: terraformWorkingDirectory
+        environmentServiceNameAzureRM: serviceConnection
+
+# Missing an apply
