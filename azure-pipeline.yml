@@ -83,7 +83,7 @@ stages:
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: -var resource_group_name=$(azurergname)
+          commandOptions: '-var resource_group_name=$(azurergname) -var bkstrgrg=$(bkstrgrg) -var bkstrgname=$(bkstrgname) -var bkcontainer=$(bkcontainer) -var bkstrgkey=$(bkstrgkey)'
     - job: manualValidation
       dependsOn: setup
       pool: server
