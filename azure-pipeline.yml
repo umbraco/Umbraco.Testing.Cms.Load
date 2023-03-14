@@ -80,6 +80,7 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
     - job: manualValidation
+      pool: server
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
