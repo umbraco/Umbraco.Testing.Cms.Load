@@ -80,12 +80,17 @@ stages:
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          
-       - task: TerraformTaskV4@4
-         displayName: Apply
+       - task: ManualValidation@0
+         displayName: Wait for external validation
          inputs:
-           provider: 'azurerm'
-           command: 'apply'
-           workingDirectory: '$(terraformWorkingDirectory)'
-           environmentServiceNameAzureRM: '$(serviceConnection)'
+           notifyUsers: aze@umbraco.dk
+           instructions: 'Please validate that the terraform plan is correct'
+          
+    #   - task: TerraformTaskV4@4
+     #    displayName: Apply
+     #    inputs:
+       #    provider: 'azurerm'
+       #    command: 'apply'
+        #   workingDirectory: '$(terraformWorkingDirectory)'
+       #    environmentServiceNameAzureRM: '$(serviceConnection)'
   
