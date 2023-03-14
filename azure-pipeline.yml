@@ -37,7 +37,7 @@ stages:
       inputs:
         provider: 'azurerm'
         command: 'init'
-        workingDirectory: terraformWorkingDirectory
+        workingDirectory: '$(terraformWorkingDirectory)'
         backendServiceArm: '$(bkServiceConnection)'
         backendAzureRmResourceGroupName: '$(bkstrgrg)'
         backendAzureRmStorageAccountName: '$(bkstrgname)'
@@ -48,7 +48,7 @@ stages:
       inputs:
         provider: 'azurerm'
         command: 'validate'
-        workingDirectory: terraformWorkingDirectory
+        workingDirectory: '$(terraformWorkingDirectory)'
 
 - stage: terraformDeploy
   condition: succeeded('terraformValidate')
@@ -66,7 +66,7 @@ stages:
          inputs:
           provider: 'azurerm'
           command: 'init'
-          workingDirectory: terraformWorkingDirectory
+          workingDirectory: '$(terraformWorkingDirectory)'
           backendServiceArm: '$(bkServiceConnection)'
           backendAzureRmResourceGroupName: '$(bkstrgrg)'
           backendAzureRmStorageAccountName: '$(bkstrgname)'
@@ -78,13 +78,14 @@ stages:
          inputs:
           provider: 'azurerm'
           command: 'plan'
-          workingDirectory: terraformWorkingDirectory
-          environmentServiceNameAzureRM: serviceConnection
+          workingDirectory: '$(terraformWorkingDirectory)'
+          environmentServiceNameAzureRM: '$(serviceConnection)'
           
        - task: TerraformTaskV4@4
          displayName: Apply
          inputs:
            provider: 'azurerm'
            command: 'apply'
-           workingDirectory: terraformWorkingDirectory
-           environmentServiceNameAzureRM: serviceConnection
+           workingDirectory: '$(terraformWorkingDirectory)'
+           environmentServiceNameAzureRM: '$(serviceConnection)'
+  
