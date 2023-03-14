@@ -54,7 +54,7 @@ stages:
   condition: succeeded('terraformValidate')
   dependsOn: terraformValidate
   jobs:
-    - job: apply 
+    - job: setup 
       steps:
        - task: TerraformInstaller@0
          displayName: Install Terraform
@@ -71,8 +71,7 @@ stages:
           backendAzureRmResourceGroupName: '$(bkstrgrg)'
           backendAzureRmStorageAccountName: '$(bkstrgname)'
           backendAzureRmContainerName: '$(bkcontainer)'
-          backendAzureRmKey: '$(bkstrgkey)'
-      
+          backendAzureRmKey: '$(bkstrgkey)'      
        - task: TerraformTaskV4@4
          displayName: Plan
          inputs:
@@ -80,17 +79,20 @@ stages:
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
+    - job: manualValidation
+      steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
            notifyUsers: aze@umbraco.dk
            instructions: 'Please validate that the terraform plan is correct'
-          
-    #   - task: TerraformTaskV4@4
-     #    displayName: Apply
-     #    inputs:
-       #    provider: 'azurerm'
-       #    command: 'apply'
-        #   workingDirectory: '$(terraformWorkingDirectory)'
-       #    environmentServiceNameAzureRM: '$(serviceConnection)'
+    - job: apply
+      steps:
+       - task: TerraformTaskV4@4
+         displayName: Apply
+         inputs:
+           provider: 'azurerm'
+           command: 'apply'
+           workingDirectory: '$(terraformWorkingDirectory)'
+           environmentServiceNameAzureRM: '$(serviceConnection)'
   
