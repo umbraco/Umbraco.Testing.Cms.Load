@@ -9,12 +9,18 @@ pool:
   vmImage: ubuntu-latest
 
 variables:
+  # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
+  serviceConnection: 'terraform-umbraco-load-testing-azure-connection'
   # Backend Storage Account
   bkServiceConnection : 'terraform-umbraco-load-testing-tstate-azure-connection'
   bkstrgrg: 'andreas-load-test-tstate-rg'
   bkstrgname: 'loadtesttstate'
   bkcontainer: 'tfstate'
   bkstrgkey: 'fhaj3vRuoP8h/FTOHfg4AD84kExOPI+EL9cvoyl2KBl1ZGd5d0uAzoMiPntW10YTHMpvZhwR1RFT+AStKxULfQ=='
+
+  # Azure Resources
+  azureLocation: 'westeurope'
+  azurergname: 'andreas-load-testing-rg'
 
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
