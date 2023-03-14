@@ -3,61 +3,85 @@
 
 name: load_test_pipeline
 
-trigger:
-  branches:
-    include:
-      - main
+trigger: none
 
+pool:
+  vmImage: 'ubuntu-latest'
 
 variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
-  serviceConnection : terraform-umbraco-load-testing-azure-connection
+  serviceConnection: terraform-umbraco-load-testing-azure-connection
+  # Backend Storage Account
+  bkstrgrg: 'andreas-load-test-tstate-rg'
+  bkstrgname: 'loadtesttstate'
+  bkcontainer: 'tfstate'
+  bkstrgkey: 'fhaj3vRuoP8h/FTOHfg4AD84kExOPI+EL9cvoyl2KBl1ZGd5d0uAzoMiPntW10YTHMpvZhwR1RFT+AStKxULfQ=='
+
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
-  terraformVersion: '1.4.0'
 
 stages:
-- stage: Load_Testing
-  displayName: Terraform Module - CI
+- stage: terraformValidate
   jobs:
-  - job: TerraformJob
+  - job: validate
     continueOnError: false
-    displayName: Terraform
-    pool:
-      vmImage: 'ubuntu-latest'
     steps:
-  
-    # Step 1: install Terraform on the Azure Pipelines agent
     - task: TerraformInstaller@0
-      displayName: 'Install Terraform'
+      displayName: Install Terraform
       inputs:
-        terraformVersion: $(terraformVersion)
-
-    # Step 2: run Terraform init to initialize the workspace
+        terraformVersion: 'latest' 
     - task: TerraformTaskV1@0
+      displayName: Initialize
+      condition: succeeded()
       inputs:
         provider: 'azurerm'
         command: 'init'
         workingDirectory: terraformWorkingDirectory
         backendServiceArm: 'terraform-umbraco-load-testing-tstate-azure-connection'
-        backendAzureRmResourceGroupName: 'andreas-load-test-tstate-rg'
-        backendAzureRmStorageAccountName: 'loadtesttstate'
-        backendAzureRmContainerName: 'tfstate'
-        backendAzureRmKey: 'fhaj3vRuoP8h/FTOHfg4AD84kExOPI+EL9cvoyl2KBl1ZGd5d0uAzoMiPntW10YTHMpvZhwR1RFT+AStKxULfQ=='
-
-    # Step 3: run Terraform validate to validate the HCL(low-level syntax of the Terraform language) syntax
+        backendAzureRmResourceGroupName: '$(bkstrgrg)'
+        backendAzureRmStorageAccountName: '$(bkstrgname)'
+        backendAzureRmContainerName: '$(bkcontainer)'
+        backendAzureRmKey: '$(bkstrgkey)'
     - task: TerraformTaskV1@0
+      displayName: Validate 
       inputs:
         provider: 'azurerm'
         command: 'validate'
         workingDirectory: terraformWorkingDirectory
 
-    # Step 4: run Terraform plan to create an execution plan for the terraform code
-   # - task: TerraformTaskV1@0
-    #  inputs:
-     #   provider: 'azurerm'
-      #  command: 'plan'
-       # workingDirectory: terraformWorkingDirectory
-        #environmentServiceNameAzureRM: serviceConnection
-
-# Missing an apply
+- stage: terraformDeploy
+  condition: succeeded('terraformValidate')
+  dependsOn: terraformValidate
+  jobs:
+    - job: apply 
+      steps:
+       - task: TerraformInstaller@0
+         displayName: Install Terraform
+         inputs:
+          terraformVersion: 'latest' 
+       - task: TerraformTaskV1@0
+         displayName: Initialize
+         condition: succeeded()
+         inputs:
+          provider: 'azurerm'
+          command: 'init'
+          workingDirectory: terraformWorkingDirectory
+          backendServiceArm: 'terraform-umbraco-load-testing-tstate-azure-connection'
+          backendAzureRmResourceGroupName: '$(bkstrgrg)'
+          backendAzureRmStorageAccountName: '$(bkstrgname)'
+          backendAzureRmContainerName: '$(bkcontainer)'
+          backendAzureRmKey: '$(bkstrgkey)'
+      
+       - task: TerraformTaskV1@0
+         displayName: Plan
+         inputs:
+          provider: 'azurerm'
+          command: 'plan'
+          environmentServiceNameAzureRM: serviceConnection
+          
+       - task: TerraformTaskV1@0
+         displayName: Apply
+         inputs:
+           provider: 'azurerm'
+           command: 'apply'
+           environmentServiceNameAzureRM: serviceConnection
