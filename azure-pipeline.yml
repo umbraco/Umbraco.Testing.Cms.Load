@@ -53,11 +53,11 @@ stages:
         workingDirectory: terraformWorkingDirectory
 
     # Step 4: run Terraform plan to create an execution plan for the terraform code
-    - task: TerraformTaskV1@0
-      inputs:
-        provider: 'azurerm'
-        command: 'plan'
-        workingDirectory: terraformWorkingDirectory
-        environmentServiceNameAzureRM: serviceConnection
+   # - task: TerraformTaskV1@0
+    #  inputs:
+     #   provider: 'azurerm'
+      #  command: 'plan'
+       # workingDirectory: terraformWorkingDirectory
+        #environmentServiceNameAzureRM: serviceConnection
 
 # Missing an apply
