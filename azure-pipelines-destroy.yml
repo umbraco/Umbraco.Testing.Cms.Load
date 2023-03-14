@@ -82,6 +82,7 @@ stages:
             backendAzureRmContainerName: '$(bkcontainer)'
             backendAzureRmKey: '$(bkstrgkey)'
         - task: TerraformTaskV4@4
+          displayName: Delete
           inputs:
             provider: 'azurerm'
             command: 'destroy'
