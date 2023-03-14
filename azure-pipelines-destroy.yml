@@ -52,7 +52,8 @@ stages:
          displayName: Plan
          inputs:
           provider: 'azurerm'
-          command: 'plan'
+          command: 'custom'
+          customCommand: 'plan -destroy'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
           commandOptions: '-var resource_group_name=$(azurergname) -var bkstrgrg=$(bkstrgrg) -var bkstrgname=$(bkstrgname) -var bkcontainer=$(bkcontainer) -var bkstrgkey=$(bkstrgkey)'
@@ -86,4 +87,3 @@ stages:
             command: 'destroy'
             workingDirectory: '$(terraformWorkingDirectory)'
             environmentServiceNameAzureRM: '$(serviceConnection)'
- 
