@@ -53,10 +53,10 @@ stages:
          inputs:
           provider: 'azurerm'
           command: 'custom'
-          customCommand: 'terraform plan -destroy'
+          customCommand: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
+          commandOptions: '-destroy -var resource_group_name=$(azurergname) -var bkstrgrg=$(bkstrgrg) -var bkstrgname=$(bkstrgname) -var bkcontainer=$(bkcontainer) -var bkstrgkey=$(bkstrgkey)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-var resource_group_name=$(azurergname) -var bkstrgrg=$(bkstrgrg) -var bkstrgname=$(bkstrgname) -var bkcontainer=$(bkcontainer) -var bkstrgkey=$(bkstrgkey)'
     - job: manualValidation
       dependsOn: plan
       pool: server
@@ -87,3 +87,4 @@ stages:
             command: 'destroy'
             workingDirectory: '$(terraformWorkingDirectory)'
             environmentServiceNameAzureRM: '$(serviceConnection)'
+          
