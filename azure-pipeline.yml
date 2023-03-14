@@ -80,6 +80,7 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
     - job: manualValidation
+      dependsOn: setup
       pool: server
       steps:
        - task: ManualValidation@0
@@ -88,6 +89,7 @@ stages:
            notifyUsers: aze@umbraco.dk
            instructions: 'Please validate that the terraform plan is correct'
     - job: apply
+      dependsOn: manualValidation
       steps:
        - task: TerraformTaskV4@4
          displayName: Apply
