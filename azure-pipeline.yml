@@ -96,6 +96,7 @@ stages:
     - job: apply
       dependsOn: manualValidation
       steps:
+      # We need to initialize again, otherwise the pipeline will fail.
       - task: TerraformTaskV4@4
         displayName: Initialize
         condition: succeeded()
