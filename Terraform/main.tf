@@ -7,7 +7,15 @@ terraform {
   }
 
   required_version = ">= 1.3.5"
+
+  backend "azurerm" {
+    resource_group_name  = var.bkstrgrg
+    storage_account_name = var.bkstrg
+    container_name       = var.bkcontainer
+    key                  = var.bkstrgkey
+  }
 }
+
 
 provider "azurerm" {
   features {}
