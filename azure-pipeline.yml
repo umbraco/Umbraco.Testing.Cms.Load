@@ -96,11 +96,23 @@ stages:
     - job: apply
       dependsOn: manualValidation
       steps:
-       - task: TerraformTaskV4@4
-         displayName: Apply
-         inputs:
-           provider: 'azurerm'
-           command: 'apply'
-           workingDirectory: '$(terraformWorkingDirectory)'
-           environmentServiceNameAzureRM: '$(serviceConnection)'
+      - task: TerraformTaskV4@4
+        displayName: Initialize
+        condition: succeeded()
+        inputs:
+          provider: 'azurerm'
+          command: 'init'
+          workingDirectory: '$(terraformWorkingDirectory)'
+          backendServiceArm: '$(bkServiceConnection)'
+          backendAzureRmResourceGroupName: '$(bkstrgrg)'
+          backendAzureRmStorageAccountName: '$(bkstrgname)'
+          backendAzureRmContainerName: '$(bkcontainer)'
+          backendAzureRmKey: '$(bkstrgkey)'      
+      - task: TerraformTaskV4@4
+        displayName: Apply
+        inputs:
+          provider: 'azurerm'
+          command: 'apply'
+          workingDirectory: '$(terraformWorkingDirectory)'
+          environmentServiceNameAzureRM: '$(serviceConnection)'
   
