@@ -12,6 +12,7 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-azure-connection'
   # Backend Storage Account
+  bkServiceConnection : 'terraform-umbraco-load-testing-tstate-azure-connection'
   bkstrgrg: 'andreas-load-test-tstate-rg'
   bkstrgname: 'loadtesttstate'
   bkcontainer: 'tfstate'
@@ -30,19 +31,19 @@ stages:
       displayName: Install Terraform
       inputs:
         terraformVersion: 'latest' 
-    - task: TerraformTaskV1@0
+    - task: TerraformTaskV4@4
       displayName: Initialize
       condition: succeeded()
       inputs:
         provider: 'azurerm'
         command: 'init'
         workingDirectory: terraformWorkingDirectory
-        backendServiceArm: 'terraform-umbraco-load-testing-tstate-azure-connection'
+        backendServiceArm: '$(bkServiceConnection)'
         backendAzureRmResourceGroupName: '$(bkstrgrg)'
         backendAzureRmStorageAccountName: '$(bkstrgname)'
         backendAzureRmContainerName: '$(bkcontainer)'
         backendAzureRmKey: '$(bkstrgkey)'
-    - task: TerraformTaskV1@0
+    - task: TerraformTaskV4@4
       displayName: Validate 
       inputs:
         provider: 'azurerm'
@@ -59,29 +60,31 @@ stages:
          displayName: Install Terraform
          inputs:
           terraformVersion: 'latest' 
-       - task: TerraformTaskV1@0
+       - task: TerraformTaskV4@4
          displayName: Initialize
          condition: succeeded()
          inputs:
           provider: 'azurerm'
           command: 'init'
           workingDirectory: terraformWorkingDirectory
-          backendServiceArm: 'terraform-umbraco-load-testing-tstate-azure-connection'
+          backendServiceArm: '$(bkServiceConnection)'
           backendAzureRmResourceGroupName: '$(bkstrgrg)'
           backendAzureRmStorageAccountName: '$(bkstrgname)'
           backendAzureRmContainerName: '$(bkcontainer)'
           backendAzureRmKey: '$(bkstrgkey)'
       
-       - task: TerraformTaskV1@0
+       - task: TerraformTaskV4@4
          displayName: Plan
          inputs:
           provider: 'azurerm'
           command: 'plan'
+          workingDirectory: terraformWorkingDirectory
           environmentServiceNameAzureRM: serviceConnection
           
-       - task: TerraformTaskV1@0
+       - task: TerraformTaskV4@4
          displayName: Apply
          inputs:
            provider: 'azurerm'
            command: 'apply'
+           workingDirectory: terraformWorkingDirectory
            environmentServiceNameAzureRM: serviceConnection
