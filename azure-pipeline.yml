@@ -14,7 +14,7 @@ variables:
   serviceConnection : terraform-umbraco-load-testing-azure-connection
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
-  terraformVersion: '3.34.0'
+  terraformVersion: '1.4.0'
 
 stages:
 - stage: Load_Testing
