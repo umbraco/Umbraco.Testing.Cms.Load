@@ -24,7 +24,6 @@ variables:
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
 
-
 stages:
 - stage: terraformValidate
   jobs:
@@ -91,7 +90,7 @@ stages:
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
-           notifyUsers: aze@umbraco.dk
+           # notifyUsers: aze@umbraco.dk
            instructions: 'Please validate that the terraform plan is correct'
     - job: apply
       dependsOn: manualValidation
