@@ -9,6 +9,7 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
+  testVar: 'Not Set'
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-azure-connection'
   # Backend Storage Account
@@ -121,3 +122,8 @@ stages:
           command: 'output'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: 'terraform-umbraco-load-testing-azure-connection'
+      - pwsh: |
+          Write-Host "##vso[task.setvariable variable=testVar;]hej"
+          Write-Host "$(testVar)"
+          
+
