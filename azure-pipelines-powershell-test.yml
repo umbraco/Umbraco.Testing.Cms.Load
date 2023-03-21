@@ -1,0 +1,28 @@
+# Repo: andr317c/load-test-pipeline
+# File: azure-pipeline.yml
+
+name: powershell_test_pipeline
+
+trigger: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  testVar: 'Not Set'
+
+stages:
+- stage: terraformValidate
+  jobs:
+    - job: apply
+      steps:
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "##vso[task.setvariable variable=testVar;]hej"'
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "$(testVar)"'
+      
+
