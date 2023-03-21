@@ -122,8 +122,13 @@ stages:
           command: 'output'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: 'terraform-umbraco-load-testing-azure-connection'
-      - pwsh: |
-          Write-Host "##vso[task.setvariable variable=testVar;]hej"
-          Write-Host "$(testVar)"
-          
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "##vso[task.setvariable variable=testVar;]hej"'
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "$(testVar)"'
+      
 
