@@ -125,7 +125,7 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "##vso[task.setvariable variable=testVar;]hej"'
+          script: 'Write-Host "##vso[task.setvariable variable=testVar;]$(terraform output -raw umbraco_versions)"'
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
