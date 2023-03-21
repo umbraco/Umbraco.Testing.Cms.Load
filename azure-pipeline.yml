@@ -115,4 +115,9 @@ stages:
           command: 'apply'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-  
+      - task: TerraformTaskV4@4
+        inputs:
+          provider: 'azurerm'
+          command: 'output'
+          workingDirectory: '$(terraformWorkingDirectory)'
+          environmentServiceNameAzureRM: 'terraform-umbraco-load-testing-azure-connection'
