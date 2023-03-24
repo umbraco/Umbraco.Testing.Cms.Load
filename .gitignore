@@ -1,0 +1,6 @@
+
+*.hcl
+*.json
+*.exe
+*.backup
+*.tfstate

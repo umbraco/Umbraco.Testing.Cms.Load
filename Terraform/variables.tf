@@ -1,3 +1,12 @@
+<<<<<<< Updated upstream
+=======
+variable resource_name_prefix {
+  type        = string
+  default     = "aze-load-test-name"
+  description = "This name will prefix all the created resources"
+}
+
+>>>>>>> Stashed changes
 variable "resource_group_location" {
   type    = string
   default = "West Europe"
@@ -7,7 +16,7 @@ variable "resource_group_name" {
   type    = string
   default = "andreas-load-testing-rg"
 }
-
+/*
 variable "bkstrgrg" {
   type        = string
   description = "The name of the backend storage account resource group"
@@ -31,3 +40,4 @@ variable "bkstrgkey" {
   description = "The access key for the storage account"
   default     = "<storage account key>"
 }
+*/
