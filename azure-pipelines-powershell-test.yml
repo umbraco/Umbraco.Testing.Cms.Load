@@ -12,14 +12,16 @@ variables:
   testVar: 'Not Set'
 
 stages:
-- stage: terraformValidate
+- stage: Check Azure CLI output
   jobs:
-    - job: apply
+    - job: output
       steps:
-      - task: PowerShell@2
+      - task: AzureCLI@2
         inputs:
-          targetType: 'inline'
-          script: 'Write-Host "##vso[task.setvariable variable=testVar;]hej"'
+          azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: 'Write-Host "##vso[task.setvariable variable=testVar;]hej"'
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
