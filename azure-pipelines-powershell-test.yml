@@ -12,7 +12,7 @@ variables:
   testVar: 'Not Set'
 
 stages:
-- stage: Check Azure CLI output
+- stage: output
   jobs:
     - job: output
       steps:
