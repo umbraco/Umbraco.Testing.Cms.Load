@@ -16,15 +16,15 @@ stages:
   jobs:
     - job: output
       steps:
-      - task: AzureCLI@2
-        inputs:
-          azureSubscription: 'terraform-umbraco-load-testing-az-connection'
-          scriptType: 'pscore'
-          scriptLocation: 'inlineScript'
-          inlineScript: 'Write-Host "##vso[task.setvariable variable=testVar;]#id#"'
+      #- task: AzureCLI@2
+       # inputs:
+        #  azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+        #  scriptType: 'pscore'
+        #  scriptLocation: 'inlineScript'
+        #  inlineScript: 'Write-Host "##vso[task.setvariable variable=testVar;]#id#"'
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "$(testVar)"'
+          script: 'Write-Host "$(testVal)"'
       
 
