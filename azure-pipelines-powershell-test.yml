@@ -29,6 +29,6 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "$env:ENV_TEST_VAL"'
+          script: 'Write-Host "$ENV_TEST_VAL"'
         env:
           ENV_TEST_VAL: "$(testVal)"
