@@ -41,6 +41,7 @@ stages:
             echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
           addSpnToEnvironment: true
     - job: input
+      dependsOn: output
       steps:
       - task: PowerShell@2
         inputs:
