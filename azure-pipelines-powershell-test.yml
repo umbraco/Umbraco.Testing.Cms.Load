@@ -29,6 +29,7 @@ stages:
       #  env:
       #    ENV_TEST_VAL: "$(testVal)"
       - task: AzureCLI@2
+        name: tester
         inputs:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
           scriptType: bash
@@ -42,11 +43,15 @@ stages:
           addSpnToEnvironment: true
     - job: input
       dependsOn: output
+      variables:
+        username: $[ dependencies.output.outputs['tester.ARM_CLIENT_ID'] ]
+        password: $[ dependencies.output.outputs['tester.ARM_CLIENT_ID'] ]
+        tenant_id: $[ dependencies.output.outputs['tester.ARM_TENANT_ID'] ]
       steps:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'az login --service-principal --username $(ARM_CLIENT_ID) --password $(ARM_CLIENT_SECRET)  --tenant $(ARM_TENANT_ID)'
+          script: 'az login --service-principal --username $(username) --password $(password)  --tenant $(tenant_id)'
           
       #- bash: |
        #  az login --service-principal --username $(ARM_CLIENT_ID) --password $(ARM_CLIENT_SECRET)  --tenant $(ARM_TENANT_ID)
