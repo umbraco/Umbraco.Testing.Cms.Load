@@ -31,15 +31,15 @@ stages:
       - task: AzureCLI@2
         inputs:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
-          scriptType: 'pscore'
-          scriptLocation: 'inlineScript'
-          inlineScript: 'az account show'
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
+     
+            echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+    
+            echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
           addSpnToEnvironment: true
-        env:
-          $subscriptionId : $env:ARM_SUBSCRIPTION_ID
-          $tenantId: $env:ARM_TENANT_ID
-          $clientId : $env:ARM_CLIENT_ID
-          $secret : $env:ARM_CLIENT_SECRET
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
