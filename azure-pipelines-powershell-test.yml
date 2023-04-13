@@ -40,7 +40,5 @@ stages:
     
             echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
           addSpnToEnvironment: true
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: 'Write-Host "$tenantId"'
+      - bash: |
+         az login --service-principal --username $(ARM_CLIENT_ID) --password $(ARM_CLIENT_SECRET)  --tenant $(ARM_TENANT_ID)
