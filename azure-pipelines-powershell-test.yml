@@ -22,9 +22,24 @@ stages:
         #  scriptType: 'pscore'
         #  scriptLocation: 'inlineScript'
         #  inlineScript: 'Write-Host "##vso[task.setvariable variable=testVar;]#id#"'
+      #- task: PowerShell@2
+      #  inputs:
+      #    targetType: 'inline'
+      #    script: 'Write-Host "$env:ENV_TEST_VAL"'
+      #  env:
+      #    ENV_TEST_VAL: "$(testVal)"
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: 'az account show'
+        env:
+          $subscriptionId : $env:ARM_SUBSCRIPTION_ID
+          $tenantId: $env:ARM_TENANT_ID
+          $clientId : $env:ARM_CLIENT_ID
+          $secret : $env:ARM_CLIENT_SECRET
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "$env:ENV_TEST_VAL"'
-        env:
-          ENV_TEST_VAL: "$(testVal)"
+          script: 'Write-Host "$tenantId"'
