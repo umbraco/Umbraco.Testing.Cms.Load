@@ -34,12 +34,13 @@ stages:
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: 'az account show'
+          addSpnToEnvironment: true
         env:
           $subscriptionId : $env:ARM_SUBSCRIPTION_ID
-          tenantId: $env:ARM_TENANT_ID
+          $tenantId: $env:ARM_TENANT_ID
           $clientId : $env:ARM_CLIENT_ID
           $secret : $env:ARM_CLIENT_SECRET
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "$(tenantId)"'
+          script: 'Write-Host "$tenantId"'
