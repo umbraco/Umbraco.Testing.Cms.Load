@@ -35,12 +35,13 @@ stages:
           scriptLocation: inlineScript
           inlineScript: |
             echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
-      
+
             echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
-      
+
             echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
           addSpnToEnvironment: true
- 
+    - job: output
+      steps:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
