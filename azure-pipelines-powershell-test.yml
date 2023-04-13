@@ -28,18 +28,31 @@ stages:
       #    script: 'Write-Host "$env:ENV_TEST_VAL"'
       #  env:
       #    ENV_TEST_VAL: "$(testVal)"
+      #- task: AzureCLI@2
+      #  inputs:
+      #    azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+      #    scriptType: bash
+      #    scriptLocation: inlineScript
+      #    inlineScript: |
+      #      echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
+      #
+      #      echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+      #
+      #     echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+      #    addSpnToEnvironment: true
       - task: AzureCLI@2
         inputs:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
-          scriptType: bash
+          scriptType: pscore
           scriptLocation: inlineScript
           inlineScript: |
-            echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
+            Write-Host "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
      
-            echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+            Write-Host "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
     
-            echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+            Write-Host "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
           addSpnToEnvironment: true
+        
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
