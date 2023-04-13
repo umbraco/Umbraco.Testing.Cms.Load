@@ -51,7 +51,7 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'az login --service-principal --username $(username) --password $(password)  --tenant $(tenant_id)'
+          script: 'Write-Host "az login --service-principal --username $(username) --password $(password) --tenant $(tenant_id)"'
           
       #- bash: |
        #  az login --service-principal --username $(ARM_CLIENT_ID) --password $(ARM_CLIENT_SECRET)  --tenant $(ARM_TENANT_ID)
