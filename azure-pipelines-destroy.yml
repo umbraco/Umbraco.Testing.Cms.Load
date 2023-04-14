@@ -10,7 +10,7 @@ pool:
 
 variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
-  serviceConnection: 'terraform-umbraco-load-testing-azure-connection'
+  serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Backend Storage Account
   bkServiceConnection : 'terraform-umbraco-load-testing-tstate-azure-connection'
   bkstrgrg: 'andreas-load-test-tstate-rg'
@@ -24,7 +24,6 @@ variables:
 
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
-
 
 stages:
 - stage: terraformDestroy
