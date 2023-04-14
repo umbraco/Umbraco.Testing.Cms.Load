@@ -61,7 +61,7 @@ stages:
       - task: AzureLoadTest@1
         inputs:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
-          loadTestConfigFile: '$(terraformWorkingDirectory)/LoadTestVersions.yaml'
+          loadTestConfigFile: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
           resourceGroup: 'andreas-az-load-testing-rg'
           loadTestResource: 'azure-load-testing-umbraco-loadtest-v10'
           loadTestRunName: 'CompareVersions'
