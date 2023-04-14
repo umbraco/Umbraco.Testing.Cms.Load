@@ -9,54 +9,24 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  testVar: 'Not Set'
-  # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
-  serviceConnection: 'terraform-umbraco-load-testing-azure-connection'
   # Backend Storage Account
   bkServiceConnection : 'terraform-umbraco-load-testing-tstate-azure-connection'
   bkstrgrg: 'andreas-load-test-tstate-rg'
   bkstrgname: 'loadtesttstate'
   bkcontainer: 'tfstate'
   bkstrgkey: 'fhaj3vRuoP8h/FTOHfg4AD84kExOPI+EL9cvoyl2KBl1ZGd5d0uAzoMiPntW10YTHMpvZhwR1RFT+AStKxULfQ=='
+  # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
+  serviceConnection: 'terraform-umbraco-load-testing-az-connection'
 
-  # Azure Resources
-  azureLocation: 'westeurope'
-  azurergname: 'andreas-load-testing-rg'
+  # Azure Resource Variables
+  azureprefix: 'azure-load-testing-umbraco'
+  azurergname: 'andreas-az-load-testing-rg'
+  azurelocation: 'westeurope'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
 
 stages:
-- stage: terraformValidate
-  jobs:
-  - job: validate
-    continueOnError: false
-    steps:
-    - task: TerraformInstaller@0
-      displayName: Install Terraform
-      inputs:
-        terraformVersion: 'latest' 
-    - task: TerraformTaskV4@4
-      displayName: Initialize
-      condition: succeeded()
-      inputs:
-        provider: 'azurerm'
-        command: 'init'
-        workingDirectory: '$(terraformWorkingDirectory)'
-        backendServiceArm: '$(bkServiceConnection)'
-        backendAzureRmResourceGroupName: '$(bkstrgrg)'
-        backendAzureRmStorageAccountName: '$(bkstrgname)'
-        backendAzureRmContainerName: '$(bkcontainer)'
-        backendAzureRmKey: '$(bkstrgkey)'
-    - task: TerraformTaskV4@4
-      displayName: Validate 
-      inputs:
-        provider: 'azurerm'
-        command: 'validate'
-        workingDirectory: '$(terraformWorkingDirectory)'
-
 - stage: terraformDeploy
-  condition: succeeded('terraformValidate')
-  dependsOn: terraformValidate
   jobs:
     - job: setup 
       steps:
@@ -64,26 +34,49 @@ stages:
          displayName: Install Terraform
          inputs:
           terraformVersion: 'latest' 
+       #- task: TerraformTaskV4@4
+       #  displayName: Initialize
+       #  condition: succeeded()
+       #  inputs:
+       #   provider: 'azurerm'
+       #   command: 'init'
+       #  workingDirectory: '$(terraformWorkingDirectory)'
+       #   commandOptions: '-backend=false'
+       - task: PowerShell@2
+         displayName: Terraform Init
+         inputs:
+           targetType: 'inline'
+           script: 'terraform init -backend=false'
+           workingDirectory: '$(terraformWorkingDirectory)'
        - task: TerraformTaskV4@4
-         displayName: Initialize
-         condition: succeeded()
+         displayName: Validate 
          inputs:
           provider: 'azurerm'
-          command: 'init'
+          command: 'validate'
           workingDirectory: '$(terraformWorkingDirectory)'
-          backendServiceArm: '$(bkServiceConnection)'
-          backendAzureRmResourceGroupName: '$(bkstrgrg)'
-          backendAzureRmStorageAccountName: '$(bkstrgname)'
-          backendAzureRmContainerName: '$(bkcontainer)'
-          backendAzureRmKey: '$(bkstrgkey)'      
+       - task: AzureCLI@2
+         name: AzLoginInfo
+         displayName: Gets Azure Login Credentials 
+         inputs:
+          azureSubscription: '$(serviceConnection)'
+          scriptType: bash
+          scriptLocation: inlineScript
+          inlineScript: |
+            echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
+            
+            echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+
+            echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+          addSpnToEnvironment: true
        - task: TerraformTaskV4@4
          displayName: Plan
+         condition: succeeded()
          inputs:
           provider: 'azurerm'
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-var resource_group_name=$(azurergname) -var bkstrgrg=$(bkstrgrg) -var bkstrgname=$(bkstrgname) -var bkcontainer=$(bkcontainer) -var bkstrgkey=$(bkstrgkey)'
+          commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID)'
     - job: manualValidation
       dependsOn: setup
       pool: server
@@ -94,21 +87,41 @@ stages:
            # notifyUsers: aze@umbraco.dk
            instructions: 'Please validate that the terraform plan is correct'
     - job: apply
-      dependsOn: manualValidation
+      dependsOn: 
+        - setup
+        - manualValidation 
+      #variables:
+      #  CLIENT_ID: $[ dependencies.setup.outputs['AzLoginInfo.ARM_CLIENT_ID'] ]
+      #  CLIENT_SECRET: $[ dependencies.setup.outputs['AzLoginInfo.ARM_CLIENT_SECRET'] ]
+      #  TENANT_ID: $[ dependencies.setup.outputs['AzLoginInfo.ARM_TENANT_ID'] ]
       steps:
       # We need to initialize again, otherwise the pipeline will fail.
-      - task: TerraformTaskV4@4
-        displayName: Initialize
-        condition: succeeded()
+      - task: PowerShell@2
+        displayName: Terraform Init
         inputs:
-          provider: 'azurerm'
-          command: 'init'
+          targetType: 'inline'
+          script: 'terraform init -backend=false'
           workingDirectory: '$(terraformWorkingDirectory)'
-          backendServiceArm: '$(bkServiceConnection)'
-          backendAzureRmResourceGroupName: '$(bkstrgrg)'
-          backendAzureRmStorageAccountName: '$(bkstrgname)'
-          backendAzureRmContainerName: '$(bkcontainer)'
-          backendAzureRmKey: '$(bkstrgkey)'      
+      #- task: PowerShell@2
+      #  displayName: Testing
+      #  inputs:
+      #   targetType: 'inline'
+       #  script: 'Write-Host "Tester $CLIENT_ID $(CLIENT_ID)"'
+
+      - task: AzureCLI@2
+        name: AzLoginInfo
+        displayName: Gets Azure Login Credentials 
+        inputs:
+         azureSubscription: '$(serviceConnection)'
+         scriptType: bash
+         scriptLocation: inlineScript
+         inlineScript: |
+          echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
+            
+          echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+
+          echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+         addSpnToEnvironment: true
       - task: TerraformTaskV4@4
         displayName: Apply
         inputs:
@@ -116,19 +129,26 @@ stages:
           command: 'apply'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
+          commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID)'
+          #commandOptions: '-parallelism=1'
+        #env:
+          #TF_VAL_subscription_id: $(subscriptionID) 
+          #TF_VAL_resource_group_name: $(azurergname)
+      - task: TerraformTaskV4@4
+        displayName: Output
       - task: TerraformTaskV4@4
         inputs:
           provider: 'azurerm'
           command: 'output'
           workingDirectory: '$(terraformWorkingDirectory)'
-          environmentServiceNameAzureRM: 'terraform-umbraco-load-testing-azure-connection'
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: 'Write-Host "##vso[task.setvariable variable=testVar;]$(terraform output -raw tester_value)"'
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: 'Write-Host "$(testVar)"'
-      
-
+          environmentServiceNameAzureRM: '$(serviceConnection)'
+          
+      # Im not really sure how we will be able to run the load test properly. The issue is that we can have as many app servies as we want, and we create the same amount of load tests. But I'm not sure how to update each of the
+      # Load test with the correct values aswell as inputting the correct domain name in each of them. 
+      #- task: AzureLoadTest@1
+      #  inputs:
+      #    azureSubscription: '$(serviceConnection)'
+      #    loadTestConfigFile: '$(terraformWorkingDirectory)/LoadTestVersions.yaml'
+      #    resourceGroup: '$(azurergname)'
+      #    loadTestRunName: 'CompareVersions'
+      #    loadTestRunDescription: 'We are  load testing different versions of Umbraco'

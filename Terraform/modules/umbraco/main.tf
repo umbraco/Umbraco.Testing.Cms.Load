@@ -1,13 +1,3 @@
-<<<<<<< Updated upstream
-# App Service Plan
-resource "azurerm_service_plan" "appserviceplan" {
-  name                = "${var.resource_group_name}-appserviceplan"
-  location            = var.resource_group_location
-  resource_group_name = var.resource_group_name
-
-  os_type  = "Windows"
-  sku_name = "S1"
-=======
 # Resource group
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
@@ -18,11 +8,13 @@ resource "azurerm_resource_group" "rg" {
 resource "random_string" "admin_login" {
   length  = 16
   special = true
+  depends_on = [azurerm_resource_group.rg]
 }
 
 resource "random_password" "admin_password" {
   length  = 16
   special = true
+  depends_on = [azurerm_resource_group.rg]
 }
 
 # App Service Plan
@@ -48,5 +40,8 @@ module "versions" {
   umbraco_cms_version     = each.value["umbraco_version"]
   admin_login             = random_string.admin_login.result
   admin_password          = random_password.admin_password.result
->>>>>>> Stashed changes
+  # If possible, find a better way to login to azure
+  client_id               = var.client_id
+  client_secret           = var.client_secret
+  tenant_id               = var.tenant_id
 }

@@ -10,19 +10,66 @@ pool:
 
 variables:
   testVar: 'Not Set'
+  terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
 
 stages:
-- stage: terraformValidate
+- stage: output
   jobs:
-    - job: apply
+    - job: output
       steps:
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: 'Write-Host "##vso[task.setvariable variable=testVar;]hej"'
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: 'Write-Host "$(testVar)"'
-      
+      #- task: AzureCLI@2
+       # inputs:
+        #  azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+        #  scriptType: 'pscore'
+        #  scriptLocation: 'inlineScript'
+        #  inlineScript: 'Write-Host "##vso[task.setvariable variable=testVar;]#id#"'
+      #- task: PowerShell@2
+      #  inputs:
+      #    targetType: 'inline'
+      #    script: 'Write-Host "$env:ENV_TEST_VAL"'
+      #  env:
+      #    ENV_TEST_VAL: "$(testVal)"
+      #- task: AzureCLI@2
+      #  name: tester
+      #  inputs:
+      #    azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+      #    scriptType: bash
+      #    scriptLocation: inlineScript
+      #    inlineScript: |
+      #      echo "##vso[task.setvariable variable=ARM_CLIENT_ID;isOutput=true]$servicePrincipalId" 
 
+      #      echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;isOutput=true]$servicePrincipalKey"
+
+      #      echo "##vso[task.setvariable variable=ARM_TENANT_ID;isOutput=true]$tenantId"
+       #   addSpnToEnvironment: true
+    #- job: input
+    #  dependsOn: output
+    #  variables:
+    #    username: $[ dependencies.output.outputs['tester.ARM_CLIENT_ID'] ]
+    #   password: $[ dependencies.output.outputs['tester.ARM_CLIENT_SECRET'] ]
+    #   tenant_id: $[ dependencies.output.outputs['tester.ARM_TENANT_ID'] ]
+    # steps:
+    # - task: PowerShell@2
+    #   inputs:
+    #      targetType: 'inline'
+    #      script: 'az login --service-principal --username $(username) --password $(password) --tenant $(tenant_id)'
+          
+      #- bash: |
+       #  az login --service-principal --username $(ARM_CLIENT_ID) --password $(ARM_CLIENT_SECRET)  --tenant $(ARM_TENANT_ID)
+
+      
+      - task: AzureLoadTest@1
+        inputs:
+          azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+          loadTestConfigFile: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
+          resourceGroup: 'andreas-az-load-testing-rg'
+          loadTestResource: 'azure-load-testing-umbraco-loadtest-v10'
+          loadTestRunName: 'CompareVersions'
+          loadTestRunDescription: 'We are  load testing different versions of Umbraco'
+          env: |
+            [
+              {
+              "name": "hostName",
+              "value": "azure-load-testing-umbraco-appservice-v11.azurewebsites.net"
+              }
+            ]

@@ -4,9 +4,6 @@ variable resource_group_location {
 
 variable resource_group_name {
   type        = string
-<<<<<<< Updated upstream
-  default     = "andreas-load-testing-rg"
-=======
 }
 
 variable resource_name_prefix {
@@ -20,17 +17,21 @@ variable resource_name_prefix {
 
 variable "umbraco_cms_versions" {
   type = map(any)
-  default = {
-    version_10 = {
-      version_name    = "v10"
-      dotnet_version  = "v6.0"
-      umbraco_version = "10.3.1"
-    }
-    version_11 = {
-      version_name    = "v11"
-      dotnet_version  = "v7.0"
-      umbraco_version = "11.2.0"
-    }
-  }
->>>>>>> Stashed changes
+
+}
+
+variable "client_id" {
+  type = string
+  # default = "empty"
+  #sensitive = true
+}
+variable "client_secret" {
+  type = string
+  # default = "empty"
+  #sensitive = true
+}
+variable "tenant_id" {
+  type = string
+  # default = "empty"
+  #sensitive = true
 }

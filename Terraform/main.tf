@@ -2,14 +2,14 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.34.0"
+      version = "3.34.0"
     }
   }
 
-  required_version = ">= 1.3.5"
+  required_version = ">= 1.3.9"
 
-  # I'm gonna ignore the terraform state. And run the command 'az group delete -g rg-name' at the end of my pipeline so all the resources are deleted.
-/*
+  # When using locally comment out the backend code, when running on pipeline uncomment the code
+  /*
   backend "azurerm" {
     resource_group_name  = var.bkstrgrg
     storage_account_name = var.bkstrg
@@ -19,15 +19,18 @@ terraform {
   */
 }
 
-
 provider "azurerm" {
   features {}
 }
 
-
-
 module "umbraco" {
   source                  = "./modules/umbraco"
+  resource_name_prefix    = var.resource_name_prefix
   resource_group_location = var.resource_group_location
   resource_group_name     = var.resource_group_name
+  umbraco_cms_versions    = var.umbraco_cms_versions
+  # If possible, find a better way to login to azure
+  client_id               = var.client_id
+  client_secret           = var.client_secret
+  tenant_id               = var.tenant_id
 }
