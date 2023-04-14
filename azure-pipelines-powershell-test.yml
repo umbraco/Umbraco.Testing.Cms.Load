@@ -70,6 +70,6 @@ stages:
             [
               {
               "name": "hostName",
-              "value": "azure-load-testing-umbraco-appservice-v11.azurewebsites.net"
+              "value": "azure-load-testing-umbraco-appservice-v10.azurewebsites.net"
               }
             ]
