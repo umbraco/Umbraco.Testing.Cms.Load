@@ -78,10 +78,6 @@ stages:
       dependsOn: 
         - setup
         - manualValidation 
-      #variables:
-      #  CLIENT_ID: $[ dependencies.setup.outputs['AzLoginInfo.ARM_CLIENT_ID'] ]
-      #  CLIENT_SECRET: $[ dependencies.setup.outputs['AzLoginInfo.ARM_CLIENT_SECRET'] ]
-      #  TENANT_ID: $[ dependencies.setup.outputs['AzLoginInfo.ARM_TENANT_ID'] ]
       steps:
       # We need to initialize again, otherwise the pipeline will fail.
       - task: PowerShell@2
@@ -113,6 +109,7 @@ stages:
           environmentServiceNameAzureRM: '$(serviceConnection)'
           commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID)'
       - task: TerraformTaskV4@4
+        displayName: 'Terraform Output'
         inputs:
           provider: 'azurerm'
           command: 'output'
@@ -140,8 +137,23 @@ stages:
         displayName: Terraform Output to populate variable with loadTestName 
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "##vso[task.setvariable variable=loadTestName]$(terraform output -json load_test_name)"'
+          script: 'Write-Host  LoadTestName = "##vso[task.setvariable variable=loadTestName]$(terraform output -json load_test_name)"'
           workingDirectory: '$(terraformWorkingDirectory)'
+      
+      - task: PowerShell@2
+        displayName: Terraform Display values
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "$(loadTestName)"  $(hostNames) '
+          workingDirectory: '$(terraformWorkingDirectory)'
+          
+      - task: PowerShell@2
+        displayName: Terraform Output to populate the variable with loadTestName 
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host  LoadTestName = "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"'
+          workingDirectory: '$(terraformWorkingDirectory)'
+        
     - job: manualValidationLoadTest
       dependsOn: apply
       pool: server
@@ -151,6 +163,7 @@ stages:
          inputs:
            # notifyUsers: aze@umbraco.dk
            instructions: 'Please validate that the terraform has applied as intended'
+    # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. It should contain the correct hostName 
     - job: runLoadTest
       dependsOn: manualValidationLoadTest
 
