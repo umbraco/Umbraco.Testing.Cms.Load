@@ -63,14 +63,6 @@ resource "azurerm_windows_web_app" "appservice" {
   }
 }
 
-resource "azurerm_load_test" "load_test" {
-  location            = var.resource_group_location
-  name                = "${var.resource_name_prefix}-loadtest-${var.version_name}"
-  resource_group_name = var.resource_group_name
-
-  depends_on = [azurerm_windows_web_app.appservice]
-}
-
 # Runs the script which creates and deploys a Umbraco CMS with the defined version.
 resource "null_resource" "deploy_umbraco_windows_host" {
   provisioner "local-exec" {

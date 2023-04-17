@@ -26,6 +26,14 @@ resource "azurerm_service_plan" "appserviceplan" {
   sku_name                = "S1"
 }
 
+resource "azurerm_load_test" "load_test" {
+  location            = var.resource_group_location
+  name                = "${var.resource_name_prefix}-loadtest"
+  resource_group_name = var.resource_group_name
+
+  depends_on = [azurerm_service_plan.appserviceplan]
+}
+
 # We create a module called versions, the reason for that is because we want to have multiple app services with different Umbraco Versions. You can define the versions you want to test in the variables.ts
 module "versions" {
   # We use a for_each so it creates a module for each version of Umbraco we have defined in variables.
