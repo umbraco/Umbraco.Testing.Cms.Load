@@ -18,6 +18,9 @@ variables:
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
 
+  loadTestName: 
+  hostNames:
+
 stages:
 - stage: terraformDeploy
   jobs:
@@ -121,7 +124,36 @@ stages:
           targetType: 'inline'
           script: 'terraform output -json umbraco_version_hostnames'
           workingDirectory: '$(terraformWorkingDirectory)'
-        
+      - task: PowerShell@2
+        displayName: Terraform Output to populate variable with hostNames 
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames)"'
+          workingDirectory: '$(terraformWorkingDirectory)'
+      - task: PowerShell@2
+        displayName: Terraform Output get loadTestName 
+        inputs:
+          targetType: 'inline'
+          script: 'terraform output -json load_test_name'
+          workingDirectory: '$(terraformWorkingDirectory)'
+      - task: PowerShell@2
+        displayName: Terraform Output to populate variable with loadTestName 
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "##vso[task.setvariable variable=loadTestName]$(terraform output -json load_test_name)"'
+          workingDirectory: '$(terraformWorkingDirectory)'
+    - job: manualValidationLoadTest
+      dependsOn: apply
+      pool: server
+      steps:
+       - task: ManualValidation@0
+         displayName: Wait for external validation
+         inputs:
+           # notifyUsers: aze@umbraco.dk
+           instructions: 'Please validate that the terraform has applied as intended'
+    - job: runLoadTest
+      dependsOn: manualValidationLoadTest
+
       # Im not really sure how we will be able to run the load test properly. The issue is that we can have as many app servies as we want, and we create the same amount of load tests. But I'm not sure how to update each of the
       # Load test with the correct values aswell as inputting the correct domain name in each of them. 
       #- task: AzureLoadTest@1
