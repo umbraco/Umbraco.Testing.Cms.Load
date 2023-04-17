@@ -29,7 +29,7 @@ module "umbraco" {
   resource_group_location = var.resource_group_location
   resource_group_name     = var.resource_group_name
   umbraco_cms_versions    = var.umbraco_cms_versions
-  # If possible, find a better way to login to azure
+  # Azure Login Credentials 
   client_id               = var.client_id
   client_secret           = var.client_secret
   tenant_id               = var.tenant_id

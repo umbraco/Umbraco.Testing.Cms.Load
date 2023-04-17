@@ -17,3 +17,7 @@
 output "umbraco_version_hostnames" {
   value = module.umbraco.verions_hostnames_output
 }
+
+output "load_test_name"{
+  value = module.umbraco.load_test_name
+}
