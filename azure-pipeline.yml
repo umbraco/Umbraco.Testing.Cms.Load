@@ -125,7 +125,7 @@ stages:
         displayName: Terraform Output to populate variable with hostNames 
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames)"'
+          script: Write-Host "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames)"
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: PowerShell@2
         displayName: Terraform Output get loadTestName 
@@ -137,21 +137,21 @@ stages:
         displayName: Terraform Output to populate variable with loadTestName 
         inputs:
           targetType: 'inline'
-          script: 'Write-Host  LoadTestName = "##vso[task.setvariable variable=loadTestName]$(terraform output -json load_test_name)"'
+          script: Write-Host  "LoadTestName = ##vso[task.setvariable variable=loadTestName]$(terraform output -json load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
       
       - task: PowerShell@2
         displayName: Terraform Display values
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "$(loadTestName)"  $(hostNames) '
+          script: Write-Host "$(loadTestName) $(hostNames)"
           workingDirectory: '$(terraformWorkingDirectory)'
           
       - task: PowerShell@2
         displayName: Terraform Output to populate the variable with loadTestName 
         inputs:
           targetType: 'inline'
-          script: 'Write-Host  LoadTestName = "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"'
+          script: Write-Host  LoadTestName = "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
         
     - job: manualValidationLoadTest
