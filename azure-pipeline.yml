@@ -131,7 +131,17 @@ stages:
         displayName: Output to Variable
         inputs:
           targetType: 'inline'
-          script: echo "@(loadertestName)"
+          script: echo "$(loadertestName)"
+      - task: Bash@3
+        displayName: Output to Variable 2
+        inputs:
+          targetType: 'inline'
+          script: echo "$loadertestName"
+      - task: PowerShell@2
+        displayName: Terraform Output get hostNames 
+        inputs:
+          targetType: 'inline'
+          script: Write-Host "$(loadertestName)"
     - job: manualValidationLoadTest
       dependsOn: apply
       pool: server
