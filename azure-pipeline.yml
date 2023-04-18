@@ -125,7 +125,7 @@ stages:
         displayName: Terraform Output get load 
         inputs:
           targetType: 'inline'
-          script: 'terraform output -raw load_test_name'
+          script: 'terraform output -json load_test_name'
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: PowerShell@2
         displayName: Terraform Output get loadTestName 
