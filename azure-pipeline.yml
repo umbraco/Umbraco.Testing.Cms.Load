@@ -170,3 +170,9 @@ stages:
       #    resourceGroup: '$(azurergname)'
       #    loadTestRunName: 'CompareVersions'
       #    loadTestRunDescription: 'We are  load testing different versions of Umbraco'
+
+
+# Steps for the future. An delete resoruce group stage.
+  # This stage will run if something fails, also at the end of the pipeline.
+  # Manual Validation step before(Just for safety).
+  # It will start by checking if the resource group actually exists. Then it will delete the created resource group
