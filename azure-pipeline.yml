@@ -109,7 +109,7 @@ stages:
           environmentServiceNameAzureRM: '$(serviceConnection)'
           commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID)'
       - task: TerraformTaskV4@4
-        displayName: 'Terraform Output'
+        displayName: 'Terraform Outputs'
         inputs:
           provider: 'azurerm'
           command: 'output'
@@ -125,14 +125,13 @@ stages:
         displayName: Terraform Output get loadTestName 
         inputs:
           targetType: 'inline'
-          script: 'terraform output -json load_test_name'
+          script: Write-Host "##vso[task.setvariable variable=loadertestName;isOutput=true]$(terraform output -raw load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: Bash@3
         displayName: Output to Variable
         inputs:
           targetType: 'inline'
-          script: echo "##vso[task.setvariable variable=loadTestName]$(terraform output -json load_test_name)"
-          workingDirectory: '$(terraformWorkingDirectory)'
+          script: echo "@(loadertestName)"
     - job: manualValidationLoadTest
       dependsOn: apply
       pool: server
