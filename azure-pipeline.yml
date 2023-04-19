@@ -143,11 +143,27 @@ stages:
         inputs:
           targetType: 'inline'
           script: echo "$loadertestName"
+    - job: outputToVar
+      dependsOn: apply
+      steps:
       - task: PowerShell@2
-        displayName: Terraform Output get hostNames 
+        displayName: Terraform Output get loadTestName 
         inputs:
           targetType: 'inline'
-          script: Write-Host "$(loadertestName)"
+          script: Write-Host "##vso[task.setvariable variable=loadertestName;isOutput=true]$(terraform output -raw load_test_name)"
+          workingDirectory: '$(terraformWorkingDirectory)'
+      - task: Bash@3
+        displayName: Output to Variable
+        inputs:
+          targetType: 'inline'
+          script: echo "$(loadertestName)"
+      - task: Bash@3
+        displayName: Output to Variable 2
+        inputs:
+          targetType: 'inline'
+          script: echo "$loadertestName"
+
+
     - job: manualValidationLoadTest
       dependsOn: apply
       pool: server
