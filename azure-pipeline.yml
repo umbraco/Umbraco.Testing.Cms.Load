@@ -116,17 +116,32 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
       - task: PowerShell@2
-        displayName: Terraform Output get hostNames 
+        displayName: Terraform Output get hostnames 
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
-          script: 'terraform output -json umbraco_version_hostnames'
+          script: |
+
+            Write-Host "##vso[task.setvariable variable=hostName]$(terraform output -json umbraco_version_hostnames)"
+
+            echo "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames)"
+
+            Write-Host "##vso[task.setvariable variable=hosterNames]$(terraform output umbraco_version_hostnames)"
+
+            echo "##vso[task.setvariable variable=hosterName]$(terraform output umbraco_version_hostnames)"
+        
           workingDirectory: '$(terraformWorkingDirectory)'
+        
       - task: PowerShell@2
-        displayName: Terraform Output get load 
+        displayName: Write Output
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
-          script: 'terraform output -json load_test_name'
-          workingDirectory: '$(terraformWorkingDirectory)'
+          script: |
+            Write-Host "hostName $(hostName)"
+            Write-Host "hostNames $(hostNames)"
+            Write-Host "hosterNames $(hosterNames)"
+            Write-Host "hosterName $(hosterName)"
       - task: PowerShell@2
         displayName: Terraform Output get loadTestName 
         condition: succeededOrFailed()
@@ -134,40 +149,25 @@ stages:
           targetType: 'inline'
           script: |
 
-            Write-Host "##vso[task.setvariable variable=loadertestName;isOutput=true]$(terraform output -json load_test_name)"
             Write-Host "##vso[task.setvariable variable=loadertesterName]$(terraform output -json load_test_name)"
 
-            echo "##vso[task.setvariable variable=loadertest;isOutput=true]$(terraform output -json load_test_name)"
             echo "##vso[task.setvariable variable=loadertester]$(terraform output -json load_test_name)"
 
-            Write-Host "##vso[task.setvariable variable=loadername;isOutput=true]$(terraform output  load_test_name)"
             Write-Host "##vso[task.setvariable variable=loadName]$(terraform output load_test_name)"
 
-            echo "##vso[task.setvariable variable=loadertesto;isOutput=true]$(terraform output load_test_name)"
             echo "##vso[task.setvariable variable=loadertesta]$(terraform output load_test_name)"
-            
-            Write-Host "##vso[task.setvariable variable=loadconvert;isOutput=true]$(terraform output -json load_test_name | ConvertFrom-Json)"
-            Write-Host "##vso[task.setvariable variable=loaderconverttesta]$(terraform output -json load_test_name | ConvertFrom-Json)"
-
         
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: PowerShell@2
         displayName: Write Output
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: |
-            Write-Host "loadertestName $(loadertestName)"
             Write-Host "loadertesterName $(loadertesterName)"
-            Write-Host "loadertest $(loadertest)"
             Write-Host "loadertester $(loadertester)"
-            Write-Host "loadername $(loadername)"
             Write-Host "loadName $(loadName)"
-            Write-Host "loadertesto $(loadertesto)"
             Write-Host "loadertesta $(loadertesta)"
-            Write-Host "loadconvert $(loadconvert)"
-            Write-Host "loaderconverttesta $(loaderconverttesta)"
-
-          workingDirectory: '$(terraformWorkingDirectory)'
 
       - task: Bash@3
         displayName: Output to Variable
@@ -175,19 +175,11 @@ stages:
         inputs:
           targetType: 'inline'
           script: |
-           echo "loadertestName $(loadertestName)"
            echo "loadertesterName $(loadertesterName)"
-           echo "loadertest $(loadertest)"
            echo "loadertester $(loadertester)"
-           echo "loadername $(loadername)"
            echo "loadName $(loadName)"
-           echo "loadertesto $(loadertesto)"
            echo "loadertesta $(loadertesta)"
-           echo "loadconvert $(loadconvert")"
-           echo "loaderconverttesta $(loaderconverttesta)"
-
      
-
     - job: manualValidationLoadTest
       dependsOn: apply
       pool: server
