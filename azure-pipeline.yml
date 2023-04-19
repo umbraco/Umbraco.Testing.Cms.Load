@@ -129,36 +129,43 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: PowerShell@2
         displayName: Terraform Output get loadTestName 
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: Write-Host "##vso[task.setvariable variable=loadertestName;isOutput=true]$(terraform output -raw load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: Bash@3
         displayName: Output to Variable
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: echo "$(loadertestName)"
       - task: Bash@3
         displayName: Output to Variable 2
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: echo "$loadertestName"
     - job: outputToVar
       dependsOn: apply
+      condition: succeededOrFailed()
       steps:
       - task: PowerShell@2
         displayName: Terraform Output get loadTestName 
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: Write-Host "##vso[task.setvariable variable=loadertestName;isOutput=true]$(terraform output -raw load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: Bash@3
         displayName: Output to Variable
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: echo "$(loadertestName)"
       - task: Bash@3
         displayName: Output to Variable 2
+        condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: echo "$loadertestName"
