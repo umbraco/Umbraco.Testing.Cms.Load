@@ -223,7 +223,6 @@ stages:
       dependsOn: doesResourceGroupExists
       condition: succeeded()
       displayName: Manual validation for deleting the resource group
-      dependsOn: apply
       pool: server
       steps:
        - task: ManualValidation@0
@@ -231,6 +230,7 @@ stages:
          inputs:
            # notifyUsers: aze@umbraco.dk
            instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
+
     - job: deleteResourceGroup
       dependsOn: manualValidationResourceGroup
       condition: succeeded()
