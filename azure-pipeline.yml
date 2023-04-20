@@ -145,6 +145,10 @@ stages:
             Write-Host "hostNames $(hostNames[0])"
             Write-Host "hosterNames $(hosterNames[0])"
             Write-Host "hosterName $(hosterName[0])"
+            Write-Host "hostName $(hostName.0)"
+            Write-Host "hostNames $(hostNames.0)"
+            Write-Host "hosterNames $(hosterNames.0)"
+            Write-Host "hosterName $(hosterName.0)"
       - task: PowerShell@2
         name: outputVars
         displayName: Terraform Output get loadTestName 
@@ -169,28 +173,25 @@ stages:
 
             echo "##vso[task.setvariable variable=loadertesta;isOutput=true]$(terraform output load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
-      - task: PowerShell@2
-        displayName: Write Output
-        condition: succeededOrFailed()
-        inputs:
-          targetType: 'inline'
-          script: |
-            Write-Host "loadertesterName $(loadertesterName)"
-            Write-Host "loadertester $(loadertester)"
-            Write-Host "loadName $(loadName)"
-            Write-Host "loadertesta $(loadertesta)"
+   #   - task: PowerShell@2
+   #     displayName: Write Output
+   #     condition: succeededOrFailed()
+   #     inputs:
+   #       targetType: 'inline'
+   #      script: |
+   #          Write-Host "loadertesterName $(loadertesterName)"
+   #         Write-Host "loadertester $(loadertester)"
+   #         Write-Host "loadName $(loadName)"
+   #         Write-Host "loadertesta $(loadertesta)"
 
-      - task: Bash@3
-        displayName: Output to Variable
-        condition: succeededOrFailed()
-        inputs:
-          targetType: 'inline'
-          script: |
-           echo "loadertesterName $(loadertesterName)"
-           echo "loadertester $(loadertester)"
-           echo "loadName $(loadName)"
-           echo "loadertesta $(loadertesta)"
-     
+ #     - task: Bash@3
+ #       displayName: Output to Variable
+ #       condition: succeededOrFailed()
+  #      inputs:
+  #        targetType: 'inline'
+  #        script: |
+  #         echo "loadertesterName $(loadertesterName)"
+
      # Remove this manual validation step after the load tests have been set up correctly
     - job: manualValidationLoadTest
       displayName: Manual validation for running load tests
@@ -198,16 +199,13 @@ stages:
       condition: succeededOrFailed()
       pool: server
       variables:
-        loadtest1: $[ dependencies.apply.outputs['outputVars.loadertesterName'] ]
-        loadtest2: $[ dependencies.apply.outputs['outputVars.loadertester'] ]
-        loadtest3: $[ dependencies.apply.outputs['outputVars.loadName'] ]
-        loadtest4: $[ dependencies.apply.outputs['outputVars.loadertesta'] ]
+        loadTestName: $[ dependencies.apply.outputs['outputVars.loadertesterName'] ]
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests loadtest1 $(loadtest1), loadtest2 $(loadtest2), loadtest3 $(loadtest3), loadtest4 $(loadtest4)'
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName)'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
@@ -272,7 +270,7 @@ stages:
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
-      #condition: succeeded()
+      condition: succeededOrFailed()
       variables:
         doesResourceGroupExistVar: $[ dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'] ]
       displayName: Manual validation for deleting the resource group
