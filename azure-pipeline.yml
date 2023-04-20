@@ -18,6 +18,9 @@ variables:
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
 
+  # LoadTestLocation
+  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
+
 stages:
 - stage: terraformDeploy
   jobs:
@@ -122,13 +125,13 @@ stages:
           targetType: 'inline'
           script: |
 
-            Write-Host "##vso[task.setvariable variable=hostName]$(terraform output -json umbraco_version_hostnames)"
+            Write-Host "##vso[task.setvariable variable=hostName]$(terraform output -json umbraco_version_hostnames[0])"
 
-            echo "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames)"
+            echo "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames[0])"
 
-            Write-Host "##vso[task.setvariable variable=hosterNames]$(terraform output umbraco_version_hostnames)"
+            Write-Host "##vso[task.setvariable variable=hosterNames]$(terraform output umbraco_version_hostnames[0])"
 
-            echo "##vso[task.setvariable variable=hosterName]$(terraform output umbraco_version_hostnames)"
+            echo "##vso[task.setvariable variable=hosterName]$(terraform output umbraco_version_hostnames[0])"
         
           workingDirectory: '$(terraformWorkingDirectory)'
         
@@ -143,6 +146,7 @@ stages:
             Write-Host "hosterNames $(hosterNames)"
             Write-Host "hosterName $(hosterName)"
       - task: PowerShell@2
+        name: outputVars
         displayName: Terraform Output get loadTestName 
         condition: succeededOrFailed()
         inputs:
@@ -157,6 +161,13 @@ stages:
 
             echo "##vso[task.setvariable variable=loadertesta]$(terraform output load_test_name)"
         
+            Write-Host "##vso[task.setvariable variable=loadertesterName;isOutput=true]$(terraform output -json load_test_name)"
+
+            echo "##vso[task.setvariable variable=loadertester;isOutput=true]$(terraform output -json load_test_name)"
+
+            Write-Host "##vso[task.setvariable variable=loadName;isOutput=true]$(terraform output load_test_name)"
+
+            echo "##vso[task.setvariable variable=loadertesta;isOutput=true]$(terraform output load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: PowerShell@2
         displayName: Write Output
@@ -185,18 +196,55 @@ stages:
       displayName: Manual validation for running load tests
       dependsOn: apply
       pool: server
+      variables:
+        loadtest1: $[ dependencies.apply.outputs['outputVars.loadertesterName'] ]
+        loadtest2: $[ dependencies.apply.outputs['outputVars.loadertester'] ]
+        loadtest3: $[ dependencies.apply.outputs['outputVars.loadName'] ]
+        loadtest4: $[ dependencies.apply.outputs['outputVars.loadertesta'] ]
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended'
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests loadtest1 $(loadtest1), loadtest2 $(loadtest2), loadtest3 $(loadtest3), loadtest4 $(loadtest4)'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
       dependsOn: manualValidationLoadTest
-      
-
+      steps:
+      - task: AzureLoadTest@1
+        displayName: LoadTest
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          loadTestConfigFile: '$(loadTestFileLocation)'
+          resourceGroup: '$(azurergname)'
+          loadTestResource: 'azure-load-testing-umbraco-loadtest-v10'
+          loadTestRunName: 'LoadTesting'
+          loadTestRunDescription: 'We are load testing different versions of Umbraco'
+          env: |
+            [
+              {
+              "name": "hostName",
+              "value": "azure-load-testing-umbraco-appservice-v10.azurewebsites.net"
+              }
+            ]
+      - task: AzureLoadTest@1
+        displayName: LoadTest
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          loadTestConfigFile: '$(loadTestFileLocation)'
+          resourceGroup: '$(azurergname)'
+          loadTestResource: 'azure-load-testing-umbraco-loadtest-v10'
+          loadTestRunName: 'LoadTesting'
+          loadTestRunDescription: 'We are load testing different versions of Umbraco'
+          env: |
+            [
+              {
+              "name": "hostName",
+              "value": "azure-load-testing-umbraco-appservice-v10.azurewebsites.net"
+              }
+            ]
+  
       # Im not really sure how we will be able to run the load test properly. The issue is that we can have as many app servies as we want, and we create the same amount of load tests. But I'm not sure how to update each of the
       # Load test with the correct values aswell as inputting the correct domain name in each of them. 
       #- task: AzureLoadTest@1
@@ -215,16 +263,19 @@ stages:
       condition: succeededOrFailed()
       steps:
        - task: AzureCLI@2
+         name: checkResourceGroup
          displayName: Checks if the resource group exists
          inputs:
            azureSubscription: 'terraform-umbraco-load-testing-az-connection'
            scriptType: 'pscore'
            scriptLocation: 'inlineScript'
-           inlineScript: 'az group exists -n $(azurergname)'
+           inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname)"'
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
-      condition: succeeded()
+      #condition: succeeded()
+      variables:
+        doesResourceGroupExistVar: $[ dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'] ]
       displayName: Manual validation for deleting the resource group
       pool: server
       steps:
@@ -232,7 +283,7 @@ stages:
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
+           instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). $(doesResourceGroupExistVar) All the content inside of the resource group will also be deleted.'
 
     - job: deleteResourceGroup
       displayName: Deletes the resource group
