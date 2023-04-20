@@ -140,16 +140,6 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
         
       - task: PowerShell@2
-        displayName: Write Output
-        condition: succeededOrFailed()
-        inputs:
-          targetType: 'inline'
-          script: |
-            Write-Host "hostName $(hostName)"
-            echo "hostNames $(hostNames)"
-            Write-Host "hosterNames $(hosterNames.0)"
-            echo "hosterName $(hosterName.0)"
-      - task: PowerShell@2
         name: outputVars
         displayName: Terraform Output get loadTestName 
         condition: succeededOrFailed()
