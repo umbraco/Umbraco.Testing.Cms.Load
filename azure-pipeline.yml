@@ -255,8 +255,6 @@ stages:
       #    loadTestRunName: 'CompareVersions'
       #    loadTestRunDescription: 'We are  load testing different versions of Umbraco'
 
-
-
     - job: doesResourceGroupExists
       displayName: Checks if resource group exists
       dependsOn: runLoadTest
@@ -269,7 +267,7 @@ stages:
            azureSubscription: 'terraform-umbraco-load-testing-az-connection'
            scriptType: 'pscore'
            scriptLocation: 'inlineScript'
-           inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname)"'
+           inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
@@ -298,7 +296,6 @@ stages:
           scriptLocation: 'inlineScript'
           inlineScript: 'az group delete -n $(azurergname)'
        
-      
 # Steps for the future. An delete resoruce group stage.
   # This stage will run if something fails, also at the end of the pipeline.
   # Manual Validation step before(Just for safety).
