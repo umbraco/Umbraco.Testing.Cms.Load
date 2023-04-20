@@ -284,7 +284,7 @@ stages:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
-          inlineScript: 'az group delete -n $(azurergname)'
+          inlineScript: 'az group delete -n $(azurergname) --yes'
        
 # Steps for the future. An delete resoruce group stage.
   # This stage will run if something fails, also at the end of the pipeline.
