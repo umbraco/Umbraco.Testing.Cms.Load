@@ -125,13 +125,13 @@ stages:
           targetType: 'inline'
           script: |
 
-            Write-Host "##vso[task.setvariable variable=hostName]$(terraform output -json umbraco_version_hostnames[0])"
+            Write-Host "##vso[task.setvariable variable=hostName]$(terraform output -json umbraco_version_hostnames)"
 
-            echo "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames[0])"
+            echo "##vso[task.setvariable variable=hostNames]$(terraform output -json umbraco_version_hostnames)"
 
-            Write-Host "##vso[task.setvariable variable=hosterNames]$(terraform output umbraco_version_hostnames[0])"
+            Write-Host "##vso[task.setvariable variable=hosterNames]$(terraform output umbraco_version_hostnames)"
 
-            echo "##vso[task.setvariable variable=hosterName]$(terraform output umbraco_version_hostnames[0])"
+            echo "##vso[task.setvariable variable=hosterName]$(terraform output umbraco_version_hostnames)"
         
           workingDirectory: '$(terraformWorkingDirectory)'
         
@@ -141,10 +141,10 @@ stages:
         inputs:
           targetType: 'inline'
           script: |
-            Write-Host "hostName $(hostName)"
-            Write-Host "hostNames $(hostNames)"
-            Write-Host "hosterNames $(hosterNames)"
-            Write-Host "hosterName $(hosterName)"
+            Write-Host "hostName $(hostName[0])"
+            Write-Host "hostNames $(hostNames[0])"
+            Write-Host "hosterNames $(hosterNames[0])"
+            Write-Host "hosterName $(hosterName[0])"
       - task: PowerShell@2
         name: outputVars
         displayName: Terraform Output get loadTestName 
@@ -195,6 +195,7 @@ stages:
     - job: manualValidationLoadTest
       displayName: Manual validation for running load tests
       dependsOn: apply
+      condition: succeededOrFailed()
       pool: server
       variables:
         loadtest1: $[ dependencies.apply.outputs['outputVars.loadertesterName'] ]
