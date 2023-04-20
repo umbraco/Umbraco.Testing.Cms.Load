@@ -180,6 +180,7 @@ stages:
            echo "loadName $(loadName)"
            echo "loadertesta $(loadertesta)"
      
+     # Remove this manual validation step after the load tests have been set up correctly
     - job: manualValidationLoadTest
       displayName: Manual validation for running load tests
       dependsOn: apply
@@ -232,9 +233,9 @@ stages:
            instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
 
     - job: deleteResourceGroup
+      displayName: Deletes the resource group
       dependsOn: manualValidationResourceGroup
       condition: succeeded()
-      displayName: Deletes the resource group
       steps:
       - task: AzureCLI@2
         displayName: Deletes the resource group
@@ -242,7 +243,7 @@ stages:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
-          inlineScript: 'az group delete --name $(azurergname)'
+          inlineScript: 'az group delete -n $(azurergname)'
        
       
 # Steps for the future. An delete resoruce group stage.
