@@ -141,14 +141,10 @@ stages:
         inputs:
           targetType: 'inline'
           script: |
-            Write-Host "hostName $(hostName[0])"
-            Write-Host "hostNames $(hostNames[0])"
-            Write-Host "hosterNames $(hosterNames[0])"
-            Write-Host "hosterName $(hosterName[0])"
             Write-Host "hostName $(hostName.0)"
-            Write-Host "hostNames $(hostNames.0)"
+            echo "hostNames $(hostNames.0)"
             Write-Host "hosterNames $(hosterNames.0)"
-            Write-Host "hosterName $(hosterName.0)"
+            echo "hosterName $(hosterName.0)"
       - task: PowerShell@2
         name: outputVars
         displayName: Terraform Output get loadTestName 
@@ -270,7 +266,7 @@ stages:
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
-      condition: succeededOrFailed()
+      condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
       variables:
         doesResourceGroupExistVar: $[ dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'] ]
       displayName: Manual validation for deleting the resource group
