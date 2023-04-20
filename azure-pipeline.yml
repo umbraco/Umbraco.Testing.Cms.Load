@@ -147,17 +147,17 @@ stages:
           targetType: 'inline'
           script: |
 
-            Write-Host "##vso[task.setvariable variable=loadertesterName]$(terraform output -json load_test_name)"
 
             echo "##vso[task.setvariable variable=loadertester]$(terraform output -json load_test_name)"
 
             Write-Host "##vso[task.setvariable variable=loadName]$(terraform output load_test_name)"
 
             echo "##vso[task.setvariable variable=loadertesta]$(terraform output load_test_name)"
+            Write-Host "##vso[task.setvariable variable=loadertesterName;isOutput=true]$(terraform output -json load_test_name)"
         
           workingDirectory: '$(terraformWorkingDirectory)'
-            #Write-Host "##vso[task.setvariable variable=loadertesterName;isOutput=true]$(terraform output -json load_test_name)"
 
+            #Write-Host "##vso[task.setvariable variable=loadertesterName]$(terraform output -json load_test_name)"
             #echo "##vso[task.setvariable variable=loadertester;isOutput=true]$(terraform output -json load_test_name)"
 
             #Write-Host "##vso[task.setvariable variable=loadName;isOutput=true]$(terraform output load_test_name)"
