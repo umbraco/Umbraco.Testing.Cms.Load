@@ -193,6 +193,7 @@ stages:
            instructions: 'Please validate that the terraform has applied as intended'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
+      displayName: Runs the load test
       dependsOn: manualValidationLoadTest
       
 
@@ -210,6 +211,7 @@ stages:
 
     - job: doesResourceGroupExists
       displayName: Checks if resource group exists
+      dependsOn: runLoadTest
       condition: succeededOrFailed()
       steps:
        - task: AzureCLI@2
