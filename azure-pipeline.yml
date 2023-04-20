@@ -207,8 +207,8 @@ stages:
 
 
 
-    - job: deleteResourceGroup
-      displayName: Delete resource group
+    - job: doesResourceGroupExists
+      displayName: Checks if resource group exists
       condition: succeededOrFailed()
       steps:
        - task: AzureCLI@2
@@ -218,22 +218,32 @@ stages:
            scriptType: 'pscore'
            scriptLocation: 'inlineScript'
            inlineScript: 'az group exists -n $(azurergname)'
+          
+    - job: manualValidationResourceGroup
+      dependsOn: doesResourceGroupExists
+      condition: succeeded()
+      displayName: Manual validation for deleting the resource group
+      dependsOn: apply
+      pool: server
+      steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
-         condition: succeeded()
          inputs:
            # notifyUsers: aze@umbraco.dk
            instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
-       - task: AzureCLI@2
-         condition: succeeded()
-         displayName: Deletes the resource group
-         inputs:
-           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
-           scriptType: 'pscore'
-           scriptLocation: 'inlineScript'
-           inlineScript: 'az group delete --name $(azurergname)'
+    - job: deleteResourceGroup
+      dependsOn: manualValidationResourceGroup
+      condition: succeeded()
+      displayName: Deletes the resource group
+      steps:
+      - task: AzureCLI@2
+        displayName: Deletes the resource group
+        inputs:
+          azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: 'az group delete --name $(azurergname)'
        
-          
       
 # Steps for the future. An delete resoruce group stage.
   # This stage will run if something fails, also at the end of the pipeline.
