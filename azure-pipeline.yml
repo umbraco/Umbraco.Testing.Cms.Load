@@ -141,8 +141,8 @@ stages:
         inputs:
           targetType: 'inline'
           script: |
-            Write-Host "hostName $(hostName.0)"
-            echo "hostNames $(hostNames.0)"
+            Write-Host "hostName $(hostName)"
+            echo "hostNames $(hostNames)"
             Write-Host "hosterNames $(hosterNames.0)"
             echo "hosterName $(hosterName.0)"
       - task: PowerShell@2
@@ -161,25 +161,22 @@ stages:
 
             echo "##vso[task.setvariable variable=loadertesta]$(terraform output load_test_name)"
         
-            Write-Host "##vso[task.setvariable variable=loadertesterName;isOutput=true]$(terraform output -json load_test_name)"
-
-            echo "##vso[task.setvariable variable=loadertester;isOutput=true]$(terraform output -json load_test_name)"
-
-            Write-Host "##vso[task.setvariable variable=loadName;isOutput=true]$(terraform output load_test_name)"
-
-            echo "##vso[task.setvariable variable=loadertesta;isOutput=true]$(terraform output load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
-   #   - task: PowerShell@2
-   #     displayName: Write Output
-   #     condition: succeededOrFailed()
-   #     inputs:
-   #       targetType: 'inline'
-   #      script: |
-   #          Write-Host "loadertesterName $(loadertesterName)"
-   #         Write-Host "loadertester $(loadertester)"
-   #         Write-Host "loadName $(loadName)"
-   #         Write-Host "loadertesta $(loadertesta)"
+            #Write-Host "##vso[task.setvariable variable=loadertesterName;isOutput=true]$(terraform output -json load_test_name)"
 
+            #echo "##vso[task.setvariable variable=loadertester;isOutput=true]$(terraform output -json load_test_name)"
+
+            #Write-Host "##vso[task.setvariable variable=loadName;isOutput=true]$(terraform output load_test_name)"
+
+            #echo "##vso[task.setvariable variable=loadertesta;isOutput=true]$(terraform output load_test_name)"
+      - task: PowerShell@2
+        displayName: Write Output
+        condition: succeededOrFailed()
+        inputs:
+          targetType: 'inline'
+          script: |
+            Write-Host "loadertesterName $(loadertesterName)"
+            Write-Host "hostName $(hostName)"
  #     - task: Bash@3
  #       displayName: Output to Variable
  #       condition: succeededOrFailed()
@@ -281,7 +278,7 @@ stages:
     - job: deleteResourceGroup
       displayName: Deletes the resource group
       dependsOn: manualValidationResourceGroup
-      condition: succeeded()
+      condition: eq(dependencies.manualValidationResourceGroup.result, 'succeeded')
       steps:
       - task: AzureCLI@2
         displayName: Deletes the resource group
