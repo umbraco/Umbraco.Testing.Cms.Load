@@ -8,7 +8,7 @@ output "umbraco_version_values" {
    }
 
 output "umbraco_version_hostname" {
-   value = {
-      appserviceHostname = azurerm_windows_web_app.appservice.default_hostname
-   }
+   value = [
+      azurerm_windows_web_app.appservice.default_hostname
+   ]
 }
