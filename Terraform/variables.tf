@@ -15,17 +15,17 @@ variable "resource_group_name" {
 
 variable "client_id" {
   type = string
-  # default = "empty"
+  default = "empty"
   #sensitive = true
 }
 variable "client_secret" {
   type = string
-  # default = "empty"
+  default = "empty"
   #sensitive = true
 }
 variable "tenant_id" {
   type = string
-  # default = "empty"
+  default = "empty"
   #sensitive = true
 }
 
