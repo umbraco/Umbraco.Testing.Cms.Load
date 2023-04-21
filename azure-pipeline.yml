@@ -128,7 +128,7 @@ stages:
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName). HostName = $(hostNames)'
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName). HostNames = $(hostNames)'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
