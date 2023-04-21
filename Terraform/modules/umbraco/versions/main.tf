@@ -10,7 +10,7 @@ resource "azurerm_mssql_server" "msserver" {
   # Added a timeout for creating the server because it can sometimes fail and run for 60 min
   # If the msserver isn't created in time, it can be locked in azure. Which makes us unable to delete the rg
   timeouts {
-    create = "15m"
+    create = "10m"
   }
 }
 
