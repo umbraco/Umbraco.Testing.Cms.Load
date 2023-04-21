@@ -103,69 +103,16 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
       - task: PowerShell@2
-        name: OutputHost
-        displayName: Terraform Output get hostnames 
-        condition: succeededOrFailed()
-        inputs:
-          targetType: 'inline'
-          script: |
-
-            Write-Host "##vso[task.setvariable variable=hostName]$(terraform output -json umbraco_version_hostnames)"
-            Write-Host "##vso[task.setvariable variable=hostNamo]$(terraform output umbraco_version_hostnames)"
-
-
-            Write-Host "##vso[task.setvariable variable=firstHostName]$(terraform output -json umbraco_version_hostnames  | jq '[.[] | .version_10] | .[0]')"
-            Write-Host "##vso[task.setvariable variable=secondHostName]$(terraform output -json umbraco_version_hostnames  | jq '[.[] | .version_11] | .[0]')"
-
-
-            Write-Host "##vso[task.setvariable variable=hosterNames]$(terraform output umbraco_version_hostnames)"
-
-            echo "##vso[task.setvariable variable=hosterName]$(terraform output umbraco_version_hostnames)"
-        
-          workingDirectory: '$(terraformWorkingDirectory)'
-      - task: PowerShell@2
-        name: outputVarsHost
-        displayName: Terraform Output get loadTestName 
-        condition: succeededOrFailed()
-        inputs:
-          targetType: 'inline'
-          script: |
-            Write-Host "##vso[task.setvariable variable=firsto]$(terraform output -json umbraco_version_hostnames  | jq '[.[] | .version_10]')"
-            Write-Host "##vso[task.setvariable variable=secondo]$(terraform output -json umbraco_version_hostnames  | jq '[.[] | .version_11]')"
-          workingDirectory: '$(terraformWorkingDirectory)'
-      - task: PowerShell@2
         name: outputVars
-        displayName: Terraform Output get loadTestName 
+        displayName: Terraform Output get variables 
         condition: succeededOrFailed()
         inputs:
           targetType: 'inline'
           script: |
+            Write-Host "##vso[task.setvariable variable=hostNames;isOutput=true]$(terraform output -json umbraco_version_hostnames)"
+
             Write-Host "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"
-        
           workingDirectory: '$(terraformWorkingDirectory)'
-
-           # echo "##vso[task.setvariable variable=loadertester]$(terraform output -json load_test_name)"
-
-           # Write-Host "##vso[task.setvariable variable=loadName]$(terraform output load_test_name)"
-
-           # echo "##vso[task.setvariable variable=loadertesta]$(terraform output load_test_name)"
-            #Write-Host "##vso[task.setvariable variable=loadertesterName]$(terraform output -json load_test_name)"
-            #echo "##vso[task.setvariable variable=loadertester;isOutput=true]$(terraform output -json load_test_name)"
-
-            #Write-Host "##vso[task.setvariable variable=loadName;isOutput=true]$(terraform output load_test_name)"
-
-            #echo "##vso[task.setvariable variable=loadertesta;isOutput=true]$(terraform output load_test_name)"
-      - task: PowerShell@2
-        displayName: Write Output
-        condition: succeededOrFailed()
-        inputs:
-          targetType: 'inline'
-          script: |
-            Write-Host "hostName $(hostName)"
-            Write-Host "hostNamo $(hostNamo)"
-            Write-Host "firstHostName $(firstHostName)"
-            Write-Host "secondHostName $(secondHostName)"
-
      # Remove this manual validation step after the load tests have been set up correctly
     - job: manualValidationLoadTest
       displayName: Manual validation for running load tests
@@ -174,22 +121,22 @@ stages:
       pool: server
       variables:
         loadTestName: $[ dependencies.apply.outputs['outputVars.loadTestName'] ]
-        firstHostName: $[ dependencies.apply.outputs['OutputHost.firstHostName'] ]
-        secondHostName: $[ dependencies.apply.outputs['OutputHost.secondHostName'] ]
+        hostNames: $[ dependencies.apply.outputs['outputVars.hostNames'] ]
       steps:
        - task: ManualValidation@0
+         name: manuellValidationLoadTest
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName). First HostName = $(firstHostName)  , Second HostName= $(secondHostName)'
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName). HostName = $(hostNames)'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
       dependsOn: manualValidationLoadTest
+      condition: eq(dependencies.manuellValidationLoadTest.result, 'succeeded')
       variables: 
         loadTestName: $[ dependencies.apply.outputs['outputVars.loadTestName'] ]
-        firstHostName: $[ dependencies.apply.outputs['OutputHost.firstHostName'] ]
-        secondHostName: $[ dependencies.apply.outputs['OutputHost.secondHostName'] ]
+        hostNames: $[ dependencies.apply.outputs['outputVars.hostNames'] ]
       steps:
       - task: AzureLoadTest@1
         displayName: LoadTest
