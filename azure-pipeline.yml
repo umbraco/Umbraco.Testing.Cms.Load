@@ -14,10 +14,8 @@ variables:
   # Azure Resource Variables
   azureprefix: 'azure-load-testing-umbraco'
   azurergname: 'andreas-az-load-testing-rg'
-  azurelocation: 'westeurope'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
-
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
 
@@ -43,20 +41,6 @@ stages:
           provider: 'azurerm'
           command: 'validate'
           workingDirectory: '$(terraformWorkingDirectory)'
-       - task: AzureCLI@2
-         name: AzLoginInfo
-         displayName: Gets Azure Login Credentials 
-         inputs:
-          azureSubscription: '$(serviceConnection)'
-          scriptType: bash
-          scriptLocation: inlineScript
-          inlineScript: |
-            echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
-            
-            echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
-
-            echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
-          addSpnToEnvironment: true
        - task: TerraformTaskV4@4
          displayName: Plan
          condition: succeeded()
@@ -65,7 +49,7 @@ stages:
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID)'
+          commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname)'
     - job: manualValidation
       displayName: Manual validation for checking if the terraform plan is correct
       dependsOn: setup
@@ -203,6 +187,7 @@ stages:
       displayName: Runs the load test
       dependsOn: manualValidationLoadTest
       variables: 
+        loadTestName: $[ dependencies.apply.outputs['outputVars.loadTestName'] ]
         firstHostName: $[ dependencies.apply.outputs['OutputHost.firstHostName'] ]
         secondHostName: $[ dependencies.apply.outputs['OutputHost.secondHostName'] ]
       steps:
@@ -212,14 +197,14 @@ stages:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: 'azure-load-testing-umbraco-loadtest-v10'
+          loadTestResource: '$(loadTestName)'
           loadTestRunName: 'LoadTesting'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
               {
               "name": "hostName",
-              "value": "azure-load-testing-umbraco-appservice-v10.azurewebsites.net"
+              "value": "$(azureprefix)-appservice-v10.azurewebsites.net"
               }
             ]
       - task: AzureLoadTest@1
@@ -228,14 +213,14 @@ stages:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: 'azure-load-testing-umbraco-loadtest-v10'
+          loadTestResource: '$(loadTestName)'
           loadTestRunName: 'LoadTesting'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
               {
               "name": "hostName",
-              "value": "azure-load-testing-umbraco-appservice-v10.azurewebsites.net"
+              "value": "$(azureprefix)-appservice-v11.azurewebsites.net"
               }
             ]
 
@@ -248,7 +233,7 @@ stages:
          name: checkResourceGroup
          displayName: Checks if the resource group exists
          inputs:
-           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
+           azureSubscription: '$(serviceConnection)'
            scriptType: 'pscore'
            scriptLocation: 'inlineScript'
            inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
@@ -288,8 +273,3 @@ stages:
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: 'az group delete -n $(azurergname) --yes'
-       
-# Steps for the future. An delete resoruce group stage.
-  # This stage will run if something fails, also at the end of the pipeline.
-  # Manual Validation step before(Just for safety).
-  # It will start by checking if the resource group actually exists. Then it will delete the created resource group
