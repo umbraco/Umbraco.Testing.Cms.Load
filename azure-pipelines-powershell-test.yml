@@ -64,7 +64,7 @@ stages:
           loadTestConfigFile: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
           resourceGroup: 'andreas-azure-load-testing-rg'
           loadTestResource: 'az-load-testing-umbraco-loadtest'
-          loadTestRunName: 'CompareVersions'
+          loadTestRunName: 'CompareVersionsV10'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
@@ -79,7 +79,7 @@ stages:
           loadTestConfigFile: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
           resourceGroup: 'andreas-azure-load-testing-rg'
           loadTestResource: 'az-load-testing-umbraco-loadtest'
-          loadTestRunName: 'CompareVersions'
+          loadTestRunName: 'CompareVersionsV11'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
