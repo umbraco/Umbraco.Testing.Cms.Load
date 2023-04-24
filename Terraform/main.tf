@@ -7,16 +7,6 @@ terraform {
   }
 
   required_version = ">= 1.3.9"
-
-  # When using locally comment out the backend code, when running on pipeline uncomment the code
-  /*
-  backend "azurerm" {
-    resource_group_name  = var.bkstrgrg
-    storage_account_name = var.bkstrg
-    container_name       = var.bkcontainer
-    key                  = var.bkstrgkey
-  }
-  */
 }
 
 provider "azurerm" {

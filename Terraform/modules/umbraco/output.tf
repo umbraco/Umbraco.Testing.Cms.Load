@@ -12,6 +12,17 @@ output "verions_hostnames_output" {
           }
 }
 
+output "versions_hostnames" {
+  value = values(module.versions)[*].umbraco_version_values.appserviceHostname
+  }
+
+output "hostnames" {
+  value = [
+    for module_versions in module.versions : 
+        module_versions.umbraco_version_values.appserviceHostname
+          ]
+}
+
 output "load_test_name" {
   value = azurerm_load_test.load_test.name
 }

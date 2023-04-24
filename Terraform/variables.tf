@@ -10,47 +10,24 @@ variable "resource_group_location" {
 
 variable "resource_group_name" {
   type = string
-  #default = "az-load-testing-rg"
 }
 
 variable "client_id" {
   type = string
-  default = "empty"
+  #default = "empty"
   #sensitive = true
 }
+
 variable "client_secret" {
   type = string
-  default = "empty"
+  #default = "empty"
   #sensitive = true
 }
+
 variable "tenant_id" {
   type = string
-  default = "empty"
+  #default = "empty"
   #sensitive = true
-}
-
-variable "bkstrgrg" {
-  type        = string
-  description = "The name of the backend storage account resource group"
-  default     = "<storage act resource group name>"
-}
-
-variable "bkstrgname" {
-  type        = string
-  description = "The name of the backend storage account"
-  default     = "<storage account name>"
-}
-
-variable "bkcontainer" {
-  type        = string
-  description = "The container name for the backend config"
-  default     = "<blob storage container name>"
-}
-
-variable "bkstrgkey" {
-  type        = string
-  description = "The access key for the storage account"
-  default     = "<storage account key>"
 }
 
 variable "umbraco_cms_versions" {

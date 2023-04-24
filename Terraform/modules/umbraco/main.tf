@@ -48,7 +48,6 @@ module "versions" {
   umbraco_cms_version     = each.value["umbraco_version"]
   admin_login             = random_string.admin_login.result
   admin_password          = random_password.admin_password.result
-  # If possible, find a better way to login to azure
   client_id               = var.client_id
   client_secret           = var.client_secret
   tenant_id               = var.tenant_id
