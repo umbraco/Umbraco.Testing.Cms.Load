@@ -132,7 +132,7 @@ stages:
           script: |
             Write-Host "##vso[task.setvariable variable=hostNames;isOutput=true]$(terraform output -json umbraco_version_hostnames)"
 
-            Write-Host "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"
+            Write-Host '##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)'
             
             Write-Host "##vso[task.setvariable variable=loadTestNameraw;isOutput=true]$(terraform output  load_test_name)"
 
