@@ -206,9 +206,15 @@ stages:
            azureSubscription: '$(serviceConnection)'
            scriptType: 'pscore'
            scriptLocation: 'inlineScript'
-           inlineScript: |
-           'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
-           'echo "eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs['checksTheResourceGroup.exists'])"'
+           inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
+       - task: PowerShell@2
+         inputs:
+           targetType: 'inline'
+           script: |
+            'Write-Host   "eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs[''checksTheResourceGroup.exists''])"'
+            'Write-Host "$[stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']]"'
+            Write-Host   "eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs[''checksTheResourceGroup.exists''])"
+            Write-Host "$[stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']]"
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
