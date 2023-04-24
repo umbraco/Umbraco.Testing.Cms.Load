@@ -197,8 +197,6 @@ stages:
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
       condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
-      variables:
-        doesResourceGroupExistVar: $[dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist']]
       displayName: Manual validation for deleting the resource group
       pool: server
       steps:
