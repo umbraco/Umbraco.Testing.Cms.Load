@@ -30,10 +30,11 @@ variables:
   secondloadTestRunName: 'Load test for version 11.3.0'
 
 stages:
-- stage: doesResourceGroupAlreadyExist
-  displayName: Checks if the specified resource group already exists
+- stage: terraformDeploy
+  displayName: Terraform setup and apply
   jobs:
     - job: checkResourceGroup
+      displayName: Checks if resource group with defined name exists
       steps:
       - task: AzureCLI@2
         name: checkGroup
@@ -43,12 +44,9 @@ stages:
          scriptType: 'pscore'
          scriptLocation: 'inlineScript'
          inlineScript: 'Write-Host "##vso[task.setvariable variable=resourceGroupExists;isOutput=true]$(az group exists -n $(azurergname))"'
-- stage: terraformDeploy
-  dependsOn: doesResourceGroupAlreadyExist
-  condition: eq(dependencies.doesResourceGroupAlreadyExist.outputs['checkResourceGroup.checkGroup.resourceGroupExists'], false)
-  displayName: Terraform setup and apply
-  jobs:
     - job: setup 
+      dependsOn: checkResourceGroup
+      condition: eq(dependencies.checkResourceGroup.outputs['checkGroup.resourceGroupExists'], false)
       displayName: Terraform setup
       steps:
        - task: TerraformInstaller@0
@@ -136,15 +134,14 @@ stages:
 
             Write-Host "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
-- stage: loadTesting
-  dependsOn: terraformDeploy
-  jobs:
+
     - job: manualValidationLoadTest
+      dependsOn: apply
       displayName: Manual validation for running load tests
       pool: server
       variables:
-        loadTestName: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']]
-        hostNames: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.hostNames']]
+        loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
+        hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
@@ -154,11 +151,12 @@ stages:
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
-      dependsOn: manualValidationLoadTest
-      condition: eq(dependencies.manualValidationLoadTest.result, 'succeeded')
+      dependsOn: 
+        - apply
+        - manualValidationLoadTest
       variables: 
-        loadTestName: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']]
-        hostNames: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.hostNames']]
+        loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
+        hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
       steps:
       - task: AzureLoadTest@1
         displayName: LoadTest 1
@@ -192,12 +190,11 @@ stages:
               "value": "$(azureprefix)-appservice-$(secondVersionName).azurewebsites.net"
               }
             ]
-- stage: cleanUp
-  dependsOn: loadTesting
-  condition: succeededOrFailed()
-  jobs:
+      
     - job: doesResourceGroupExists
-      displayName: Checks if resource group exists
+      dependsOn: runLoadTest
+      condition: succeededOrFailed()
+      displayName: Checks if the resource group exists
       steps:
        - task: AzureCLI@2
          name: checkResourceGroup
