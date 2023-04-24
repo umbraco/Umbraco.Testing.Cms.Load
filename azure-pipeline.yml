@@ -212,7 +212,6 @@ stages:
            targetType: 'inline'
            script: |
             'Write-Host   "$eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs[''checksTheResourceGroup.exists''])"'
-            Write-Host   "$(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs[''checksTheResourceGroup.exists''])"
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
