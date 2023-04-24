@@ -126,7 +126,6 @@ stages:
   jobs:
     - job: manualValidationLoadTest
       displayName: Manual validation for running load tests
-      dependsOn: apply
       pool: server
       variables:
         loadTestName: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']]
