@@ -63,7 +63,7 @@ stages:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
           loadTestConfigFile: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
           resourceGroup: 'azure-andreas-load-testing-rg'
-          loadTestResource: '"azure-load-testing-umbraco-loadtest"'
+          loadTestResource: "azure-load-testing-umbraco-loadtest"
           loadTestRunName: 'CompareVersionsV10'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
@@ -78,7 +78,7 @@ stages:
           azureSubscription: 'terraform-umbraco-load-testing-az-connection'
           loadTestConfigFile: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
           resourceGroup: 'andreas-azure-load-testing-rg'
-          loadTestResource: '"azure-load-testing-umbraco-loadtest"'
+          loadTestResource: "azure-load-testing-umbraco-loadtest"
           loadTestRunName: 'CompareVersionsV11'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
