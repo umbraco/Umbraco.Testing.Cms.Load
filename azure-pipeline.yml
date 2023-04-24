@@ -212,9 +212,7 @@ stages:
            targetType: 'inline'
            script: |
             'Write-Host   "eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs[''checksTheResourceGroup.exists''])"'
-            'Write-Host "stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']"'
             Write-Host   "eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs[''checksTheResourceGroup.exists''])"
-            Write-Host "stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']"
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
