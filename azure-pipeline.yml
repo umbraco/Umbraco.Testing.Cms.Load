@@ -45,7 +45,7 @@ stages:
          inlineScript: 'Write-Host "##vso[task.setvariable variable=exists;isOutput=true]$(az group exists -n $(azurergname))"'
 - stage: terraformDeploy
   dependsOn: doesResourceGroupAlreadyExist
-  condition: eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs['checksTheResourceGroup.exists'], true)
+  condition: eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs['checksTheResourceGroup.exists'], false)
   displayName: Terraform setup and apply
   jobs:
     - job: setup 
