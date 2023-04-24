@@ -36,7 +36,7 @@ stages:
     - job: checkResourceGroup
       steps:
       - task: AzureCLI@2
-        name: checksTheResourceGroup
+        name: checkGroup
         displayName: Checks if the resource group exists before running all the steps
         inputs:
          azureSubscription: '$(serviceConnection)'
@@ -45,7 +45,7 @@ stages:
          inlineScript: 'Write-Host "##vso[task.setvariable variable=resourceGroupExists;isOutput=true]$(az group exists -n $(azurergname))"'
 - stage: terraformDeploy
   dependsOn: doesResourceGroupAlreadyExist
-  condition: eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs['checksTheResourceGroup.resourceGroupExists'], false)
+  condition: eq(dependencies.doesResourceGroupAlreadyExist.outputs['checkResourceGroup.checkGroup.resourceGroupExists'], false)
   displayName: Terraform setup and apply
   jobs:
     - job: setup 
@@ -207,11 +207,6 @@ stages:
            scriptType: 'pscore'
            scriptLocation: 'inlineScript'
            inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
-       - task: PowerShell@2
-         inputs:
-           targetType: 'inline'
-           script: Write-Host   "$[stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs['checksTheResourceGroup.resourceGroupExists']]"
-          
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
       condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
