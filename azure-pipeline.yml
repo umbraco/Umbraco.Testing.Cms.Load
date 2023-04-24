@@ -12,15 +12,26 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'az-load-tester-umbraco'
+  azureprefix: 'azure-load-testing-umbraco'
   azurergname: 'azure-andreas-load-testing-rg'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
 
+  # If possible in the future, get the hostnames from the terraform output and insert them automatically in the load tests, then we should also be able to input the complete version name in the runName aswell.
+  # Another step that is missing is that we want to be able to load test 3-4 or more versions at once. Right now the pipeline is only able to test two, that is because we only have two load tests defined. we can manually add them now if we want. But if there is a way
+  # to automatically add load tests based on the amount of version name or something. (Possibly a script that runs for each host name and inputs all the values.)
+  # First load test variables
+  firstVersionsName: 'v10'
+  firstloadTestRunName: 'Load test for version 10.3.1'
+  # Second load test variables
+  secondVersionsName: 'v11'
+  secondloadTestRunName: 'Load test for version 11.3.0'
+
 stages:
 - stage: terraformDeploy
+  displayName: Terraform setup and apply
   jobs:
     - job: setup 
       displayName: Terraform setup
@@ -42,8 +53,7 @@ stages:
           command: 'validate'
           workingDirectory: '$(terraformWorkingDirectory)'
        - task: TerraformTaskV4@4
-         displayName: Plan
-         condition: succeeded()
+         displayName: Terraform Plan
          inputs:
           provider: 'azurerm'
           command: 'plan'
@@ -56,14 +66,13 @@ stages:
       pool: server
       steps:
        - task: ManualValidation@0
-         displayName: Wait for external validation
+         displayName: Waits for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
            instructions: 'Please validate that the terraform plan is correct'
     - job: apply
-      displayName: Terraform apply
+      displayName: Terraform Apply
       dependsOn: 
-        - setup
         - manualValidation 
       steps:
       # We need to initialize again, otherwise the pipeline will fail.
@@ -75,7 +84,7 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: AzureCLI@2
         name: AzLoginInfo
-        displayName: Gets Azure Login Credentials 
+        displayName: Get Azure Login Credentials 
         inputs:
          azureSubscription: '$(serviceConnection)'
          scriptType: bash
@@ -88,7 +97,7 @@ stages:
           echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
          addSpnToEnvironment: true
       - task: TerraformTaskV4@4
-        displayName: Apply
+        displayName: Terraform Apply
         inputs:
           provider: 'azurerm'
           command: 'apply'
@@ -96,7 +105,7 @@ stages:
           environmentServiceNameAzureRM: '$(serviceConnection)'
           commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID)'
       - task: TerraformTaskV4@4
-        displayName: 'Terraform Outputs'
+        displayName: Terraform Output
         inputs:
           provider: 'azurerm'
           command: 'output'
@@ -104,8 +113,7 @@ stages:
           environmentServiceNameAzureRM: '$(serviceConnection)'
       - task: PowerShell@2
         name: outputVars
-        displayName: Terraform Output get variables 
-        condition: succeededOrFailed()
+        displayName: Terraform Output define variables
         inputs:
           targetType: 'inline'
           script: |
@@ -113,18 +121,18 @@ stages:
 
             Write-Host "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"
           workingDirectory: '$(terraformWorkingDirectory)'
-     # Remove this manual validation step after the load tests have been set up correctly
+- stage: loadTesting
+  dependsOn: terraformDeploy
+  jobs:
     - job: manualValidationLoadTest
       displayName: Manual validation for running load tests
       dependsOn: apply
-      condition: succeededOrFailed()
       pool: server
       variables:
-        loadTestName: $[ dependencies.apply.outputs['outputVars.loadTestName'] ]
-        hostNames: $[ dependencies.apply.outputs['outputVars.hostNames'] ]
+        loadTestName: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']]
+        hostNames: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.hostNames']]
       steps:
        - task: ManualValidation@0
-         name: manuellValidationLoadTest
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
@@ -133,47 +141,48 @@ stages:
     - job: runLoadTest
       displayName: Runs the load test
       dependsOn: manualValidationLoadTest
-      condition: eq(dependencies.manuellValidationLoadTest.result, 'succeeded')
+      condition: eq(dependencies.manualValidationLoadTest.result, 'succeeded')
       variables: 
-        loadTestName: $[ dependencies.apply.outputs['outputVars.loadTestName'] ]
-        hostNames: $[ dependencies.apply.outputs['outputVars.hostNames'] ]
+        loadTestName: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.loadTestName']]
+        hostNames: $[stageDependencies.terraformDeploy.apply.outputs['outputVars.hostNames']]
       steps:
       - task: AzureLoadTest@1
-        displayName: LoadTest
+        displayName: LoadTest 1
         inputs:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: '$(loadTestName)'
-          loadTestRunName: 'LoadTesting'
+          loadTestRunName: '$(firstloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
               {
               "name": "hostName",
-              "value": "$(azureprefix)-appservice-v10.azurewebsites.net"
+              "value": "$(azureprefix)-appservice-$(firstVersionsName).azurewebsites.net"
               }
             ]
       - task: AzureLoadTest@1
-        displayName: LoadTest
+        displayName: LoadTest 2
         inputs:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: '$(loadTestName)'
-          loadTestRunName: 'LoadTesting'
+          loadTestRunName: '$(secondloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
               {
               "name": "hostName",
-              "value": "$(azureprefix)-appservice-v11.azurewebsites.net"
+              "value": "$(azureprefix)-appservice-$(secondVersionName).azurewebsites.net"
               }
             ]
-
+- stage: cleanUp
+  dependsOn: loadTesting
+  jobs:
     - job: doesResourceGroupExists
       displayName: Checks if resource group exists
-      dependsOn: runLoadTest
       condition: succeededOrFailed()
       steps:
        - task: AzureCLI@2
@@ -189,7 +198,7 @@ stages:
       dependsOn: doesResourceGroupExists
       condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
       variables:
-        doesResourceGroupExistVar: $[ dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'] ]
+        doesResourceGroupExistVar: $[dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist']]
       displayName: Manual validation for deleting the resource group
       pool: server
       steps:
@@ -197,7 +206,7 @@ stages:
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). $(doesResourceGroupExistVar) All the content inside of the resource group will also be deleted.'
+           instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
 
     - job: deleteResourceGroup
       displayName: Deletes the resource group
@@ -205,16 +214,17 @@ stages:
       condition: eq(dependencies.manualValidationResourceGroup.result, 'succeeded')
       steps:
       - task: AzureCLI@2
-        name: checkResourceGroup
+        name: checkResourceGroupAgain
         displayName: Checks if the resource group exists before deleting it
         inputs:
          azureSubscription: '$(serviceConnection)'
          scriptType: 'pscore'
          scriptLocation: 'inlineScript'
-         inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
+         inlineScript: 'Write-Host "##vso[task.setvariable variable=doesResourceGroupExist;isOutput=true]$(az group exists -n $(azurergname))"'
       - task: AzureCLI@2
         displayName: Deletes the resource group
         retryCountOnTaskFailure: 2
+        condition: eq(variables['doesResourceGroupExist'], true)
         inputs:
           azureSubscription: '$(serviceConnection)'
           scriptType: 'pscore'
