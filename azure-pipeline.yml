@@ -30,7 +30,22 @@ variables:
   secondloadTestRunName: 'Load test for version 11.3.0'
 
 stages:
+- stage: doesResourceGroupAlreadyExist
+  displayName: Checks if the specified resource group already exists
+  jobs:
+    - job: checkResourceGroup
+      steps:
+      - task: AzureCLI@2
+        name: checksTheResourceGroup
+        displayName: Checks if the resource group exists before running all the steps
+        inputs:
+         azureSubscription: '$(serviceConnection)'
+         scriptType: 'pscore'
+         scriptLocation: 'inlineScript'
+         inlineScript: 'Write-Host "##vso[task.setvariable variable=exsits;isOutput=true]$(az group exists -n $(azurergname))"'
 - stage: terraformDeploy
+  dependsOn: doesResourceGroupAlreadyExist
+  condition: eq(stageDependencies.doesResourceGroupAlreadyExist.outputs['checksTheResourceGroup.exsits'], true)
   displayName: Terraform setup and apply
   jobs:
     - job: setup 
@@ -151,7 +166,7 @@ stages:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: '$(loadTestName)'
+          loadTestResource: $(loadTestName)
           loadTestRunName: '$(firstloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
@@ -167,7 +182,7 @@ stages:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: '$(loadTestName)'
+          loadTestResource: $(loadTestName)
           loadTestRunName: '$(secondloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
@@ -179,10 +194,10 @@ stages:
             ]
 - stage: cleanUp
   dependsOn: loadTesting
+  condition: succeededOrFailed()
   jobs:
     - job: doesResourceGroupExists
       displayName: Checks if resource group exists
-      condition: succeededOrFailed()
       steps:
        - task: AzureCLI@2
          name: checkResourceGroup
