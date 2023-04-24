@@ -206,7 +206,9 @@ stages:
            azureSubscription: '$(serviceConnection)'
            scriptType: 'pscore'
            scriptLocation: 'inlineScript'
-           inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
+           inlineScript: |
+           'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
+           'echo "eq(stageDependencies.doesResourceGroupAlreadyExist.checkResourceGroup.outputs['checksTheResourceGroup.exists'])"'
           
     - job: manualValidationResourceGroup
       dependsOn: doesResourceGroupExists
