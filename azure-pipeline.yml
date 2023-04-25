@@ -135,7 +135,7 @@ stages:
             Write-Host '##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)'
           workingDirectory: '$(terraformWorkingDirectory)'
       - script: |
-          echo "##vso[task.setvariable variable=loadTestNameScript;isOutput=true]$(terraform output -json load_test_name)"
+          echo "##vso[task.setvariable variable=loadTestNameScript]$(terraform output -json load_test_name)"
         displayName: Run a single line script
         workingDirectory: '$(terraformWorkingDirectory)' 
       - script: |
@@ -164,18 +164,10 @@ stages:
       variables: 
         loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
         hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
-      steps:
-      - script: |
-          echo "##vso[task.setvariable variable=loadTestNameScripts;]$(loadTestName)"
-        displayName: Run a single line script
-        name: SimpleScript
-        workingDirectory: '$(terraformWorkingDirectory)' 
+      steps: 
       - script: |
           echo "$(loadTestNameScripts)"
-        displayName: Write LoadTest output
-      - script: |
-          echo "$(SimpleScript.loadTestNameScripts)"
-        displayName: Write LoadTest output
+          echo "$(loadTestName)"
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
