@@ -168,14 +168,16 @@ stages:
       - script: |
           echo "$(loadTestNameScripts)"
           echo "$(loadTestName)"
+          Write-Host "##vso[task.setvariable variable=loadTestNameTest]$(loadTestName)"
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
           script: |
-            Write-Host "$(loadTestName)"
+            Write-Host "(loadTestName)"
             Write-Host '$(loadTestName)'
             Write-Host $(loadTestName)
-
+            Write-Host $(loadTestNameTest)
+            Write-Host "$(loadTestNameTest)"
       - task: AzureLoadTest@1
         displayName: LoadTest 1
         inputs:
