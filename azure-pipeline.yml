@@ -138,8 +138,6 @@ stages:
 
             Write-Host "##vso[task.setvariable variable=loadTestNameempty;isOutput=true]$(terraform output  load_test_name)"
 
-            Write-Host "##vso[task.setvariable variable=loadTestNamereplace;isOutput=true]$(loadTestName -replace '"', "")"
-
 
           workingDirectory: '$(terraformWorkingDirectory)'
 
@@ -154,6 +152,11 @@ stages:
         loadTestNameEmpty: $[dependencies.apply.outputs['outputVars.loadTestNameempty']]
         loadTestNamereplace: $[dependencies.apply.outputs['outputVars.loadTestNamereplace']]
       steps:
+       - task: PowerShell@2
+         inputs:
+           targetType: 'inline'
+           script: |
+             Write-Host "$loadTestName.Trim('"')"
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
