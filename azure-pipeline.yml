@@ -12,8 +12,8 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azure-load-tester-umbraco'
-  azurergname: 'azure-andreas-load-testing-rg'
+  azureprefix: 'az-load-tester-umbraco'
+  azurergname: 'az-andreas-load-testing-rg'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
@@ -204,6 +204,7 @@ stages:
               "value": "$(azureprefix)-appservice-$(secondVersionName).azurewebsites.net"
               }
             ]
+      # Maybe we could have 5 steps. but a load test is only gonna run if the varaibles input to the load test both arent null
       
     - job: doesResourceGroupExists
       dependsOn: runLoadTest
