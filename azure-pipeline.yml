@@ -12,8 +12,8 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azu-load-tester-umbraco'
-  azurergname: 'azu-andreas-load-testing-rg'
+  azureprefix: 'az-load-tester-umbraco'
+  azurergname: 'az-andreas-load-testing-rg'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
@@ -165,10 +165,12 @@ stages:
         loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
         hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
       steps: 
-      - script: |
-          echo "$(loadTestNameScripts)"
-          echo "$(loadTestName)"
-          Write-Host "##vso[task.setvariable variable=loadTestNameTest]$(loadTestName)"
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "$(loadTestName)"
+            Write-Host "##vso[task.setvariable variable=loadTestNameTest]$(loadTestName)"
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
