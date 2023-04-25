@@ -133,13 +133,14 @@ stages:
             Write-Host "##vso[task.setvariable variable=hostNames;isOutput=true]$(terraform output -json umbraco_version_hostnames)"
 
             Write-Host '##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)'
-            
-            Write-Host "##vso[task.setvariable variable=loadTestNameraw;isOutput=true]$(terraform output  load_test_name)"
-
-            Write-Host "##vso[task.setvariable variable=loadTestNameempty;isOutput=true]$(terraform output  load_test_name)"
-
-
           workingDirectory: '$(terraformWorkingDirectory)'
+      - script: |
+          echo ##vso[task.setvariable variable=loadTestNameScript;]$(terraform output -json load_test_name)
+        displayName: Run a single line script
+        workingDirectory: '$(terraformWorkingDirectory)' 
+      - script: |
+          echo $(loadTestNameScript)
+        displayName: Write LoadTest output
 
     - job: manualValidationLoadTest
       dependsOn: apply
@@ -148,9 +149,6 @@ stages:
       variables:
         loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
         hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
-        loadTestNameRaw: $[dependencies.apply.outputs['outputVars.loadTestNameraw']]
-        loadTestNameEmpty: $[dependencies.apply.outputs['outputVars.loadTestNameempty']]
-        loadTestNamereplace: $[dependencies.apply.outputs['outputVars.loadTestNamereplace']]
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
@@ -167,6 +165,13 @@ stages:
         loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
         hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
       steps:
+      - script: |
+          echo ##vso[task.setvariable variable=loadTestNameScripts;]$(loadTestName)
+        displayName: Run a single line script
+        workingDirectory: '$(terraformWorkingDirectory)' 
+      - script: |
+          echo $(loadTestNameScripts)
+        displayName: Write LoadTest output
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
