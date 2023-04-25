@@ -182,7 +182,7 @@ stages:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestName)
+          loadTestResource: "$(loadTestName)"
           loadTestRunName: '$(firstloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
