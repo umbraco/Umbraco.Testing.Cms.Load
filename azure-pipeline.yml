@@ -138,6 +138,8 @@ stages:
 
             Write-Host "##vso[task.setvariable variable=loadTestNameempty;isOutput=true]$(terraform output  load_test_name)"
 
+            Write-Host "##vso[task.setvariable variable=loadTestNamereplace;isOutput=true]$(loadTestName -replace '"', "")"
+
 
           workingDirectory: '$(terraformWorkingDirectory)'
 
@@ -150,12 +152,13 @@ stages:
         hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
         loadTestNameRaw: $[dependencies.apply.outputs['outputVars.loadTestNameraw']]
         loadTestNameEmpty: $[dependencies.apply.outputs['outputVars.loadTestNameempty']]
+        loadTestNamereplace: $[dependencies.apply.outputs['outputVars.loadTestNamereplace']]
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName), raw = $(loadTestNameRaw), empty = $(loadTestNameEmpty). HostNames = $(hostNames)'
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName), raw = $(loadTestNameRaw), empty = $(loadTestNameEmpty).loadTestNamereplace = $(loadTestNamereplace) HostNames = $(hostNames)'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
