@@ -245,7 +245,7 @@ stages:
          inlineScript: 'Write-Host "##vso[task.setvariable variable=doesResourceGroupExist;isOutput=true]$(az group exists -n $(azurergname))"'
       - task: AzureCLI@2
         displayName: Deletes the resource group
-        retryCountOnTaskFailure: 2
+        retryCountOnTaskFailure: 5
         inputs:
           azureSubscription: '$(serviceConnection)'
           scriptType: 'pscore'
