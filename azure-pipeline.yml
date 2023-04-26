@@ -24,10 +24,10 @@ variables:
   # Another step that is missing is that we want to be able to load test 3-4 or more versions at once. Right now the pipeline is only able to test two, that is because we only have two load tests defined. we can manually add them now if we want. But if there is a way
   # to automatically add load tests based on the amount of version name or something. (Possibly a script that runs for each host name and inputs all the values.)
   # First load test variables
-  firstVersionsName: 'v10'
+  firstVersionName: 'v10'
   firstloadTestRunName: 'Load test for version 10.3.1'
   # Second load test variables
-  secondVersionsName: 'v11'
+  secondVersionName: 'v11'
   secondloadTestRunName: 'Load test for version 11.3.0'
 
 stages:
@@ -202,7 +202,7 @@ stages:
             [
               {
               "name": "hostName",
-              "value": "$(azureprefix)-appservice-$(firstVersionsName).azurewebsites.net"
+              "value": "$(azureprefix)-appservice-$(firstVersionName).azurewebsites.net"
               }
             ]
       - task: AzureLoadTest@1
