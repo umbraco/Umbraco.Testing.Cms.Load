@@ -12,8 +12,8 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azu-load-tester-umbraco'
-  azurergname: 'azu-andreas-load-testing-rg'
+  azureprefix: 'azure-load-tester-umbraco'
+  azurergname: 'azure-andreas-load-testing-rg'
   loadTestResourceName: '$(azureprefix)-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
@@ -187,10 +187,10 @@ stages:
         hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
         varCheck: $[dependencies.apply.outputs['testerLoadName.loadTestNameScript']]
         testingVar: "$[dependencies.apply.outputs['outputVars.loadTestName']]"
-        firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]"
-        secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]"
-        thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]"
-        fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]"
+        firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
+        secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
+        thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
+        fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
       steps: 
       - task: PowerShell@2
         inputs:
