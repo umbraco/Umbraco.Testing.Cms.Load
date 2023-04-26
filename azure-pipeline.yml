@@ -139,6 +139,7 @@ stages:
           echo "##vso[task.setvariable variable=loadTestNameScript]$(terraform output -json load_test_name)"
         displayName: Run a single line script
         workingDirectory: '$(terraformWorkingDirectory)' 
+        name: testerLoadName
       - script: |
           echo "$(loadTestNameScript)"
         displayName: Write LoadTest output
@@ -165,6 +166,7 @@ stages:
       variables: 
         loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
         hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
+        varCheck: $[dependencies.apply.outputs['testerLoadName.loadTestNameScript']]
       steps: 
       - task: PowerShell@2
         inputs:
@@ -181,6 +183,9 @@ stages:
             Write-Host $(loadTestNameTest)
             Write-Host "$(loadTestNameTest)"
             Write-Host '$(loadTestNameTest)'
+            Write-Host $(varCheck)
+            Write-Host "$(varCheck)"
+            Write-Host '$(varCheck)'
             Write-Host '$(loadTestResourceName)'
             Write-Host "$(loadTestResourceName)"
             Write-Host $(loadTestResourceName)
@@ -207,7 +212,7 @@ stages:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: '$(loadTestResourceName)'
+          loadTestResource: $(loadTestResourceName)
           loadTestRunName: '$(secondloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
