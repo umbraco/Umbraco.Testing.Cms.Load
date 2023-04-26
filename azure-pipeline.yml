@@ -228,7 +228,7 @@ stages:
             [
               {
               "name": "hostName",
-              "value": "$(azureprefix)-appservice-$(firstVersionName).azurewebsites.net"
+              "value": "$(firstHostName)"
               }
             ]
       - task: AzureLoadTest@1
@@ -245,7 +245,7 @@ stages:
             [
               {
               "name": "hostName",
-              "value": "$(azureprefix)-appservice-$(secondVersionName).azurewebsites.net"
+              "value": "$(secondHostName)"
               }
             ]
       # Maybe we could have 5 steps. but a load test is only gonna run if the varaibles input to the load test both arent null
