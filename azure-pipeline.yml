@@ -12,8 +12,9 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azure-load-tester-umbraco'
-  azurergname: 'azure-andreas-load-testing-rg'
+  azureprefix: 'az-load-tester-umbraco'
+  azurergname: 'az-andreas-load-testing-rg'
+  loadTestResourceName: '$(azureprefix)-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
@@ -154,7 +155,7 @@ stages:
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName), raw = $(loadTestNameRaw), empty = $(loadTestNameEmpty).loadTestNamereplace = $(loadTestNamereplace) HostNames = $(hostNames)'
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName), HostNames = $(hostNames)'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
@@ -175,18 +176,21 @@ stages:
         inputs:
           targetType: 'inline'
           script: |
-            Write-Host "(loadTestName)"
             Write-Host '$(loadTestName)'
             Write-Host $(loadTestName)
             Write-Host $(loadTestNameTest)
             Write-Host "$(loadTestNameTest)"
+            Write-Host '$(loadTestNameTest)'
+            Write-Host '$(loadTestResourceName)'
+            Write-Host "$(loadTestResourceName)"
+            Write-Host $(loadTestResourceName)
       - task: AzureLoadTest@1
         displayName: LoadTest 1
         inputs:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestNameTest)
+          loadTestResource: $(loadTestResourceName)
           loadTestRunName: '$(firstloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
@@ -197,12 +201,13 @@ stages:
               }
             ]
       - task: AzureLoadTest@1
+        condition: succeededOrFailed()
         displayName: LoadTest 2
         inputs:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestNameTest)
+          loadTestResource: '$(loadTestResourceName)'
           loadTestRunName: '$(secondloadTestRunName)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
