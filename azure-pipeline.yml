@@ -12,8 +12,8 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azure-load-tester-umbraco'
-  azurergname: 'azure-andreas-load-testing-rg'
+  azureprefix: 'az-load-tester-umbraco'
+  azurergname: 'az-andreas-load-testing-rg'
   loadTestResourceName: '$(azureprefix)-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
@@ -23,6 +23,8 @@ variables:
   # If possible in the future, get the hostnames from the terraform output and insert them automatically in the load tests, then we should also be able to input the complete version name in the runName aswell.
   # Another step that is missing is that we want to be able to load test 3-4 or more versions at once. Right now the pipeline is only able to test two, that is because we only have two load tests defined. we can manually add them now if we want. But if there is a way
   # to automatically add load tests based on the amount of version name or something. (Possibly a script that runs for each host name and inputs all the values.)
+  
+  # Update this if you have updated the versions being load tested. The version_name you specified in terrafrom should be the same as the first/second VersionName defined here. That will allow us to test the correct hostName. 
   # First load test variables
   firstVersionName: 'v10'
   firstloadTestRunName: 'Load test for version 10.3.1'
