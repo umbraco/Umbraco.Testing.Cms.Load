@@ -145,7 +145,26 @@ stages:
       - script: |
           echo "$(testerLoadName.loadTestNameScript)"
         displayName: Write LoadTest output
-
+      - script: |
+          echo "##vso[task.setvariable variable=hostNames;isOutput=true]$(terraform output -json hostnames | jq -r '.[0]')"
+        displayName: Run a single line script
+        workingDirectory: '$(terraformWorkingDirectory)' 
+        name: testerHostName
+      - script: |
+          echo "$(testerHostName.hostNames)"
+        displayName: Write first HostName output
+        condition: succeededOrFailed()
+        
+      - script: |
+          echo "##vso[task.setvariable variable=hostNamess;isOutput=true]$(terraform output -json hostnames)"
+        displayName: Run a single line script
+        workingDirectory: '$(terraformWorkingDirectory)' 
+        name: testerFirstHost
+        condition: succeededOrFailed()
+      - script: |
+          echo "$(testerFirstHost.hostNamess[0])"
+        displayName: Write first HostName output
+        condition: succeededOrFailed()
     - job: manualValidationLoadTest
       dependsOn: apply
       displayName: Manual validation for running load tests
