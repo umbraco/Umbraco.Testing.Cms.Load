@@ -12,8 +12,8 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azure-load-tester-umbraco'
-  azurergname: 'azure-andreas-load-testing-rg'
+  azureprefix: 'az-load-tester-umbraco'
+  azurergname: 'az-andreas-load-testing-rg'
   loadTestResourceName: '$(azureprefix)-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
