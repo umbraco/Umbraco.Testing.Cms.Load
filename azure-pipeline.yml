@@ -22,7 +22,7 @@ variables:
   
 stages:
 - stage: terraformDeploy
-  displayName: Terraform setup and apply
+  displayName: Terraform Setup and Apply
   jobs:
     - job: checkResourceGroup
       displayName: Checks if resource group with defined name exists
@@ -123,23 +123,12 @@ stages:
       dependsOn: apply
       displayName: Manual validation for running load tests
       pool: server
-      variables:
-        firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
-        secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
-        thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
-        fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
-        
-        firstUmbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
-        secondUmbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
-        thirdUmbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
-        fourthUmbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the these hostNames. firstVersion = $(firstUmbracoVersion) , secondVersion = $(secondUmbracoVersion), thirdVersion = $(thirdUmbracoVersion), fourthVersion =  $(fourthUmbracoVersion)   .   firstHostName = $(outputVars.firstHostName), secondHostName = $(outputVars.secondHostName), thirdHostName = $(outputVars.thirdHostName), fourthHostName = $(outputVars.fourthHostName)'
-    # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests.'
     - job: runLoadTest
       displayName: Runs the load test
       dependsOn: 
@@ -249,7 +238,6 @@ stages:
          inputs:
            # notifyUsers: aze@umbraco.dk
            instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
-
     - job: deleteResourceGroup
       displayName: Deletes the resource group
       dependsOn: manualValidationResourceGroup
