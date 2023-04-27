@@ -154,7 +154,7 @@ stages:
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: $(loadTestResourceName)
-          loadTestRunName: 'Load test for version $(firstUmbracoVersion)'
+          loadTestRunName: '$(firstUmbracoVersion)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
@@ -171,7 +171,7 @@ stages:
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: $(loadTestResourceName)
-          loadTestRunName: 'Load test for version $(secondUmbracoVersion)'
+          loadTestRunName: '$(secondUmbracoVersion)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
@@ -188,7 +188,7 @@ stages:
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: $(loadTestResourceName)
-          loadTestRunName: 'Load test for version $(thirdUmbracoVersion)'
+          loadTestRunName: '$(thirdUmbracoVersion)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
@@ -205,7 +205,7 @@ stages:
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: $(loadTestResourceName)
-          loadTestRunName: 'Load test for version $(fourthUmbracoVersion)'
+          loadTestRunName: '$(fourthUmbracoVersion)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
