@@ -6,24 +6,24 @@ resource "azurerm_resource_group" "rg" {
 
 # Random string for SQL server login
 resource "random_string" "admin_login" {
-  length  = 16
-  special = true
+  length     = 16
+  special    = true
   depends_on = [azurerm_resource_group.rg]
 }
 
 resource "random_password" "admin_password" {
-  length  = 16
-  special = true
+  length     = 16
+  special    = true
   depends_on = [azurerm_resource_group.rg]
 }
 
 # App Service Plan
 resource "azurerm_service_plan" "appserviceplan" {
-  name                    = "${var.resource_name_prefix}-appserviceplan"
-  location                = azurerm_resource_group.rg.location
-  resource_group_name     = azurerm_resource_group.rg.name
-  os_type                 = "Windows"
-  sku_name                = "S1"
+  name                = "${var.resource_name_prefix}-appserviceplan"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  os_type             = "Windows"
+  sku_name            = "S1"
 }
 
 resource "azurerm_load_test" "load_test" {

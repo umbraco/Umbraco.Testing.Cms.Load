@@ -15,7 +15,7 @@ variable "service_plan_id" {
 }
 
 variable "dotnet_version" {
-      type        = string
+  type        = string
   description = "The version of dotnet to use"
 }
 

@@ -1,12 +1,12 @@
-variable resource_group_location {
-  type        = string
+variable "resource_group_location" {
+  type = string
 }
 
-variable resource_group_name {
-  type        = string
+variable "resource_group_name" {
+  type = string
 }
 
-variable resource_name_prefix {
+variable "resource_name_prefix" {
   description = "This name will prefix all the created resources"
 
   validation {
