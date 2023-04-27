@@ -12,8 +12,8 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'az-load-tester-umbraco'
-  azurergname: 'az-andreas-load-testing-rg'
+  azureprefix: 'azure-load-tester-umbraco'
+  azurergname: 'azure-andreas-load-testing-rg'
   loadTestResourceName: '$(azureprefix)-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
@@ -158,7 +158,7 @@ stages:
       steps: 
       # The load test are set up so we will be able to load test up to 4 different hostnames. A load test is only gonna run if the hostName variable for the load test is not null
       - task: AzureLoadTest@1
-        condition: or(ne(variables['secondHostName'], ''), ne(variables['secondUmbracoVersion'], ''))
+        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
         displayName: LoadTest 1
         inputs:
           azureSubscription: '$(serviceConnection)'
@@ -175,7 +175,7 @@ stages:
               }
             ]
       - task: AzureLoadTest@1
-        condition: or(ne(variables['secondHostName'], ''), ne(variables['secondUmbracoVersion'], ''))
+        condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
         displayName: LoadTest 2
         inputs:
           azureSubscription: '$(serviceConnection)'
@@ -192,7 +192,7 @@ stages:
               }
             ]      
       - task: AzureLoadTest@1
-        condition: or(ne(variables['thirdHostName'], ''), ne(variables['thirdUmbracoVersion'], ''))
+        condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
         displayName: LoadTest 3
         inputs:
           azureSubscription: '$(serviceConnection)'
@@ -209,7 +209,7 @@ stages:
               }
             ]      
       - task: AzureLoadTest@1
-        condition: or(ne(variables['fourthHostName'], ''), ne(variables['fourthUmbracoVersion'], ''))
+        condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
         displayName: LoadTest 4
         inputs:
           azureSubscription: '$(serviceConnection)'
