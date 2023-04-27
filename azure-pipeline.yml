@@ -12,26 +12,14 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azu-load-tester-umbraco'
-  azurergname: 'azu-andreas-load-testing-rg'
+  azureprefix: 'az-load-tester-umbraco'
+  azurergname: 'az-andreas-load-testing-rg'
   loadTestResourceName: '$(azureprefix)-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
-
-  # If possible in the future, get the hostnames from the terraform output and insert them automatically in the load tests, then we should also be able to input the complete version name in the runName aswell.
-  # Another step that is missing is that we want to be able to load test 3-4 or more versions at once. Right now the pipeline is only able to test two, that is because we only have two load tests defined. we can manually add them now if we want. But if there is a way
-  # to automatically add load tests based on the amount of version name or something. (Possibly a script that runs for each host name and inputs all the values.)
   
-  # Update this if you have updated the versions being load tested. The version_name you specified in terrafrom should be the same as the first/second VersionName defined here. That will allow us to test the correct hostName. 
-  # First load test variables
-  firstVersionName: 'v10'
-  firstloadTestRunName: 'Load test for version 10.3.1'
-  # Second load test variables
-  secondVersionName: 'v11'
-  secondloadTestRunName: 'Load test for version 11.3.0'
-
 stages:
 - stage: terraformDeploy
   displayName: Terraform setup and apply
@@ -76,20 +64,10 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
           commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname)'
-    - job: manualValidation
-      displayName: Manual validation for checking if the terraform plan is correct
-      dependsOn: setup
-      pool: server
-      steps:
-       - task: ManualValidation@0
-         displayName: Waits for external validation
-         inputs:
-           # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform plan is correct'
     - job: apply
       displayName: Terraform Apply
       dependsOn: 
-        - manualValidation 
+        - checkResourceGroup 
       steps:
       # We need to initialize again, otherwise the pipeline will fail.
       - task: PowerShell@2
@@ -107,9 +85,7 @@ stages:
          scriptLocation: inlineScript
          inlineScript: |
           echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
-            
           echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
-
           echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
          addSpnToEnvironment: true
       - task: TerraformTaskV4@4
@@ -129,53 +105,40 @@ stages:
           environmentServiceNameAzureRM: '$(serviceConnection)'
       - task: PowerShell@2
         name: outputVars
-        displayName: Terraform Output define variables
+        displayName: Sets the output as variables
         inputs:
           targetType: 'inline'
           script: |
-            Write-Host "##vso[task.setvariable variable=hostNames;isOutput=true]$(terraform output -json umbraco_version_hostnames)"
-
-            Write-Host "##vso[task.setvariable variable=loadTestName;isOutput=true]$(terraform output -json load_test_name)"
-
             Write-Host "##vso[task.setvariable variable=firstHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[0]')"
             Write-Host "##vso[task.setvariable variable=secondHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[1]')"
             Write-Host "##vso[task.setvariable variable=thirdHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[2]')"
             Write-Host "##vso[task.setvariable variable=fourthHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[3]')"
+
+            Write-Host "##vso[task.setvariable variable=firstUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[0]')"
+            Write-Host "##vso[task.setvariable variable=secondUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[1]')"
+            Write-Host "##vso[task.setvariable variable=thirdUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[2]')"
+            Write-Host "##vso[task.setvariable variable=fourthUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[3]')"
           workingDirectory: '$(terraformWorkingDirectory)'
-      - script: |
-          echo "##vso[task.setvariable variable=loadTestNameScript;isOutput=true]$(terraform output -json load_test_name)"
-        displayName: Run a single line script
-        workingDirectory: '$(terraformWorkingDirectory)' 
-        name: testerLoadName
-      - script: |
-          echo "$(testerLoadName.loadTestNameScript)"
-        displayName: Write LoadTest output
-      - script: |
-          echo "##vso[task.setvariable variable=hostNames;isOutput=true]$(terraform output -json hostnames | jq -r '.[0]')"
-        displayName: Run a single line script
-        workingDirectory: '$(terraformWorkingDirectory)' 
-        name: testerHostName
-      - script: |
-          echo "$(testerHostName.hostNames)"
-          echo "$(outputVars.firstHostName)"
-          echo "$(outputVars.secondHostName)"
-          echo "$(outputVars.thirdHostName)"
-          echo "$(outputVars.fourthHostName)"
-        displayName: Write first HostName output
-        condition: succeededOrFailed()
     - job: manualValidationLoadTest
       dependsOn: apply
       displayName: Manual validation for running load tests
       pool: server
       variables:
-        loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
-        hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
+        firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
+        secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
+        thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
+        fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
+        
+        firstUmbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
+        secondUmbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
+        thirdUmbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
+        fourthUmbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the load test resource $(loadTestName), HostNames = $(hostNames)'
+           instructions: 'Please validate that the terraform has applied as intended before running the load tests on the these hostNames. firstVersion = $(firstUmbracoVersion) , secondVersion = $(secondUmbracoVersion), thirdVersion = $(thirdUmbracoVersion), fourthVersion =  $(fourthUmbracoVersion)   .   firstHostName = $(outputVars.firstHostName), secondHostName = $(outputVars.secondHostName), thirdHostName = $(outputVars.thirdHostName), fourthHostName = $(outputVars.fourthHostName)'
     # At the moment the load test will only be able to test two host names. If you want to extend it to three or four, just add another task with AzureLoadTest. 
     - job: runLoadTest
       displayName: Runs the load test
@@ -183,46 +146,26 @@ stages:
         - apply
         - manualValidationLoadTest
       variables: 
-        loadTestName: $[dependencies.apply.outputs['outputVars.loadTestName']]
-        hostNames: $[dependencies.apply.outputs['outputVars.hostNames']]
-        varCheck: $[dependencies.apply.outputs['testerLoadName.loadTestNameScript']]
-        testingVar: "$[dependencies.apply.outputs['outputVars.loadTestName']]"
         firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
         secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
         thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
         fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
-      steps: 
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: |
-            echo "$(loadTestName)"
-            echo "$(varCheck)"
-            echo "$(loadTestResourceName)"
-            echo "$(testingVar)"
-            Write-Host "##vso[task.setvariable variable=loadTestNameTest]$(loadTestName)"
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: |
-            Write-Host "$(loadTestName)"
-            Write-Host "$(loadTestNameTest)"
-            Write-Host "$(varCheck)"
-            Write-Host "$(loadTestResourceName)"
-            Write-Host "$(testingVar)"
-            Write-Host "$(firstHostName)"
-            Write-Host "$(secondHostName)"
-            Write-Host "$(thirdHostName)"
-            Write-Host "$(fourthHostName)"
 
+        firstUmbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
+        secondUmbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
+        thirdUmbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
+        fourthUmbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
+      steps: 
+      # The load test are set up so we will be able to load test up to 4 different hostnames. A load test is only gonna run if the hostName variable for the load test is not null
       - task: AzureLoadTest@1
+        condition: or(ne(variables['secondHostName'], ''), ne(variables['secondUmbracoVersion'], ''))
         displayName: LoadTest 1
         inputs:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(firstloadTestRunName)'
+          loadTestRunName: 'Load test for version $(firstUmbracoVersion)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
@@ -232,14 +175,14 @@ stages:
               }
             ]
       - task: AzureLoadTest@1
-        condition: succeededOrFailed()
+        condition: or(ne(variables['secondHostName'], ''), ne(variables['secondUmbracoVersion'], ''))
         displayName: LoadTest 2
         inputs:
           azureSubscription: '$(serviceConnection)'
           loadTestConfigFile: '$(loadTestFileLocation)'
           resourceGroup: '$(azurergname)'
           loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(secondloadTestRunName)'
+          loadTestRunName: 'Load test for version $(secondUmbracoVersion)'
           loadTestRunDescription: 'We are load testing different versions of Umbraco'
           env: |
             [
@@ -247,9 +190,41 @@ stages:
               "name": "hostName",
               "value": "$(secondHostName)"
               }
-            ]
-      # Maybe we could have 5 steps. but a load test is only gonna run if the varaibles input to the load test both arent null
-      
+            ]      
+      - task: AzureLoadTest@1
+        condition: or(ne(variables['thirdHostName'], ''), ne(variables['thirdUmbracoVersion'], ''))
+        displayName: LoadTest 3
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          loadTestConfigFile: '$(loadTestFileLocation)'
+          resourceGroup: '$(azurergname)'
+          loadTestResource: $(loadTestResourceName)
+          loadTestRunName: 'Load test for version $(thirdUmbracoVersion)'
+          loadTestRunDescription: 'We are load testing different versions of Umbraco'
+          env: |
+            [
+              {
+              "name": "hostName",
+              "value": "$(thirdHostName)"
+              }
+            ]      
+      - task: AzureLoadTest@1
+        condition: or(ne(variables['fourthHostName'], ''), ne(variables['fourthUmbracoVersion'], ''))
+        displayName: LoadTest 4
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          loadTestConfigFile: '$(loadTestFileLocation)'
+          resourceGroup: '$(azurergname)'
+          loadTestResource: $(loadTestResourceName)
+          loadTestRunName: 'Load test for version $(fourthUmbracoVersion)'
+          loadTestRunDescription: 'We are load testing different versions of Umbraco'
+          env: |
+            [
+              {
+              "name": "hostName",
+              "value": "$(fourthHostName)"
+              }
+            ]      
     - job: doesResourceGroupExists
       dependsOn: runLoadTest
       condition: succeededOrFailed()
