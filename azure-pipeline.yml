@@ -118,21 +118,9 @@ stages:
             Write-Host "##vso[task.setvariable variable=thirdUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[2]')"
             Write-Host "##vso[task.setvariable variable=fourthUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[3]')"
           workingDirectory: '$(terraformWorkingDirectory)'
-    - job: manualValidationLoadTest
-      dependsOn: apply
-      displayName: Manual validation for running load tests
-      pool: server
-      steps:
-       - task: ManualValidation@0
-         displayName: Wait for external validation
-         inputs:
-           # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate that the terraform has applied as intended before running the load tests.'
     - job: runLoadTest
       displayName: Runs the load test
-      dependsOn: 
-        - apply
-        - manualValidationLoadTest
+      dependsOn: apply
       variables: 
         firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
         secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
