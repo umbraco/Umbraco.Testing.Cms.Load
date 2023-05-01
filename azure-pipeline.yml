@@ -66,8 +66,7 @@ stages:
           commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname)'
     - job: apply
       displayName: Terraform Apply
-      dependsOn: 
-        - checkResourceGroup 
+      dependsOn: setup 
       steps:
       # We need to initialize again, otherwise the pipeline will fail.
       - task: PowerShell@2
