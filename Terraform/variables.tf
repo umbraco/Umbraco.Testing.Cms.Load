@@ -35,7 +35,7 @@ variable "umbraco_cms_versions" {
   type = map(any)
   default = {
     version_10_5_0 = {
-      version_name    = "v10"
+      version_name    = "v10-5-0"
       dotnet_version  = "v6.0"
       umbraco_version = "10.5.0"
     }
@@ -43,11 +43,6 @@ variable "umbraco_cms_versions" {
       version_name    = "v11-3-1"
       dotnet_version  = "v7.0"
       umbraco_version = "11.3.1"
-    }
-    version_11_0_0 = {
-      version_name    = "v11-0-0"
-      dotnet_version  = "v7.0"
-      umbraco_version = "11.0.0"
     }
   }
 }

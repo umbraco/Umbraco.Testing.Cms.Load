@@ -17,7 +17,6 @@ variable "resource_name_prefix" {
 
 variable "umbraco_cms_versions" {
   type = map(any)
-
 }
 
 variable "client_id" {
