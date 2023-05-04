@@ -133,6 +133,15 @@ stages:
         fourthUmbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
       steps: 
       # The load test are set up so we will be able to load test up to 4 different hostnames. A load test is only gonna run if the hostName variable for the load test is not null
+      - task: AzureCLI@2
+        name: startAppServiceOne
+        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
+        displayName: Starts the first hostname
+        inputs:
+         azureSubscription: '$(serviceConnection)'
+         scriptType: 'pscore'
+         scriptLocation: 'inlineScript'
+         inlineScript: 'az webapp start $(firstHostName) -n $(azurergname)'
       - task: AzureLoadTest@1
         condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
         displayName: LoadTest 1
