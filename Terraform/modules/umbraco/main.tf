@@ -18,9 +18,9 @@ resource "random_password" "admin_password" {
 }
 
 resource "azurerm_load_test" "load_test" {
-  location            = var.resource_group_location
+  location            = azurerm_resource_group.rg.location
   name                = "${var.resource_name_prefix}-loadtest"
-  resource_group_name = var.resource_group_name
+  resource_group_name = azurerm_resource_group.rg.name
 }
 
 # We create a module called versions, the reason for that is because we want to have multiple app services with different Umbraco Versions. You can define the versions you want to test in the variables.ts
