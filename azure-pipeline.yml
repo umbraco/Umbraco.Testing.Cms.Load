@@ -152,10 +152,11 @@ stages:
          scriptType: 'pscore'
          scriptLocation: 'inlineScript'
          inlineScript: az webapp start -n $(firstAppServiceName) -g $(azurergname)
-      - task: Delay@1
-        displayName: Waits 2 minutes
+      - task: PowerShell@2
+        displayName: Sleeps for 2 minutes
         inputs:
-          delayForMinutes: '2'
+          targetType: 'inline'
+          script: Start-Sleep -Seconds 120
       - task: AzureLoadTest@1
         condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
         displayName: LoadTest 1
@@ -184,10 +185,11 @@ stages:
          inlineScript: |
           az webapp stop -n $(firstAppServiceName) -g $(azurergname)
           az webapp start -n $(secondAppServiceName) -g $(azurergname)
-      - task: Delay@1
-        displayName: Waits 2 minutes
+      - task: PowerShell@2
+        displayName: Sleeps for 2 minutes
         inputs:
-          delayForMinutes: '2'
+          targetType: 'inline'
+          script: Start-Sleep -Seconds 120
       - task: AzureLoadTest@1
         condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
         displayName: LoadTest 2
@@ -216,10 +218,11 @@ stages:
          inlineScript: |
           az webapp stop -n $(secondAppServiceName) -g $(azurergname)
           az webapp start -n $(thirdAppServiceName) -g $(azurergname)
-      - task: Delay@1
-        displayName: Waits 2 minutes
+      - task: PowerShell@2
+        displayName: Sleeps for 2 minutes
         inputs:
-          delayForMinutes: '2'
+          targetType: 'inline'
+          script: Start-Sleep -Seconds 120
       - task: AzureLoadTest@1
         condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
         displayName: LoadTest 3
@@ -248,10 +251,11 @@ stages:
          inlineScript: |
           az webapp stop -n $(thirdAppServiceName) -g $(azurergname)
           az webapp start -n $(fourthAppServiceName) -g $(azurergname)
-      - task: Delay@1
-        displayName: Waits 2 minutes
+      - task: PowerShell@2
+        displayName: Sleeps for 2 minutes
         inputs:
-          delayForMinutes: '2'
+          targetType: 'inline'
+          script: Start-Sleep -Seconds 120
       - task: AzureLoadTest@1
         condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
         displayName: LoadTest 4
