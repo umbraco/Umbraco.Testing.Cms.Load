@@ -10,6 +10,10 @@ variable "resource_group_location" {
   description = "Location for the Azure resources"
 }
 
+variable "service_plan_id" {
+  description = "ID of the service plan the App service is gonna use"
+}
+
 variable "dotnet_version" {
   type        = string
   description = "The version of dotnet to use"

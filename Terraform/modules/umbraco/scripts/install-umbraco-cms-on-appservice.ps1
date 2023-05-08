@@ -77,3 +77,6 @@ function Get-UrlStatusCode([string] $Url)
 
 $statusCode = Get-UrlStatusCode $appserviceHostname
 Write-Host "StatusCode is: $statusCode"
+
+# Stops the app service
+az webapp stop -n $appserviceName -g $rgName

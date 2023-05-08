@@ -31,21 +31,12 @@ resource "azurerm_mssql_database" "db" {
   sku_name    = "S0"
 }
 
-# App Service Plan
-resource "azurerm_service_plan" "appserviceplan" {
-  name                = "${var.resource_name_prefix}-appserviceplan-${var.version_name}"
-  location            = var.resource_group_location
-  resource_group_name = var.resource_group_name
-  os_type             = "Windows"
-  sku_name            = "S1"
-}
-
 # App Service
 resource "azurerm_windows_web_app" "appservice" {
   name                = "${var.resource_name_prefix}-appservice-${var.version_name}"
   location            = var.resource_group_location
   resource_group_name = var.resource_group_name
-  service_plan_id     = azurerm_service_plan.appserviceplan.id
+  service_plan_id     = var.service_plan_id
 
   site_config {
     application_stack {
