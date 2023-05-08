@@ -153,7 +153,7 @@ stages:
          scriptLocation: 'inlineScript'
          inlineScript: az webapp start -n $(firstAppServiceName) -g $(azurergname)
       - task: Delay@1
-        displayName: Waits 2 minute
+        displayName: Waits 2 minutes
         inputs:
           delayForMinutes: '2'
       - task: AzureLoadTest@1
@@ -185,7 +185,7 @@ stages:
           az webapp stop -n $(firstAppServiceName) -g $(azurergname)
           az webapp start -n $(secondAppServiceName) -g $(azurergname)
       - task: Delay@1
-        displayName: Waits 2 minute
+        displayName: Waits 2 minutes
         inputs:
           delayForMinutes: '2'
       - task: AzureLoadTest@1
@@ -217,7 +217,7 @@ stages:
           az webapp stop -n $(secondAppServiceName) -g $(azurergname)
           az webapp start -n $(thirdAppServiceName) -g $(azurergname)
       - task: Delay@1
-        displayName: Waits 2 minute
+        displayName: Waits 2 minutes
         inputs:
           delayForMinutes: '2'
       - task: AzureLoadTest@1
@@ -249,7 +249,7 @@ stages:
           az webapp stop -n $(thirdAppServiceName) -g $(azurergname)
           az webapp start -n $(fourthAppServiceName) -g $(azurergname)
       - task: Delay@1
-        displayName: Waits 2 minute
+        displayName: Waits 2 minutes
         inputs:
           delayForMinutes: '2'
       - task: AzureLoadTest@1
