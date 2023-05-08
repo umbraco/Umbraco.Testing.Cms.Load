@@ -35,6 +35,9 @@ mkdir $umbracoVersion
 # Switches location to the directory
 Set-Location $umbracoVersion
 
+# Adds the possibility to use prereleases of Umbraco
+dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases"
+
 # Install Umbraco Template and create the project
 dotnet new install Umbraco.Templates::$umbracoVersion
 dotnet new umbraco -n $nameToApp
