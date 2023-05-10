@@ -25,7 +25,7 @@ stages:
   displayName: Terraform Setup and Apply
   jobs:
     - job: checkResourceGroup
-      displayName: Checks if resource group with defined name exists
+      displayName: Checks if resource group with defined name already exists
       steps:
       - task: AzureCLI@2
         name: checkGroup
@@ -142,7 +142,7 @@ stages:
         thirdAppServiceName: $[dependencies.apply.outputs['outputVars.thirdAppServiceName']]
         fourthAppServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
       steps: 
-      # The load test are set up so we will be able to load test up to 4 different hostnames. A load test is only gonna run if the hostName variable for the load test is not null
+      # The load test are set up so we will be able to load test up to 4 different hostnames. A load test is only gonna run if the hostName variable is not null
       - task: AzureCLI@2
         name: startAppServiceOne
         condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
