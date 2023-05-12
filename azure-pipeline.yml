@@ -20,7 +20,12 @@ variables:
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
   
+  umbracoVersions: '{"firstVersion":{"dotnet_version":\"$(firstDotNetVersion)", "umbraco_version":\"$(firstUmbracoVersion)\"}}'
+  
 stages:
+- ${{ if and(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))}}:
+  
+  
 - stage: terraformDeploy
   displayName: Terraform Setup and Apply
   jobs:
