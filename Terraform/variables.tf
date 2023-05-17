@@ -44,5 +44,10 @@ variable "umbraco_cms_versions" {
       dotnet_version  = "v7.0"
       umbraco_version = "11.3.1"
     }
+    version_12_0_0rc1 = {
+      version_name    = "v12-0-0rc1"
+      dotnet_version  = "v7.0"
+      umbraco_version = "12.0.0-rc1"
+    }
   }
 }
