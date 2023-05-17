@@ -24,11 +24,6 @@ variable "umbraco_cms_version" {
   description = "The version of Umbraco.Cms to add as PackageReference"
 }
 
-variable "version_name" {
-  type        = string
-  description = "A name for the version of Umbraco"
-}
-
 variable "admin_login" {
   type        = string
   description = "admin login"

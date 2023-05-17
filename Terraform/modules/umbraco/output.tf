@@ -19,7 +19,7 @@ output "cms_versions" {
   ]
 }
 
-output app_service_name {
+output "app_service_name" {
   value = [
     for module_versions in module.versions :
     module_versions.umbraco_version_values.appserviceName

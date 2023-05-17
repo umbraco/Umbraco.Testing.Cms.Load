@@ -1,6 +1,11 @@
+# Replace . with - in umbraco versions. The reason for this is that we can't have . in our naming for resources
+locals {
+  version_name = replace(var.umbraco_cms_version, ".", "-")
+}
+
 # SQL server
 resource "azurerm_mssql_server" "msserver" {
-  name                         = "${var.resource_name_prefix}-sqlserver-${var.version_name}"
+  name                         = "${var.resource_name_prefix}-sqlserver-${local.version_name}"
   resource_group_name          = var.resource_group_name
   location                     = var.resource_group_location
   version                      = "12.0"
@@ -16,7 +21,7 @@ resource "azurerm_mssql_server" "msserver" {
 
 # Allow all azure services
 resource "azurerm_mssql_firewall_rule" "firewallrule" {
-  name             = "Allow all azure services-${var.version_name}"
+  name             = "Allow all azure services-${local.version_name}"
   server_id        = azurerm_mssql_server.msserver.id
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
@@ -24,7 +29,7 @@ resource "azurerm_mssql_firewall_rule" "firewallrule" {
 
 # Database
 resource "azurerm_mssql_database" "db" {
-  name        = "${var.resource_name_prefix}-db-${var.version_name}"
+  name        = "${var.resource_name_prefix}-db-${local.version_name}"
   server_id   = azurerm_mssql_server.msserver.id
   collation   = "SQL_Latin1_General_CP1_CI_AS"
   max_size_gb = 5
@@ -33,7 +38,7 @@ resource "azurerm_mssql_database" "db" {
 
 # App Service
 resource "azurerm_windows_web_app" "appservice" {
-  name                = "${var.resource_name_prefix}-appservice-${var.version_name}"
+  name                = "${var.resource_name_prefix}-appservice-${local.version_name}"
   location            = var.resource_group_location
   resource_group_name = var.resource_group_name
   service_plan_id     = var.service_plan_id
