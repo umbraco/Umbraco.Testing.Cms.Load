@@ -46,7 +46,6 @@ resource "azurerm_windows_web_app" "appservice" {
   }
 
   app_settings = {
-    "Umbraco.Core.MainDom.Lock"                        = "SqlMainDomLock"
     "Umbraco.Core.LocalTempStorage"                    = "EnvironmentTemp"
     "Umbraco.Examine.LuceneDirectoryFactory"           = "Examine.LuceneEngine.Directories.SyncTempEnvDirectoryFactory, Examine"
     "Umbraco__CMS__Unattended__InstallUnattended"      = "true"
@@ -54,6 +53,7 @@ resource "azurerm_windows_web_app" "appservice" {
     "Umbraco__CMS__Unattended__UnattendedUserEmail"    = "admin@admin.admin"
     "Umbraco__CMS__Unattended__UnattendedUserPassword" = "1234567890"
     "SCM_DO_BUILD_DURING_DEPLOYMENT"                   = true
+    "Serilog__MinimumLevel__Override__Microsoft"       = "Information"
   }
 
   connection_string {
