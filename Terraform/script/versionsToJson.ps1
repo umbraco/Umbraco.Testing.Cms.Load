@@ -27,21 +27,40 @@ param (
 
     [hashtable[]]
     $Hashtables
-    )
+)
 
-    $Hashtables = @{"dotnet_version" = '\' +$firstDotNetVersion; "umbraco_version" = $firstUmbracoVersion}, @{"dotnet_version" = $secondDotNetVersion; "umbraco_version" = $secondUmbracoVersion}, @{"dotnet_version" = $thirdDotNetVersion; "umbraco_version" = $thirdUmbracoVersion}, @{"dotnet_version" = $fourthDotNetVersion; "umbraco_version" = $fourthUmbracoVersion}
+$Hashtables = 
+@{"dotnet_version"    = $firstDotNetVersion; 
+    "umbraco_version" = $firstUmbracoVersion
+}, 
+@{"dotnet_version"    = $secondDotNetVersion;
+    "umbraco_version" = $secondUmbracoVersion
+}, 
+@{"dotnet_version"    = $thirdDotNetVersion; 
+    "umbraco_version" = $thirdUmbracoVersion
+}, 
+@{"dotnet_version"    = $fourthDotNetVersion; 
+    "umbraco_version" = $fourthUmbracoVersion
+}
 
-    $Test = $Hashtables | ConvertTo-Json
+$JsonTest
 
-    #Write-Host $Test
-
-   # foreach ($entry in $Hashtables[2].GetEnumerator()) {
-    #    Write-Host "    " $entry.Key = $entry.Value
-    #}
-
-    foreach ($testtt in $Hashtables){
-        Write-Host "    " $testtt.Key = $testtt.Value
-
+for ($versions = 0; $versions -lt $Hashtables.count; $versions++) {
+    if ($Hashtables[$versions]["dotnet_version"] -and $Hashtables[$versions]["umbraco_version"]) {
+        
+        $versionNumber = $versions + 1
+        
+        if ($JsonTest) {
+            $JsonTest += ',"the' + $versionNumber + 'version":{"dotnet_version":\"' + $Hashtables[$versions]["dotnet_version"] + '\","umbraco_version":\"' + $Hashtables[$versions]["umbraco_version"] + '\"}'
+        }
+        elseif (!$JsonTest) {
+            $JsonTest += '{"the' + $versionNumber + 'version":{"dotnet_version":\"' + $Hashtables[$versions]["dotnet_version"] + '\","umbraco_version":\"' + $Hashtables[$versions]["umbraco_version"] + '\"}'
+        }
     }
+}
 
-    Write-Host $Hashtables.keys
+if ($JsonTest) {
+    $JsonTest += '}'
+}
+
+Write-Host $JsonTest
