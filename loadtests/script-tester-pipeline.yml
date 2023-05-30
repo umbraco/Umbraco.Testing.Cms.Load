@@ -14,7 +14,7 @@ variables:
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
-  emptyString: '\"\"'
+  emptyString: '""'
 
 stages:
 - stage: scriptRun
@@ -26,10 +26,7 @@ stages:
         displayName: update value if empty
         condition: eq(variables['thirdDotNetVersion'],'')
 
-      - script: echo '$thirdDotNetVersion' 
       - script: echo "$thirdDotNetVersion" 
-      
-      - script: echo '$emptyString' 
       - script: echo "$emptyString" 
 
       - task: PowerShell@2
