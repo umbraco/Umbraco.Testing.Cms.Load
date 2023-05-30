@@ -1,27 +1,35 @@
 [CmdletBinding()]
 param (
     [Parameter]
+    [string]
     [AllowNull]
     $firstDotNetVersion,
     [Parameter]
+    [string]
     [AllowNull]
     $firstUmbracoVersion, 
     [Parameter]
+    [string]
     [AllowNull]
     $secondDotNetVersion,
     [Parameter]
+    [string]
     [AllowNull]
     $secondUmbracoVersion, 
     [Parameter]
+    [string]
     [AllowNull]
     $thirdDotNetVersion,
     [Parameter]
+    [string]
     [AllowNull]
     $thirdUmbracoVersion, 
     [Parameter]
+    [string]
     [AllowNull]
     $fourthDotNetVersion,
     [Parameter]
+    [string]
     [AllowNull]
     $fourthUmbracoVersion,
 
