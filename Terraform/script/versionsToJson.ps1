@@ -2,35 +2,35 @@
 param (
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString()]
     $firstDotNetVersion,
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString()]
     $firstUmbracoVersion, 
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString()]
     $secondDotNetVersion,
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString]
     $secondUmbracoVersion, 
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString()]
     $thirdDotNetVersion,
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString()]
     $thirdUmbracoVersion, 
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString()]
     $fourthDotNetVersion,
     [Parameter]
     [string]
-    [AllowNull]
+    [AllowEmptyString()]
     $fourthUmbracoVersion,
 
     [hashtable[]]
