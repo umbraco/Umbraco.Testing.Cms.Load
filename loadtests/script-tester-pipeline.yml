@@ -14,21 +14,37 @@ variables:
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
-  emptyString: '""'
 
 stages:
 - stage: scriptRun
   jobs:
     - job: runScript
       steps:
-      
+      - script: echo "##vso[task.setvariable variable=firstDotNetVersion]null" 
+        displayName: update value if firstDotNetVersion is empty 
+        condition: eq(variables['firstDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=firstUmbracoVersion]null" 
+        displayName: update value if firstUmbracoVersion is empty
+        condition: eq(variables['firstUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=secondDotNetVersion]null" 
+        displayName: update value if secondDotNetVersion is empty
+        condition: eq(variables['secondDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=secondUmbracoVersion]null" 
+        displayName: update value if secondUmbracoVersion is empty
+        condition: eq(variables['secondUmbracoVersion'],'')
       - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null" 
-        displayName: update value if empty
+        displayName: update value if thirdDotNetVersion is empty
         condition: eq(variables['thirdDotNetVersion'],'')
-
-      - script: echo "$thirdDotNetVersion" 
-      - script: echo "$emptyString" 
-
+      - script: echo "##vso[task.setvariable variable=thirdUmbracoVersion]null" 
+        displayName: update value if thirdUmbracoVersion is empty
+        condition: eq(variables['thirdUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null" 
+        displayName: update value if fourthDotNetVersion is empty
+        condition: eq(variables['fourthDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=fourthUmbracoVersion]null" 
+        displayName: update value if fourthUmbracoVersion is empty
+        condition: eq(variables['fourthUmbracoVersion'],'')
+     
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
