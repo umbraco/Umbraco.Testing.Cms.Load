@@ -1,20 +1,20 @@
 [CmdletBinding()]
 param (
-    [Parameter]
+    [Parameter(Switch)]
     $firstDotNetVersion,
-    [Parameter]
+    [Parameter(Switch)]
     $firstUmbracoVersion, 
-    [Parameter]
+    [Parameter(Switch)]
     $secondDotNetVersion,
-    [Parameter]
+    [Parameter(Switch)]
     $secondUmbracoVersion, 
-    [Parameter]
+    [Parameter(Switch)]
     $thirdDotNetVersion,
-    [Parameter]
+    [Parameter(Switch)]
     $thirdUmbracoVersion, 
-    [Parameter]
+    [Parameter(Switch)]
     $fourthDotNetVersion,
-    [Parameter]
+    [Parameter(Switch)]
     $fourthUmbracoVersion,
 
     [hashtable[]]
