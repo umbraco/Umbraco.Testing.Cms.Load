@@ -14,17 +14,22 @@ variables:
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
-  
+
 stages:
 - stage: scriptRun
   jobs:
     - job: runScript
       steps:
-      - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: 'Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion).toString() -thirdUmbracoVersion $(thirdUmbracoVersion).toString() -fourthDotNetVersion $(fourthDotNetVersion).toString() -fourthUmbracoVersion $(fourthUmbracoVersion).toString()'
-      - task: PowerShell@2
-        inputs:
-          filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
-          arguments: '-firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)'
+      
+      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]''" 
+        displayName: update value if empty
+        condition: eq(variables['thirdDotNetVersion'], '')
+
+      #- task: PowerShell@2
+      #  inputs:
+      #    targetType: 'inline'
+      #    script: 'Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion).toString() -thirdUmbracoVersion $(thirdUmbracoVersion).toString() -fourthDotNetVersion $(fourthDotNetVersion).toString() -fourthUmbracoVersion $(fourthUmbracoVersion).toString()'
+     # - task: PowerShell@2
+     #   inputs:
+     #     filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
+     #     arguments: '-firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)'
