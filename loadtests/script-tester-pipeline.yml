@@ -14,7 +14,7 @@ variables:
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
-  emptyString: '"fw"'
+  emptyString: "''"
 
 stages:
 - stage: scriptRun
