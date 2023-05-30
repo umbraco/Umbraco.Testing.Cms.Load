@@ -14,6 +14,7 @@ variables:
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
   loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
+  emptyString: ''
 
 stages:
 - stage: scriptRun
@@ -21,9 +22,9 @@ stages:
     - job: runScript
       steps:
       
-      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]''" 
+      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]$(emptyString)" 
         displayName: update value if empty
-        condition: eq(variables['thirdDotNetVersion'], 'null')
+        condition: eq(variables['thirdDotNetVersion'],'')
 
       - task: PowerShell@2
         inputs:
