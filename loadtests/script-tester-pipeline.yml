@@ -25,10 +25,10 @@ stages:
         displayName: update value if empty
         condition: eq(variables['thirdDotNetVersion'], '')
 
-      #- task: PowerShell@2
-      #  inputs:
-      #    targetType: 'inline'
-      #    script: 'Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion).toString() -thirdUmbracoVersion $(thirdUmbracoVersion).toString() -fourthDotNetVersion $(fourthDotNetVersion).toString() -fourthUmbracoVersion $(fourthUmbracoVersion).toString()'
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion).toString() -thirdUmbracoVersion $(thirdUmbracoVersion).toString() -fourthDotNetVersion $(fourthDotNetVersion).toString() -fourthUmbracoVersion $(fourthUmbracoVersion).toString()'
      # - task: PowerShell@2
      #   inputs:
      #     filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
