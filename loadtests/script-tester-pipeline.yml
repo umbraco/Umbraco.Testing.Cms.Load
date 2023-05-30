@@ -22,7 +22,7 @@ stages:
     - job: runScript
       steps:
       
-      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null)" 
+      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null" 
         displayName: update value if empty
         condition: eq(variables['thirdDotNetVersion'],'')
 
