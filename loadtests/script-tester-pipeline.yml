@@ -27,7 +27,10 @@ stages:
         condition: eq(variables['thirdDotNetVersion'],'')
 
       - script: echo '$thirdDotNetVersion' 
-      - script: Write-Host "$thirdDotNetVersion" 
+      - script: echo "$thirdDotNetVersion" 
+      
+      - script: echo '$emptyString' 
+      - script: echo "$emptyString" 
 
       - task: PowerShell@2
         inputs:
