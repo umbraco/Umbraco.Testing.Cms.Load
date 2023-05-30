@@ -1,41 +1,34 @@
 [CmdletBinding()]
 param (
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString()]
     $firstDotNetVersion,
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString()]
     $firstUmbracoVersion, 
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString()]
     $secondDotNetVersion,
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString]
     $secondUmbracoVersion, 
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString()]
     $thirdDotNetVersion,
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString()]
     $thirdUmbracoVersion, 
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString()]
     $fourthDotNetVersion,
-    [Parameter]
+    [Parameter()]
     [string]
-    [AllowEmptyString()]
     $fourthUmbracoVersion,
 
     [hashtable[]]
     $Hashtables
 )
+
 $Hashtables = 
 @{"dotnet_version"    = $firstDotNetVersion; 
     "umbraco_version" = $firstUmbracoVersion
@@ -53,7 +46,7 @@ $Hashtables =
 $JsonTest
 
 for ($versions = 0; $versions -lt $Hashtables.count; $versions++) {
-    if ($Hashtables[$versions]["dotnet_version"] -and $Hashtables[$versions]["umbraco_version"]) {
+    if ($Hashtables[$versions]["dotnet_version"] -ne "null" -and $Hashtables[$versions]["umbraco_version"] -ne "null") {
         $replaceSpecialChars = $Hashtables[$versions]["umbraco_version"].Replace('.','_')
         
         if ($JsonTest) {
