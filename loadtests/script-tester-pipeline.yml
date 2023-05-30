@@ -38,9 +38,9 @@ stages:
       - script: echo "##vso[task.setvariable variable=thirdUmbracoVersion]null" 
         displayName: update value if thirdUmbracoVersion is empty
         condition: eq(variables['thirdUmbracoVersion'],'')
-     # - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null" 
-      #  displayName: update value if fourthDotNetVersion is empty
-       # condition: eq(variables['fourthDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null" 
+        displayName: update value if fourthDotNetVersion is empty
+        condition: eq(variables['fourthDotNetVersion'],'')
       - script: echo "##vso[task.setvariable variable=fourthUmbracoVersion]null" 
         displayName: update value if fourthUmbracoVersion is empty
         condition: eq(variables['fourthUmbracoVersion'],'')
@@ -48,7 +48,7 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion ${env:THIRDDOTNETVERSION} -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion ${env:FOURTHDOTNETVERSION} -fourthUmbracoVersion $(fourthUmbracoVersion)
+          script: Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
       - task: PowerShell@2
         inputs:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
