@@ -58,7 +58,7 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: echo "##vso[task.setvariable variable=umbracoVersions;]$umbracoVersions"
+          script: echo "$env:umbracoTFversions"
       
       - task: PowerShell@2
         inputs:
