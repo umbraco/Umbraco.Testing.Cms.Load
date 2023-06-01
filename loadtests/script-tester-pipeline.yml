@@ -58,5 +58,5 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: echo $(env:umbracoTFversions)
+          script: echo $(umbracoTFversions)
     
