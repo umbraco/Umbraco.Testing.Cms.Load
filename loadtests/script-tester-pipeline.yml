@@ -50,6 +50,12 @@ stages:
           targetType: 'inline'
           script: Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
       - task: PowerShell@2
+        name: versionsOutput
         inputs:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
           arguments: '-firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)'
+
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host "##vso[task.setvariable variable=output;]$versionsOutput"'
