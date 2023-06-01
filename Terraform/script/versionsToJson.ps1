@@ -27,7 +27,7 @@ param (
 
     [hashtable[]]
     $Hashtables
-)
+    )
 
 $Hashtables = 
 @{"dotnet_version"    = $firstDotNetVersion; 
@@ -66,7 +66,7 @@ if ($JsonTest) {
 
 [Environment]::SetEnvironmentVariable('umbracoTFversions',$JsonTest)
 
-[System.Environment]::GetEnvironmentVariable('umbracoTFversions')
+#[System.Environment]::GetEnvironmentVariable('umbracoTFversions')
 
 
-Get-Item -Path Env:\umbracoTFversions*
+Get-ChildItem Env:umbracoTFversions
