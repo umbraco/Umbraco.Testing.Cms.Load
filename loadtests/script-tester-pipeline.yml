@@ -58,8 +58,9 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: echo "##vso[task.setvariable variable=JsonTest;]$JsonTest"
+          script: echo "##vso[task.setvariable variable=umbracoVersions;]$umbracoVersions"
+      
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host $JsonTest'
+          script: 'Write-Host $umbracoVersions'
