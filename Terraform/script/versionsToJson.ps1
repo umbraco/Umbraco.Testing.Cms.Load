@@ -62,4 +62,4 @@ if ($JsonTest) {
     $JsonTest += '}'
 }
 
-Write-Host $JsonTest
+Write-Output $JsonTest
