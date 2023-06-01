@@ -62,5 +62,11 @@ if ($JsonTest) {
     $JsonTest += '}'
 }
 
-Write-Output "$JsonTest"
+#Write-Output "$JsonTest"
 
+[Environment]::SetEnvironmentVariable('umbracoTFversions',$JsonTest)
+
+[System.Environment]::GetEnvironmentVariable('umbracoTFversions')
+
+
+Get-Item -Path Env:\umbracoTFversions*
