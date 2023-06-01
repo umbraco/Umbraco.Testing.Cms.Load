@@ -54,11 +54,10 @@ stages:
         inputs:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
           arguments: '-firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)'
-        env:
-          umbracoversions: $env:umbracoTFversions
+      
       - task: PowerShell@2
         continueOnError: true
         inputs:
           targetType: 'inline'
-          script: echo $(versionsOutput.umbracoTFversions)
+          script: echo $(versionsOutput(env:umbracoTFversions))
     
