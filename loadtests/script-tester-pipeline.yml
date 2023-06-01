@@ -58,4 +58,8 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host "##vso[task.setvariable variable=output;]$versionsOutput"'
+          script: 'Write-Host ##vso[task.setvariable variable=output;]$versionsOutput'
+      - task: PowerShell@2
+        inputs:
+          targetType: 'inline'
+          script: 'Write-Host $output'
