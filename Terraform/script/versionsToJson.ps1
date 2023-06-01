@@ -64,3 +64,10 @@ if ($JsonTest) {
 
 Write-Output "$JsonTest"
 
+[PSCustomObject]@{
+    umbracoVersions = $JsonTest
+}
+
+
+
+Write-Output "$umbracoVersions"
