@@ -58,8 +58,8 @@ stages:
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host ##vso[task.setvariable variable=output;]$versionsOutput'
+          script: 'Write-Host ##vso[task.setvariable variable=JsonTest;]$JsonTest'
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
-          script: 'Write-Host $output'
+          script: 'Write-Host $JsonTest'
