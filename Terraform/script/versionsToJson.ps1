@@ -62,4 +62,5 @@ if ($JsonTest) {
     $JsonTest += '}'
 }
 
-Write-Output $JsonTest
+Write-Output "$JsonTest"
+
