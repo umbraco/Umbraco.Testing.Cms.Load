@@ -12,8 +12,8 @@ variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'azure-andreas-load-tester-umbraco'
-  azurergname: 'azure-andreas-load-testing-rg'
+  azureprefix: 'azure-az-load-tester-umbraco'
+  azurergname: 'azure-az-load-testing-rg'
   loadTestResourceName: '$(azureprefix)-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
@@ -35,8 +35,52 @@ stages:
          scriptType: 'pscore'
          scriptLocation: 'inlineScript'
          inlineScript: 'Write-Host "##vso[task.setvariable variable=resourceGroupExists;isOutput=true]$(az group exists -n $(azurergname))"'
+        
+      
+    
+  
+    - job: getFormattedVersions
+      steps:
+      # If a version is empty it is changed to null, otherwise our powershell script would not be able to read the input
+      - script: echo "##vso[task.setvariable variable=firstDotNetVersion]null" 
+        displayName: update value if firstDotNetVersion is empty 
+        condition: eq(variables['firstDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=firstUmbracoVersion]null" 
+        displayName: update value if firstUmbracoVersion is empty
+        condition: eq(variables['firstUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=secondDotNetVersion]null" 
+        displayName: update value if secondDotNetVersion is empty
+        condition: eq(variables['secondDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=secondUmbracoVersion]null" 
+        displayName: update value if secondUmbracoVersion is empty
+        condition: eq(variables['secondUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null" 
+        displayName: update value if thirdDotNetVersion is empty
+        condition: eq(variables['thirdDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=thirdUmbracoVersion]null" 
+        displayName: update value if thirdUmbracoVersion is empty
+        condition: eq(variables['thirdUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null" 
+        displayName: update value if fourthDotNetVersion is empty
+        condition: eq(variables['fourthDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=fourthUmbracoVersion]null" 
+        displayName: update value if fourthUmbracoVersion is empty
+        condition: eq(variables['fourthUmbracoVersion'],'')
+     
+      - task: PowerShell@2
+        name: versionsOutput
+        inputs:
+          filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
+          arguments: |
+            -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
+            echo "##vso[task.setvariable variable=umbracoversions]$env:umbracoTFversions"
+          
+        
+
     - job: setup 
-      dependsOn: checkResourceGroup
+      dependsOn: 
+      - checkResourceGroup
+      - getFormattedVersions
       condition: eq(dependencies.checkResourceGroup.outputs['checkGroup.resourceGroupExists'], false)
       displayName: Terraform setup
       steps:
@@ -64,9 +108,25 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
           commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname)'
+          
+        
+      
+    
+    - job: manualValidationBeforeApply
+      dependsOn: setup
+      displayName: Manual validation before applying
+      pool: server
+      steps:
+       - task: ManualValidation@0
+         displayName: Wait for external validation
+         inputs:
+           # notifyUsers: aze@umbraco.dk
+           instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
+
+
     - job: apply
       displayName: Terraform Apply
-      dependsOn: setup 
+      dependsOn: manualValidationBeforeApply 
       steps:
       # We need to initialize again, otherwise the pipeline will fail.
       - task: PowerShell@2
