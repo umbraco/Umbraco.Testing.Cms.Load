@@ -102,6 +102,8 @@ stages:
           provider: 'azurerm'
           command: 'validate'
           workingDirectory: '$(terraformWorkingDirectory)'
+          
+       - script: echo '$(umbracoTFversions)'
        - task: TerraformTaskV4@4
          displayName: Terraform Plan
          inputs:
@@ -109,11 +111,9 @@ stages:
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: -parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var='umbraco_cms_versions=$(umbracoTFversions)'
+          commandOptions: "-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var='umbraco_cms_versions=$(umbracoTFversions)'"
           
         
-      
-    
     - job: manualValidationBeforeApply
       dependsOn: setup
       displayName: Manual validation before applying
