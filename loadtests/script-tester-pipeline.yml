@@ -50,9 +50,19 @@ stages:
           targetType: 'inline'
           script: Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
       - task: PowerShell@2
+        continueOnError: true
         name: versionsOutput
         inputs:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
+          arguments: |
+            -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
+            echo "##vso[task.setvariable variable=umbracoTFversions]$umbracoTFversions"
+
+      - task: AzureCLI@2
+        continueOnError: true
+        inputs:
+          scriptType: ps
+          scriptPath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
             echo "##vso[task.setvariable variable=umbracoTFversions]$umbracoTFversions"
