@@ -16,9 +16,6 @@ variables:
 - name: loadTestFileLocation
   value: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
 
-- name: umbracoversions
-  value: 'test'
-
 stages:
 - stage: scriptRun
   jobs:
@@ -58,8 +55,6 @@ stages:
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
             echo "##vso[task.setvariable variable=umbracoversions;isOutput=true]$env:umbracoTFversions"
 
-      - script: |
-          echo '$(umbracoversions)'
     - job: getValueJob
       dependsOn: runScript
       variables: 
