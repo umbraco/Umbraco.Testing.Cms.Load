@@ -24,6 +24,7 @@ stages:
   jobs:
     - job: runScript
       steps:
+      # If a version is empty it is changed to null, otherwise our powershell script would not be able to read the input
       - script: echo "##vso[task.setvariable variable=firstDotNetVersion]null" 
         displayName: update value if firstDotNetVersion is empty 
         condition: eq(variables['firstDotNetVersion'],'')
@@ -49,27 +50,20 @@ stages:
         displayName: update value if fourthUmbracoVersion is empty
         condition: eq(variables['fourthUmbracoVersion'],'')
      
-
       - task: PowerShell@2
-        inputs:
-          targetType: 'inline'
-          script: Write-Host -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-      - task: PowerShell@2
-        continueOnError: true
         name: versionsOutput
         inputs:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-            echo "##vso[task.setvariable variable=umbracoversions]$env:umbracoTFversions"
+            echo "##vso[task.setvariable variable=umbracoversions;isOutput=true]$env:umbracoTFversions"
 
       - script: |
           echo '$(umbracoversions)'
-          echo "$(umbracoversions)"
-          echo $(umbracoversions)
-       
-
- 
-        continueOnError: true
-
+    - job: getValueJob
+      dependsOn: runScript
+      variables: 
+        umbracoVersions: $[dependencies.runScript.outputs['versionsOutput.umbracoVersions']]
       
+      steps:
+        - script: echo '$(umbracoVersions)' 
