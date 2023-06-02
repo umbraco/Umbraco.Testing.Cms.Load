@@ -67,11 +67,7 @@ stages:
 
       - script: |
           echo $(umbracoversions)
-          echo ${umbracoversions}
-          echo ${{ variables.umbracoversions }}
-          echo $(umbracoversionsenv)
-          echo $env:UMBRACOTFVERSIONS
-
+          echo $(umbracoversions.value)
         continueOnError: true
 
       
