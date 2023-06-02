@@ -62,8 +62,7 @@ stages:
         continueOnError: true
         inputs:
           scriptType: ps
-          workingDirectory: 'Terraform/script/versionsToJson.ps1'
-          scriptPath: 'versionsToJson.ps1'
+          scriptPath: 'Terraform/script/versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
             echo "##vso[task.setvariable variable=umbracoTFversions]$umbracoTFversions"
