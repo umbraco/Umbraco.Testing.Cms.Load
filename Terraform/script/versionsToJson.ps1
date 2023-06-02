@@ -50,10 +50,10 @@ for ($versions = 0; $versions -lt $Hashtables.count; $versions++) {
         $replaceSpecialChars = $Hashtables[$versions]["umbraco_version"].Replace('.','_')
         
         if ($JsonTest) {
-            $JsonTest += ',"version' + $replaceSpecialChars + '" :{"dotnet_version":\"' + $Hashtables[$versions]["dotnet_version"] + '\","umbraco_version":\"' + $Hashtables[$versions]["umbraco_version"] + '\"}'
+            $JsonTest += ',"version' + $replaceSpecialChars + '":{"dotnet_version":\"' + $Hashtables[$versions]["dotnet_version"] + '\","umbraco_version":\"' + $Hashtables[$versions]["umbraco_version"] + '\"}'
         }
         elseif (!$JsonTest) {
-            $JsonTest += '{"version' + $replaceSpecialChars + '" :{"dotnet_version":\"' + $Hashtables[$versions]["dotnet_version"] + '\","umbraco_version":\"' + $Hashtables[$versions]["umbraco_version"] + '\"}'
+            $JsonTest += '{"version' + $replaceSpecialChars + '":{"dotnet_version":\"' + $Hashtables[$versions]["dotnet_version"] + '\","umbraco_version":\"' + $Hashtables[$versions]["umbraco_version"] + '\"}'
         }
     }
 }
