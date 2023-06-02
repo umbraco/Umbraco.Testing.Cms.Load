@@ -16,8 +16,8 @@ variables:
 - name: loadTestFileLocation
   value: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
 
-- name: umbracoTFversions
-  value: ''
+- name: umbracoversions
+  value: 'test'
 
 stages:
 - stage: scriptRun
@@ -61,7 +61,10 @@ stages:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-            echo "##vso[task.setvariable variable=umbracoTFversions]umbracoTFversions"
+            echo "##vso[task.setvariable variable=umbracoversions]umbracoTFversions"
 
-      - script: echo $(umbracoTFversions)
+      - script: |
+          echo $(umbracoversions)
+          echo $(variables.umbracoversions)
+
       
