@@ -73,7 +73,7 @@ stages:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-            echo "##vso[task.setvariable variable=umbracoversions]$env:umbracoTFversions"
+            echo "##vso[task.setvariable variable=umbracoTFversions;isOutput=true]$env:umbracoTFversions"
           
         
 
@@ -83,6 +83,8 @@ stages:
       - getFormattedVersions
       condition: eq(dependencies.checkResourceGroup.outputs['checkGroup.resourceGroupExists'], false)
       displayName: Terraform setup
+      variables:
+        umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
       steps:
        - task: TerraformInstaller@0
          displayName: Install Terraform
@@ -107,7 +109,7 @@ stages:
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname)'
+          commandOptions: -parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var='umbraco_cms_versions=$(umbracoTFversions)'
           
         
       
