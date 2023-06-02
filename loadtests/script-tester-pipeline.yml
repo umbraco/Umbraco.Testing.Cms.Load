@@ -66,8 +66,7 @@ stages:
       - script: |
           echo $(umbracoversions)
           echo ${umbracoversions}
-          echo ${{ umbracoversions }}
-          echo $(${{ umbracoversions }})
+
           echo ${{ variables.umbracoversions }}
         continueOnError: true
 
