@@ -9,7 +9,9 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  umbracoTFversions: ''
+- name: umbracoTFversions
+  value: ''
+
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
