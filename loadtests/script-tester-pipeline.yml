@@ -67,7 +67,8 @@ stages:
 
       - script: |
           echo $(umbracoversions)
-          echo $(umbracoversions.value)
+          echo $(umbracoversions[value])
+          echo $(umbracoversions[0])
         continueOnError: true
 
       
