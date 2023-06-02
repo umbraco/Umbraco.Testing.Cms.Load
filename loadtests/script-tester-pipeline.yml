@@ -45,6 +45,8 @@ stages:
         displayName: update value if fourthUmbracoVersion is empty
         condition: eq(variables['fourthUmbracoVersion'],'')
      
+      - script: echo '$(System.DefaultWorkingDirectory)/Terraform'
+
       - task: PowerShell@2
         inputs:
           targetType: 'inline'
@@ -62,7 +64,7 @@ stages:
         continueOnError: true
         inputs:
           scriptType: ps
-          scriptPath: 'Terraform/script/versionsToJson.ps1'
+          scriptPath: 'C:\LoadTestPipeline\load-test-pipeline\Terraform\script\versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
             echo "##vso[task.setvariable variable=umbracoTFversions]$umbracoTFversions"
