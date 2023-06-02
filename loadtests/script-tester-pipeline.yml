@@ -9,7 +9,7 @@ pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-
+  umbracoTFversions: ''
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
@@ -58,20 +58,7 @@ stages:
           filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-            echo "##vso[task.setvariable variable=umbracoTFversions]$umbracoTFversions"
+            echo "##vso[task.setvariable variable=umbracoTFversions]umbracoTFversions"
 
-      - task: AzureCLI@2
-        continueOnError: true
-        inputs:
-          scriptType: ps
-          scriptPath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
-          arguments: |
-            -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-            echo "##vso[task.setvariable variable=umbracoTFversions]$umbracoTFversions"
-
-      - task: PowerShell@2
-        continueOnError: true
-        inputs:
-          targetType: 'inline'
-          script: echo $(umbracoTFversions)
-    
+      - script: echo $(versionsOutput.umbracoTFversions)
+      
