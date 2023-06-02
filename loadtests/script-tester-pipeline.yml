@@ -45,7 +45,7 @@ stages:
         displayName: update value if fourthUmbracoVersion is empty
         condition: eq(variables['fourthUmbracoVersion'],'')
      
-      - script: echo $(System.DefaultWorkingDirectory)/Terraform'
+      - script: echo '$(System.DefaultWorkingDirectory)/Terraform'
 
       - task: PowerShell@2
         inputs:
