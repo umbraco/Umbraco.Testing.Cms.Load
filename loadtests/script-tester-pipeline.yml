@@ -62,12 +62,16 @@ stages:
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
             echo "##vso[task.setvariable variable=umbracoversions]umbracoTFversions"
+            echo "##vso[task.setvariable variable=umbracoversionsenv]$env:UMBRACOTFVERSIONS"
+            
 
       - script: |
           echo $(umbracoversions)
           echo ${umbracoversions}
-          echo ${{ umbracoversions }}
           echo ${{ variables.umbracoversions }}
+          echo $(umbracoversionsenv)
+          echo $env:UMBRACOTFVERSIONS
+
         continueOnError: true
 
       
