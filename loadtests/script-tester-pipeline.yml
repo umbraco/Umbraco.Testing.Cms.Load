@@ -64,10 +64,10 @@ stages:
             echo "##vso[task.setvariable variable=umbracoversions]$env:umbracoTFversions"
 
       - script: |
-          Write-Host "$(umbracoversions)"
           echo '$(umbracoversions)'
-          Write-Host $(umbracoversions)
-          Write-Host '$(umbracoversions)'
+          echo "$(umbracoversions)"
+          echo $(umbracoversions)
+       
 
  
         continueOnError: true
