@@ -62,7 +62,7 @@ stages:
         continueOnError: true
         inputs:
           scriptType: ps
-          workingDirectory: '$(terraformWorkingDirectory)/script'
+          workingDirectory: 'Terraform/script/versionsToJson.ps1'
           scriptPath: 'versionsToJson.ps1'
           arguments: |
             -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
