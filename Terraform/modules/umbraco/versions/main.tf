@@ -15,7 +15,7 @@ resource "azurerm_mssql_server" "msserver" {
   # Added a timeout for creating the server because it can sometimes fail and run for 60 min
   # If the msserver isn't created in time, it can be locked in azure. Which makes us unable to delete the rg
   timeouts {
-    create = "10m"
+    create = "7m"
   }
 }
 
@@ -64,7 +64,7 @@ resource "azurerm_windows_web_app" "appservice" {
   connection_string {
     name  = "umbracoDbDSN"
     type  = "SQLAzure"
-    value = "Server=tcp:${azurerm_mssql_server.msserver.fully_qualified_domain_name},1433;database=${azurerm_mssql_database.db.name};User ID=${azurerm_mssql_server.msserver.administrator_login};Password=${azurerm_mssql_server.msserver.administrator_login_password};Connection Timeout=120;"
+    value = "Server=tcp:${azurerm_mssql_server.msserver.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.msserver.administrator_login}@${azurerm_mssql_server.msserver.name};Password=${azurerm_mssql_server.msserver.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;"
   }
 }
 
