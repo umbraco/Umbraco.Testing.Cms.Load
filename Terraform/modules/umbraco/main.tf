@@ -7,13 +7,13 @@ resource "azurerm_resource_group" "rg" {
 # Random string for SQL server login
 resource "random_string" "admin_login" {
   length     = 16
-  special    = true
+  special    = false
   depends_on = [azurerm_resource_group.rg]
 }
 
 resource "random_password" "admin_password" {
   length     = 16
-  special    = true
+  special    = false
   depends_on = [azurerm_resource_group.rg]
 }
 
