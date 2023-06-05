@@ -26,14 +26,17 @@ param (
     $tenant_id
 )
 
-$pathToApp = "./NewUmbracoProject$umbracoVersion"
-$nameToApp = "NewUmbracoProject$umbracoVersion"
+# On version 9 you can't have a namespace with '.' so we remove them from the name.
+$updatedVersionName = $umbracoVersion.Replace('.','')
+
+$pathToApp = "./NewUmbracoProject$updatedVersionName"
+$nameToApp = "NewUmbracoProject$updatedVersionName"
 
 # Creates a new folder for the Umbraco Template to be installed to
-mkdir $umbracoVersion
+mkdir $updatedVersionName
 
 # Switches location to the directory
-Set-Location $umbracoVersion
+Set-Location $updatedVersionName
 
 # Adds the possibility to use prereleases of Umbraco
 dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases"
