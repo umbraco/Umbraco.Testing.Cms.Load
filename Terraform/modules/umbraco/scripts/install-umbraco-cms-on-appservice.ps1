@@ -66,7 +66,7 @@ Remove-Item -Recurse -Force $pathToApp
 Set-Location ..
 
 # Cleans up the Umbraco Template install folder
-Remove-Item -Force $umbracoVersion
+Remove-Item -Force $updatedVersionName
 
 # # Ping the App service to trigger the installation process
 function Get-UrlStatusCode([string] $Url)

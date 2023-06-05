@@ -13,9 +13,9 @@ variable "umbraco_cms_versions" {
   }
 }
 
-#variable "test_map" {
-#  type = map(object({
-#    dotnet_version = string
-#    umbraco_version = string
-#  })) 
-#}
+variable "test_map" {
+  type = map(object({
+    dotnet_version = string
+    umbraco_version = string
+  })) 
+}
