@@ -23,7 +23,7 @@ resource "azurerm_service_plan" "appserviceplan" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Windows"
-  sku_name            = "S1"
+  sku_name            = "S3"
 }
 
 resource "azurerm_load_test" "load_test" {
