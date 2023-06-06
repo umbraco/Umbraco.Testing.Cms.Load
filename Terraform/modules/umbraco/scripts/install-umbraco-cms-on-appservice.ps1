@@ -48,6 +48,15 @@ dotnet new umbraco -n $nameToApp
 # Adds the starter kit Clean
 dotnet add $nameToApp package clean
 
+# If we are using V12 we need to use ImageSharp2 instead of ImageSharp3
+if ($umbracoVersion.StartsWith("12")){
+    dotnet remove $nameToApp package Umbraco.CMS
+    
+    dotnet add $nameToApp package Umbraco.Cms.Targets -v $umbracoVersion
+    dotnet add $nameToApp package Umbraco.Cms.Persistence.SqlServer -v $umbracoVersion
+    dotnet add $nameToApp package Umbraco.Cms.Persistence.Sqlite -v $umbracoVersion
+    dotnet add $nameToApp package Umbraco.Cms.Imaging.ImageSharp2 -v $umbracoVersion
+}
 # Publish the app and zip it up
 dotnet publish $pathToApp -c Release -o $pathToApp/publish
 Compress-Archive -Path $pathToApp/publish/* -DestinationPath $pathToApp/publish.zip
