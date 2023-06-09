@@ -58,6 +58,7 @@ dotnet add $nameToApp package clean
 #    dotnet add $nameToApp package Umbraco.Cms.Persistence.Sqlite -v $umbracoVersion
 #    dotnet add $nameToApp package Umbraco.Cms.Imaging.ImageSharp2 -v $umbracoVersion
 #}
+
 # Publish the app and zip it up
 dotnet publish $pathToApp -c Release -o $pathToApp/publish
 Compress-Archive -Path $pathToApp/publish/* -DestinationPath $pathToApp/publish.zip
