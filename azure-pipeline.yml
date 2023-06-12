@@ -18,6 +18,10 @@ parameters:
   - S2
   - S3
 
+- name: prefix
+  displayName: Prefix for all resources created in terraform
+  type: string
+  default: umbraco-load-test-pipeline
 
 variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
