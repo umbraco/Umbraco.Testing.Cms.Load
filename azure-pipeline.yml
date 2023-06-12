@@ -21,15 +21,14 @@ parameters:
 - name: prefix
   displayName: Prefix for all resources created in terraform
   type: string
-  default: umbraco-load-test-pipeline
+  default: umbraco-azure-load-test-pipeline
 
 variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
   # Azure Resource Variables
-  azureprefix: 'az-az-load-tester-umbraco'
-  azurergname: 'az-az-load-testing-rg'
-  loadTestResourceName: '$(azureprefix)-loadtest'
+  azurergname: '${{ parameters.appPlanSku }}-rg'
+  loadTestResourceName: '${{ parameters.appPlanSku }}-loadtest'
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
@@ -121,7 +120,7 @@ stages:
           command: 'plan'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var="umbraco_cms_versions=$(umbracoTFversions)"'
+          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.appPlanSku }} -var resource_group_name=$(azurergname) -var="umbraco_cms_versions=$(umbracoTFversions)"'
           
     - job: apply
       displayName: Terraform Apply
@@ -157,7 +156,7 @@ stages:
           command: 'apply'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=$(azureprefix) -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var="umbraco_cms_versions=$(umbracoTFversions)"'
+          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.appPlanSku }} -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var="umbraco_cms_versions=$(umbracoTFversions)"'
       - task: TerraformTaskV4@4
         displayName: Terraform Output
         inputs:
