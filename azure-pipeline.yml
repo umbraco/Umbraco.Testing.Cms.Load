@@ -9,7 +9,7 @@ pool:
   vmImage: 'ubuntu-latest'
 
 parameters:
-- name: appPlanSku
+- name: appServicePlanSku
   displayName: Sku for App Service Plan
   type: string
   default: S3
@@ -26,6 +26,7 @@ parameters:
 variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
+
   # Azure Resource Variables
   azurergname: '${{ parameters.prefix }}-rg'
   loadTestResourceName: '${{ parameters.prefix }}-loadtest'
@@ -91,7 +92,7 @@ stages:
       - checkResourceGroup
       - getFormattedVersions
       condition: eq(dependencies.checkResourceGroup.outputs['checkGroup.resourceGroupExists'], false)
-      displayName: Terraform setup
+      displayName: Terraform Setup
       variables:
         umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
       steps:
@@ -121,7 +122,7 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
           commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var="umbraco_cms_versions=$(umbracoTFversions)"'
-          
+
     - job: apply
       displayName: Terraform Apply
       dependsOn: 
@@ -139,7 +140,7 @@ stages:
           workingDirectory: '$(terraformWorkingDirectory)'
       - task: AzureCLI@2
         name: AzLoginInfo
-        displayName: Get Azure Login Credentials 
+        displayName: Gets Azure Login Credentials 
         inputs:
          azureSubscription: '$(serviceConnection)'
          scriptType: bash
@@ -156,7 +157,7 @@ stages:
           command: 'apply'
           workingDirectory: '$(terraformWorkingDirectory)'
           environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var="umbraco_cms_versions=$(umbracoTFversions)"'
+          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var app_service_plan_sku=${{ appServicePlanSku }} -var="umbraco_cms_versions=$(umbracoTFversions)"'
       - task: TerraformTaskV4@4
         displayName: Terraform Output
         inputs:
@@ -367,7 +368,8 @@ stages:
          timeoutInMinutes: 1440
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate if you do not want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will aswell'
+           instructions: 'Please press "Resume" if you do not want to keep the resource group $(azurergname). If you press "Reject" or do not pick an option after 24 hours, The resource group $(azurergname), and all the content inside of the resource group will be deleted'
+
 
     - job: deleteResourceGroup
       displayName: Deletes the resource group
