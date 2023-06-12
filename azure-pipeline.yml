@@ -8,6 +8,17 @@ trigger: none
 pool:
   vmImage: 'ubuntu-latest'
 
+parameters:
+- name: appPlanSku
+  displayName: Sku for App Service Plan
+  type: string
+  default: S3
+  values:
+  - S1
+  - S2
+  - S3
+
+
 variables:
   # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-connection'
@@ -171,6 +182,8 @@ stages:
             Write-Host "##vso[task.setvariable variable=thirdAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[2]')"
             Write-Host "##vso[task.setvariable variable=fourthAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[3]')"
           workingDirectory: '$(terraformWorkingDirectory)'
+
+
     - job: runLoadTest
       displayName: Runs the load test
       dependsOn: apply
@@ -324,7 +337,9 @@ stages:
               "name": "hostName",
               "value": "$(fourthHostName)"
               }
-            ]      
+            ]
+
+
     - job: doesResourceGroupExists
       dependsOn: runLoadTest
       condition: succeededOrFailed()
@@ -346,13 +361,15 @@ stages:
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
+         timeoutInMinutes: 1440
          inputs:
            # notifyUsers: aze@umbraco.dk
-           instructions: 'Please validate if you want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will also be deleted.'
+           instructions: 'Please validate if you do not want to delete the resource group with the name of $(azurergname). All the content inside of the resource group will aswell'
+
     - job: deleteResourceGroup
       displayName: Deletes the resource group
       dependsOn: manualValidationResourceGroup
-      condition: eq(dependencies.manualValidationResourceGroup.result, 'succeeded')
+      condition: eq(dependencies.manualValidationResourceGroup.result, 'failed')
       steps:
       - task: AzureCLI@2
         name: checkResourceGroupAgain
