@@ -7,13 +7,13 @@ resource "azurerm_resource_group" "rg" {
 # Random string for SQL server login
 resource "random_string" "admin_login" {
   length     = 16
-  special    = true
+  special    = false
   depends_on = [azurerm_resource_group.rg]
 }
 
 resource "random_password" "admin_password" {
   length     = 16
-  special    = true
+  special    = false
   depends_on = [azurerm_resource_group.rg]
 }
 
@@ -34,7 +34,7 @@ resource "azurerm_load_test" "load_test" {
   depends_on = [azurerm_service_plan.appserviceplan]
 }
 
-# We create a module called versions, the reason for that is because we want to have multiple app services with different Umbraco Versions. You can define the versions you want to test in the variables.ts
+# We create a module called versions, the reason for that is because we want to have multiple app services with different Umbraco Versions.
 module "versions" {
   # We use a for_each so it creates a module for each version of Umbraco we have defined in variables.
   for_each                = var.umbraco_cms_versions
@@ -43,7 +43,6 @@ module "versions" {
   resource_group_name     = azurerm_resource_group.rg.name
   resource_group_location = azurerm_resource_group.rg.location
   service_plan_id         = azurerm_service_plan.appserviceplan.id
-  version_name            = each.value["version_name"]
   dotnet_version          = each.value["dotnet_version"]
   umbraco_cms_version     = each.value["umbraco_version"]
   admin_login             = random_string.admin_login.result

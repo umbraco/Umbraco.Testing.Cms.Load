@@ -1,6 +1,11 @@
+# Replace . with - in umbraco versions. The reason for this is that we can't have . in our naming for resources
+locals {
+  version_name = replace(var.umbraco_cms_version, ".", "-")
+}
+
 # SQL server
 resource "azurerm_mssql_server" "msserver" {
-  name                         = "${var.resource_name_prefix}-sqlserver-${var.version_name}"
+  name                         = "${var.resource_name_prefix}-sqlserver-${local.version_name}"
   resource_group_name          = var.resource_group_name
   location                     = var.resource_group_location
   version                      = "12.0"
@@ -10,13 +15,13 @@ resource "azurerm_mssql_server" "msserver" {
   # Added a timeout for creating the server because it can sometimes fail and run for 60 min
   # If the msserver isn't created in time, it can be locked in azure. Which makes us unable to delete the rg
   timeouts {
-    create = "10m"
+    create = "7m"
   }
 }
 
 # Allow all azure services
 resource "azurerm_mssql_firewall_rule" "firewallrule" {
-  name             = "Allow all azure services-${var.version_name}"
+  name             = "Allow all azure services-${local.version_name}"
   server_id        = azurerm_mssql_server.msserver.id
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
@@ -24,7 +29,7 @@ resource "azurerm_mssql_firewall_rule" "firewallrule" {
 
 # Database
 resource "azurerm_mssql_database" "db" {
-  name        = "${var.resource_name_prefix}-db-${var.version_name}"
+  name        = "${var.resource_name_prefix}-db-${local.version_name}"
   server_id   = azurerm_mssql_server.msserver.id
   collation   = "SQL_Latin1_General_CP1_CI_AS"
   max_size_gb = 5
@@ -33,7 +38,7 @@ resource "azurerm_mssql_database" "db" {
 
 # App Service
 resource "azurerm_windows_web_app" "appservice" {
-  name                = "${var.resource_name_prefix}-appservice-${var.version_name}"
+  name                = "${var.resource_name_prefix}-appservice-${local.version_name}"
   location            = var.resource_group_location
   resource_group_name = var.resource_group_name
   service_plan_id     = var.service_plan_id
@@ -59,7 +64,7 @@ resource "azurerm_windows_web_app" "appservice" {
   connection_string {
     name  = "umbracoDbDSN"
     type  = "SQLAzure"
-    value = "Server=tcp:${azurerm_mssql_server.msserver.fully_qualified_domain_name},1433;database=${azurerm_mssql_database.db.name};User ID=${azurerm_mssql_server.msserver.administrator_login};Password=${azurerm_mssql_server.msserver.administrator_login_password};Connection Timeout=120;"
+    value = "Server=tcp:${azurerm_mssql_server.msserver.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.msserver.administrator_login}@${azurerm_mssql_server.msserver.name};Password=${azurerm_mssql_server.msserver.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;"
   }
 }
 

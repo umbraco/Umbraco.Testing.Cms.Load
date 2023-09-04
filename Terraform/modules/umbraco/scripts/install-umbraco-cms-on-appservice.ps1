@@ -26,14 +26,17 @@ param (
     $tenant_id
 )
 
-$pathToApp = "./NewUmbracoProject$umbracoVersion"
-$nameToApp = "NewUmbracoProject$umbracoVersion"
+# On version 9 you can't have a namespace with '.' so we remove them from the name.
+$updatedVersionName = $umbracoVersion.Replace('.','')
+
+$pathToApp = "./NewUmbracoProject$updatedVersionName"
+$nameToApp = "NewUmbracoProject$updatedVersionName"
 
 # Creates a new folder for the Umbraco Template to be installed to
-mkdir $umbracoVersion
+mkdir $updatedVersionName
 
 # Switches location to the directory
-Set-Location $umbracoVersion
+Set-Location $updatedVersionName
 
 # Adds the possibility to use prereleases of Umbraco
 dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases"
@@ -44,6 +47,17 @@ dotnet new umbraco -n $nameToApp
 
 # Adds the starter kit Clean
 dotnet add $nameToApp package clean
+
+# Deprecated, issue was fixed
+# If we are using V12 we need to use ImageSharp2 instead of ImageSharp3
+#if ($umbracoVersion.StartsWith("12")){
+#    dotnet remove $nameToApp package Umbraco.CMS
+#    
+#    dotnet add $nameToApp package Umbraco.Cms.Targets -v $umbracoVersion
+#    dotnet add $nameToApp package Umbraco.Cms.Persistence.SqlServer -v $umbracoVersion
+#    dotnet add $nameToApp package Umbraco.Cms.Persistence.Sqlite -v $umbracoVersion
+#    dotnet add $nameToApp package Umbraco.Cms.Imaging.ImageSharp2 -v $umbracoVersion
+#}
 
 # Publish the app and zip it up
 dotnet publish $pathToApp -c Release -o $pathToApp/publish
@@ -63,7 +77,7 @@ Remove-Item -Recurse -Force $pathToApp
 Set-Location ..
 
 # Cleans up the Umbraco Template install folder
-Remove-Item -Force $umbracoVersion
+Remove-Item -Force $updatedVersionName
 
 # # Ping the App service to trigger the installation process
 function Get-UrlStatusCode([string] $Url)

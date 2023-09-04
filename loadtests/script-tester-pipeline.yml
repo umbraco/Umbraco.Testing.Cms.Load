@@ -1,0 +1,64 @@
+# Repo: andr317c/load-test-pipeline
+# File: azure-pipeline.yml
+
+name: script_test_pipeline
+
+trigger: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  # Terraform settings
+- name: terraformWorkingDirectory 
+  value: '$(System.DefaultWorkingDirectory)/Terraform'
+  # LoadTestLocation
+- name: loadTestFileLocation
+  value: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
+
+stages:
+- stage: scriptRun
+  jobs:
+    - job: runScript
+      steps:
+      # If a version is empty it is changed to null, otherwise our powershell script would not be able to read the input
+      - script: echo "##vso[task.setvariable variable=firstDotNetVersion]null" 
+        displayName: update value if firstDotNetVersion is empty 
+        condition: eq(variables['firstDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=firstUmbracoVersion]null" 
+        displayName: update value if firstUmbracoVersion is empty
+        condition: eq(variables['firstUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=secondDotNetVersion]null" 
+        displayName: update value if secondDotNetVersion is empty
+        condition: eq(variables['secondDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=secondUmbracoVersion]null" 
+        displayName: update value if secondUmbracoVersion is empty
+        condition: eq(variables['secondUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null" 
+        displayName: update value if thirdDotNetVersion is empty
+        condition: eq(variables['thirdDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=thirdUmbracoVersion]null" 
+        displayName: update value if thirdUmbracoVersion is empty
+        condition: eq(variables['thirdUmbracoVersion'],'')
+      - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null" 
+        displayName: update value if fourthDotNetVersion is empty
+        condition: eq(variables['fourthDotNetVersion'],'')
+      - script: echo "##vso[task.setvariable variable=fourthUmbracoVersion]null" 
+        displayName: update value if fourthUmbracoVersion is empty
+        condition: eq(variables['fourthUmbracoVersion'],'')
+     
+      - task: PowerShell@2
+        name: versionsOutput
+        inputs:
+          filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
+          arguments: |
+            -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
+            echo "##vso[task.setvariable variable=umbracoversions;isOutput=true]$env:umbracoTFversions"
+
+    - job: getValueJob
+      dependsOn: runScript
+      variables: 
+        umbracoVersions: $[dependencies.runScript.outputs['versionsOutput.umbracoVersions']]
+      
+      steps:
+        - script: echo '$(umbracoVersions)' 
