@@ -1,6 +1,7 @@
-# Replace . with - in umbraco versions. The reason for this is that we can't have . in our naming for resources
+# Replace . with - in Umbraco versions. This is necessary for resource naming.
 locals {
-  version_name = replace(var.umbraco_cms_version, ".", "-")
+  short_version_name = (split("-", var.umbraco_cms_version)[0])
+  version_name = replace(local.short_version_name, ".", "-")
 }
 
 # SQL server
@@ -12,14 +13,14 @@ resource "azurerm_mssql_server" "msserver" {
   administrator_login          = var.admin_login
   administrator_login_password = var.admin_password
   minimum_tls_version          = "1.2"
-  # Added a timeout for creating the server because it can sometimes fail and run for 60 min
-  # If the msserver isn't created in time, it can be locked in azure. Which makes us unable to delete the rg
+  
+  # Added a timeout for creating the server because it can sometimes fail and run for 60 minutes
   timeouts {
     create = "7m"
   }
 }
 
-# Allow all azure services
+# Allow all Azure services to access the SQL Server
 resource "azurerm_mssql_firewall_rule" "firewallrule" {
   name             = "Allow all azure services-${local.version_name}"
   server_id        = azurerm_mssql_server.msserver.id
@@ -68,7 +69,7 @@ resource "azurerm_windows_web_app" "appservice" {
   }
 }
 
-# Runs the script which creates and deploys a Umbraco CMS with the defined version.
+# Runs the script to create and deploy Umbraco CMS with the defined version.
 resource "null_resource" "deploy_umbraco_windows_host" {
   provisioner "local-exec" {
     command = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -rgName \"${var.resource_group_name}\" -appserviceName \"${azurerm_windows_web_app.appservice.name}\" -appserviceHostname \"${azurerm_windows_web_app.appservice.default_hostname}\" -umbracoVersion \"${var.umbraco_cms_version}\" -client_id \"${var.client_id}\" -client_secret \"${var.client_secret}\" -tenant_id \"${var.tenant_id}\""

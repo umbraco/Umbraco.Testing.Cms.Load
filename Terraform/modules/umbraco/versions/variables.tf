@@ -36,16 +36,15 @@ variable "admin_password" {
 
 variable "client_id" {
   type = string
-  # default = "empty"
-  #sensitive = true
+  sensitive = true
 }
+
 variable "client_secret" {
   type = string
-  # default = "empty"
-  #sensitive = true
+  sensitive = true
 }
+
 variable "tenant_id" {
   type = string
-  # default = "empty"
-  #sensitive = true
+  sensitive = true
 }

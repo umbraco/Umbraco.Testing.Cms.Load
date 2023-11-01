@@ -1,8 +1,8 @@
 terraform {
   required_providers {
     azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "3.34.0"
+      source = "hashicorp/azurerm"
+      version = "3.78.0"
     }
   }
 
@@ -23,4 +23,5 @@ module "umbraco" {
   client_id     = var.client_id
   client_secret = var.client_secret
   tenant_id     = var.tenant_id
+  app_service_plan_sku = var.app_service_plan_sku
 }

@@ -23,7 +23,9 @@ resource "azurerm_service_plan" "appserviceplan" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Windows"
-  sku_name            = "S1"
+  
+  # We are using a variable for the sku version because we want to be able to change it if needed. 
+  sku_name            = var.app_service_plan_sku
 }
 
 resource "azurerm_load_test" "load_test" {

@@ -12,74 +12,67 @@ param (
     [Parameter(Mandatory = $true)]
     [string]
     $umbracoVersion,
-    #[Parameter(DontShow, Mandatory= $true)]
     [Parameter(Mandatory= $true)]
     [string]
     $client_id,
-    #[Parameter(DontShow, Mandatory= $true)]
     [Parameter(Mandatory= $true)]
     [string]
     $client_secret,
-    #[Parameter(DontShow, Mandatory= $true)]
     [Parameter(Mandatory= $true)]
     [string]
     $tenant_id
 )
 
-# On version 9 you can't have a namespace with '.' so we remove them from the name.
+# Remove dots from Umbraco version for creating folder
 $updatedVersionName = $umbracoVersion.Replace('.','')
 
 $pathToApp = "./NewUmbracoProject$updatedVersionName"
 $nameToApp = "NewUmbracoProject$updatedVersionName"
 
-# Creates a new folder for the Umbraco Template to be installed to
+# Create a new folder for Umbraco Template installation
 mkdir $updatedVersionName
 
-# Switches location to the directory
+# Switch location to the new directory
 Set-Location $updatedVersionName
 
-# Adds the possibility to use prereleases of Umbraco
+# Add nuget package sources for Umbraco prereleases and nightly builds
 dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases"
+dotnet nuget add source "https://www.myget.org/F/umbraconightly/api/v3/index.json" -n "Umbraco Nightly"
 
 # Install Umbraco Template and create the project
 dotnet new install Umbraco.Templates::$umbracoVersion
 dotnet new umbraco -n $nameToApp
 
+cd $nameToApp
+
 # Adds the starter kit Clean
-dotnet add $nameToApp package clean
+dotnet add package clean
 
-# Deprecated, issue was fixed
-# If we are using V12 we need to use ImageSharp2 instead of ImageSharp3
-#if ($umbracoVersion.StartsWith("12")){
-#    dotnet remove $nameToApp package Umbraco.CMS
-#    
-#    dotnet add $nameToApp package Umbraco.Cms.Targets -v $umbracoVersion
-#    dotnet add $nameToApp package Umbraco.Cms.Persistence.SqlServer -v $umbracoVersion
-#    dotnet add $nameToApp package Umbraco.Cms.Persistence.Sqlite -v $umbracoVersion
-#    dotnet add $nameToApp package Umbraco.Cms.Imaging.ImageSharp2 -v $umbracoVersion
-#}
+# Build the project to retrieve files from the Clean Starter Kit
+dotnet build
 
-# Publish the app and zip it up
+cd ..
+
+# Publish the app and create a zip file
 dotnet publish $pathToApp -c Release -o $pathToApp/publish
 Compress-Archive -Path $pathToApp/publish/* -DestinationPath $pathToApp/publish.zip
 
-# Logs in to azure with the username, password and tenant id we have recieved from our pipeline
+# Log in to Azure using service principal credentials
 az login --service-principal --username $client_id --password $client_secret --tenant $tenant_id
 
 # Deploy the Umbraco CMS to the app service
 az webapp deployment source config-zip --src $pathToApp/publish.zip -n  $appserviceName -g $rgName
 
 # Clean up the app folder
-# There should be no need to clean up the folders, since they will be deleted anyway
 Remove-Item -Recurse -Force $pathToApp
 
-# Goes back to the root folder of the terraform project
+# Return to the root folder of the Terraform project
 Set-Location ..
 
-# Cleans up the Umbraco Template install folder
+# Clean up the Umbraco Template install folder
 Remove-Item -Force $updatedVersionName
 
-# # Ping the App service to trigger the installation process
+# Ping the App Service to trigger the installation process
 function Get-UrlStatusCode([string] $Url)
 {
     try
@@ -95,5 +88,5 @@ function Get-UrlStatusCode([string] $Url)
 $statusCode = Get-UrlStatusCode $appserviceHostname
 Write-Host "StatusCode is: $statusCode"
 
-# Stops the app service
+# Stop the app service
 az webapp stop -n $appserviceName -g $rgName
