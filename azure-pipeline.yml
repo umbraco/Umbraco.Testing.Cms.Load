@@ -23,7 +23,6 @@ parameters:
   default: umbraco-azure-load-test-pipeline
 
 variables:
-  # Azure Service Connection (NEEDS TO BE CHANGED FROM MICROSOFT AZURE SPONSORSHIP TO UMBRACO SERVICES DEV)
   serviceConnection: 'terraform-umbraco-load-testing-az-serviceconnection'
 
   # Azure Resource Variables
