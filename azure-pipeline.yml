@@ -250,7 +250,7 @@ stages:
               },
               {
               "name": "users",
-              "value" "${{ parameters.userAmount }}"
+              "value": "${{ parameters.userAmount }}"
               }
             ]
       - task: AzureCLI@2
@@ -288,7 +288,7 @@ stages:
               },
               {
               "name": "users",
-              "value" "${{ parameters.userAmount }}"
+              "value": "${{ parameters.userAmount }}"
               }
             ]  
       - task: AzureCLI@2
@@ -326,7 +326,7 @@ stages:
               },
               {
               "name": "users",
-              "value" "${{ parameters.userAmount }}"
+              "value": "${{ parameters.userAmount }}"
               }
             ]    
       - task: AzureCLI@2
@@ -364,7 +364,7 @@ stages:
               },
               {
               "name": "users",
-              "value" "${{ parameters.userAmount }}"
+              "value": "${{ parameters.userAmount }}"
               }
             ]
 
