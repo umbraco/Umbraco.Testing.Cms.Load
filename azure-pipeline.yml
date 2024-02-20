@@ -387,6 +387,7 @@ stages:
       condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
       displayName: Manual validation for deleting the resource group
       pool: server
+      timeoutInMinutes: 1440
       steps:
        - task: ManualValidation@0
          displayName: Wait for external validation
