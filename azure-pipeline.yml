@@ -16,7 +16,17 @@ parameters:
   - S1
   - S2
   - S3
-
+- name: userAmount
+  displayName: Amount of virtual users
+  type: number
+  default: 100
+  values:
+    - 50
+    - 100
+    - 150
+    - 200
+    - 250
+    - 300
 - name: prefix
   displayName: Prefix for all resources created in terraform
   type: string
@@ -237,6 +247,10 @@ stages:
               {
               "name": "hostName",
               "value": "$(firstHostName)"
+              },
+              {
+              "name": "users",
+              "value": "${{ parameters.userAmount }}"
               }
             ]
       - task: AzureCLI@2
@@ -271,8 +285,12 @@ stages:
               {
               "name": "hostName",
               "value": "$(secondHostName)"
+              },
+              {
+              "name": "users",
+              "value": "${{ parameters.userAmount }}"
               }
-            ]      
+            ]  
       - task: AzureCLI@2
         name: startAppServiceThree
         condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
@@ -305,8 +323,12 @@ stages:
               {
               "name": "hostName",
               "value": "$(thirdHostName)"
+              },
+              {
+              "name": "users",
+              "value": "${{ parameters.userAmount }}"
               }
-            ]      
+            ]    
       - task: AzureCLI@2
         name: startAppServiceFour
         condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
@@ -339,6 +361,10 @@ stages:
               {
               "name": "hostName",
               "value": "$(fourthHostName)"
+              },
+              {
+              "name": "users",
+              "value": "${{ parameters.userAmount }}"
               }
             ]
 
