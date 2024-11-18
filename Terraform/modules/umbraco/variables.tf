@@ -23,17 +23,17 @@ variable "umbraco_cms_versions" {
 
 variable "client_id" {
   type = string
-  sensitive = true
+  # sensitive = true
 }
 
 variable "client_secret" {
   type = string
-  sensitive = true
+  # sensitive = true
 }
 
 variable "tenant_id" {
   type = string
-  sensitive = true
+  # sensitive = true
 }
 
 variable "app_service_plan_sku" {
