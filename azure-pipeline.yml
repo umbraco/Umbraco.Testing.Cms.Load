@@ -167,6 +167,8 @@ stages:
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
               commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var app_service_plan_sku=${{ parameters.appServicePlanSku }} -var="umbraco_cms_versions=$(umbracoTFversions)"'
+            # Occasionally we run into errors related to creation of azurerm_mssql_server resources, so we want to retry if nessecary. The terraform state should allow us to avoid duplicate creation.
+            retryCountOnTaskFailure: 2
           - task: TerraformTaskV4@4
             displayName: Terraform Output
             inputs:
