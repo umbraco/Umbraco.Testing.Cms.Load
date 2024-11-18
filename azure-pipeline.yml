@@ -141,6 +141,12 @@ stages:
         umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
       steps:
       # We need to initialize again, otherwise the pipeline will fail.
+      - task: UseDotNet@2
+        inputs:
+          packageType: 'sdk'
+          version: '9.0.x' # Install the .NET 9.0 SDK
+          installationPath: '$(terraformWorkingDirectory)'
+        displayName: Install .NET 9.0 SDK
       - task: PowerShell@2
         displayName: Terraform Init
         inputs:
