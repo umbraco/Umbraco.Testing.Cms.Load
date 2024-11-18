@@ -35,6 +35,8 @@ resource "azurerm_mssql_database" "db" {
   collation   = "SQL_Latin1_General_CP1_CI_AS"
   max_size_gb = 5
   sku_name    = "S0"
+
+  depends_on = [azurerm_mssql_server.msserver]
 }
 
 # App Service
@@ -67,6 +69,8 @@ resource "azurerm_windows_web_app" "appservice" {
     type  = "SQLAzure"
     value = "Server=tcp:${azurerm_mssql_server.msserver.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.msserver.administrator_login}@${azurerm_mssql_server.msserver.name};Password=${azurerm_mssql_server.msserver.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;"
   }
+  
+  depends_on = [azurerm_mssql_database.db]
 }
 
 # Runs the script to create and deploy Umbraco CMS with the defined version.
