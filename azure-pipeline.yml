@@ -225,39 +225,39 @@ stages:
 
           # First test
           - template: loadTestTemplate.yml
+            condition: ne(variables['firstHostName'], '')
             parameters:
               hostName: $(firstHostName)
               umbracoVersion: $(firstUmbracoVersion)
               appServiceName: $(firstAppServiceName)
               testName: 'Test for version $(firstUmbracoVersion)'
-              condition: ne(variables['firstHostName'], '')
 
           # Second test
           - template: loadTestTemplate.yml
+            condition: ne(variables['secondHostName'], '')
             parameters:
               hostName: $(secondHostName)
               umbracoVersion: $(secondUmbracoVersion)
               appServiceName: $(secondAppServiceName)
               testName: 'Test for version $(secondUmbracoVersion)'
-              condition: ne(variables['secondHostName'], '')
 
           # Third test
           - template: loadTestTemplate.yml
+            condition: ne(variables['thirdHostName'], '')
             parameters:
               hostName: $(thirdHostName)
               umbracoVersion: $(thirdUmbracoVersion)
               appServiceName: $(thirdAppServiceName)
               testName: 'Test for version $(thirdUmbracoVersion)'
-              condition: ne(variables['thirdHostName'], '')
 
           # Fourth test
           - template: loadTestTemplate.yml
+            condition: ne(variables['fourthHostName'], '')
             parameters:
               hostName: $(fourthHostName)
               umbracoVersion: $(fourthUmbracoVersion)
               appServiceName: $(fourthAppServiceName)
               testName: 'Test for version $(fourthUmbracoVersion)'
-              condition: ne(variables['fourthHostName'], '')
 
       - job: deleteResourceGroup
         displayName: Deletes the resource group
