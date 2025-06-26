@@ -224,40 +224,40 @@ stages:
             displayName: 'Install k6'
 
           # First test
-          - template: loadTestTemplate.yml
-            condition: ne(variables['firstHostName'], '')
-            parameters:
-              hostName: $(firstHostName)
-              umbracoVersion: $(firstUmbracoVersion)
-              appServiceName: $(firstAppServiceName)
-              testName: 'Test for version $(firstUmbracoVersion)'
+          - ${{ if ne(variables['firstHostName'], '') }}:
+              - template: loadTestTemplate.yml
+                parameters:
+                  hostName: $(firstHostName)
+                  umbracoVersion: $(firstUmbracoVersion)
+                  appServiceName: $(firstAppServiceName)
+                  testName: 'Test for version $(firstUmbracoVersion)'
 
           # Second test
-          - template: loadTestTemplate.yml
-            condition: ne(variables['secondHostName'], '')
-            parameters:
-              hostName: $(secondHostName)
-              umbracoVersion: $(secondUmbracoVersion)
-              appServiceName: $(secondAppServiceName)
-              testName: 'Test for version $(secondUmbracoVersion)'
+          - ${{ if ne(variables['secondHostName'], '') }}:
+              - template: loadTestTemplate.yml
+                parameters:
+                  hostName: $(secondHostName)
+                  umbracoVersion: $(secondUmbracoVersion)
+                  appServiceName: $(secondAppServiceName)
+                  testName: 'Test for version $(secondUmbracoVersion)'
 
           # Third test
-          - template: loadTestTemplate.yml
-            condition: ne(variables['thirdHostName'], '')
-            parameters:
-              hostName: $(thirdHostName)
-              umbracoVersion: $(thirdUmbracoVersion)
-              appServiceName: $(thirdAppServiceName)
-              testName: 'Test for version $(thirdUmbracoVersion)'
+          - ${{ if ne(variables['thirdHostName'], '') }}:
+              - template: loadTestTemplate.yml
+                parameters:
+                  hostName: $(thirdHostName)
+                  umbracoVersion: $(thirdUmbracoVersion)
+                  appServiceName: $(thirdAppServiceName)
+                  testName: 'Test for version $(thirdUmbracoVersion)'
 
           # Fourth test
-          - template: loadTestTemplate.yml
-            condition: ne(variables['fourthHostName'], '')
-            parameters:
-              hostName: $(fourthHostName)
-              umbracoVersion: $(fourthUmbracoVersion)
-              appServiceName: $(fourthAppServiceName)
-              testName: 'Test for version $(fourthUmbracoVersion)'
+          - ${{ if ne(variables['fourthHostName'], '') }}:
+              - template: loadTestTemplate.yml
+                parameters:
+                  hostName: $(fourthHostName)
+                  umbracoVersion: $(fourthUmbracoVersion)
+                  appServiceName: $(fourthAppServiceName)
+                  testName: 'Test for version $(fourthUmbracoVersion)'
 
       - job: deleteResourceGroup
         displayName: Deletes the resource group
