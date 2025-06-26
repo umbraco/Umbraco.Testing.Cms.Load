@@ -231,7 +231,7 @@ stages:
                   umbracoVersion: $(firstUmbracoVersion)
                   appServiceName: $(firstAppServiceName)
                   testName: 'Test for version $(firstUmbracoVersion)'
-                  userAmount: ${{ parameters.appServiceName }}
+                  userAmount: ${{ parameters.userAmount }}
 
           # Second test
           - ${{ if ne(variables['secondHostName'], '') }}:
@@ -241,7 +241,7 @@ stages:
                   umbracoVersion: $(secondUmbracoVersion)
                   appServiceName: $(secondAppServiceName)
                   testName: 'Test for version $(secondUmbracoVersion)'
-                  userAmount: ${{ parameters.appServiceName }}
+                  userAmount: ${{ parameters.userAmount }}
 
           # Third test
           - ${{ if ne(variables['thirdHostName'], '') }}:
@@ -251,7 +251,7 @@ stages:
                   umbracoVersion: $(thirdUmbracoVersion)
                   appServiceName: $(thirdAppServiceName)
                   testName: 'Test for version $(thirdUmbracoVersion)'
-                  userAmount: ${{ parameters.appServiceName }}
+                  userAmount: ${{ parameters.userAmount }}
 
           # Fourth test
           - ${{ if ne(variables['fourthHostName'], '') }}:
@@ -261,7 +261,7 @@ stages:
                   umbracoVersion: $(fourthUmbracoVersion)
                   appServiceName: $(fourthAppServiceName)
                   testName: 'Test for version $(fourthUmbracoVersion)'
-                  userAmount: ${{ parameters.appServiceName }}
+                  userAmount: ${{ parameters.userAmount }}
 
       - job: deleteResourceGroup
         displayName: Deletes the resource group
