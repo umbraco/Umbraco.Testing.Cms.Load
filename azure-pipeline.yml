@@ -276,20 +276,19 @@ stages:
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
-          - job: manualValidationResourceGroup
-            dependsOn: doesResourceGroupExists
-            condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
-            displayName: Manual validation for deleting the resource group
-            pool: server
+      - job: manualValidationResourceGroup
+        dependsOn: doesResourceGroupExists
+        condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
+        displayName: Manual validation for deleting the resource group
+        pool: server
+        timeoutInMinutes: 1440
+        steps:
+          - task: ManualValidation@0
+            displayName: Wait for external validation
             timeoutInMinutes: 1440
-            steps:
-              - task: ManualValidation@0
-                displayName: Wait for external validation
-                timeoutInMinutes: 1440
-                inputs:
-                  # notifyUsers: aze@umbraco.dk
-                  instructions: 'Please press "Resume" if you want to keep the resource group $(azurergname). If you press "Reject" or do not pick an option after 24 hours, The resource group $(azurergname), and all the content inside of the resource group will be deleted'
-
+            inputs:
+              # notifyUsers: aze@umbraco.dk
+              instructions: 'Please press "Resume" if you want to keep the resource group $(azurergname). If you press "Reject" or do not pick an option after 24 hours, The resource group $(azurergname), and all the content inside of the resource group will be deleted'
 
       - job: deleteResourceGroup
         displayName: Deletes the resource group
