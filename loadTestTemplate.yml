@@ -12,7 +12,7 @@ parameters:
 
 steps:
   - task: AzureCLI@2
-    name: startAppService
+    name: startAppService${{ parameters.testName }}
     condition: and(ne(${{ parameters.hostName }}, 'null'), ne(${{ parameters.umbracoVersion }}, 'null'))
     displayName: 'Start App Service for ${{ parameters.testName }}'
     inputs:

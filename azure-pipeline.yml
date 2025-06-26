@@ -230,7 +230,7 @@ stages:
                   hostName: $(firstHostName)
                   umbracoVersion: $(firstUmbracoVersion)
                   appServiceName: $(firstAppServiceName)
-                  testName: 'Test for version $(firstUmbracoVersion)'
+                  testName: 'First'
                   userAmount: ${{ parameters.userAmount }}
 
           # Second test
@@ -240,7 +240,7 @@ stages:
                   hostName: $(secondHostName)
                   umbracoVersion: $(secondUmbracoVersion)
                   appServiceName: $(secondAppServiceName)
-                  testName: 'Test for version $(secondUmbracoVersion)'
+                  testName: 'Second'
                   userAmount: ${{ parameters.userAmount }}
 
           # Third test
@@ -250,7 +250,7 @@ stages:
                   hostName: $(thirdHostName)
                   umbracoVersion: $(thirdUmbracoVersion)
                   appServiceName: $(thirdAppServiceName)
-                  testName: 'Test for version $(thirdUmbracoVersion)'
+                  testName: 'Third'
                   userAmount: ${{ parameters.userAmount }}
 
           # Fourth test
@@ -260,8 +260,36 @@ stages:
                   hostName: $(fourthHostName)
                   umbracoVersion: $(fourthUmbracoVersion)
                   appServiceName: $(fourthAppServiceName)
-                  testName: 'Test for version $(fourthUmbracoVersion)'
+                  testName: 'Fourth'
                   userAmount: ${{ parameters.userAmount }}
+
+      - job: doesResourceGroupExists
+        dependsOn: runLoadTest
+        condition: succeededOrFailed()
+        displayName: Checks if the resource group exists
+        steps:
+          - task: AzureCLI@2
+            name: checkResourceGroup
+            displayName: Checks if the resource group exists
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
+          - job: manualValidationResourceGroup
+            dependsOn: doesResourceGroupExists
+            condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
+            displayName: Manual validation for deleting the resource group
+            pool: server
+            timeoutInMinutes: 1440
+            steps:
+              - task: ManualValidation@0
+                displayName: Wait for external validation
+                timeoutInMinutes: 1440
+                inputs:
+                  # notifyUsers: aze@umbraco.dk
+                  instructions: 'Please press "Resume" if you want to keep the resource group $(azurergname). If you press "Reject" or do not pick an option after 24 hours, The resource group $(azurergname), and all the content inside of the resource group will be deleted'
+
 
       - job: deleteResourceGroup
         displayName: Deletes the resource group
