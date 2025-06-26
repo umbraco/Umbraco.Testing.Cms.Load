@@ -8,29 +8,29 @@ pool:
   vmImage: 'ubuntu-latest'
 
 parameters:
-- name: appServicePlanSku
-  displayName: Sku for App Service Plan
-  type: string
-  default: S3
-  values:
-  - S1
-  - S2
-  - S3
-- name: userAmount
-  displayName: Amount of virtual users
-  type: number
-  default: 100
-  values:
-    - 50
-    - 100
-    - 150
-    - 200
-    - 250
-    - 300
-- name: prefix
-  displayName: Prefix for all resources created in terraform
-  type: string
-  default: umbraco-azure-load-test-pipeline
+  - name: appServicePlanSku
+    displayName: Sku for App Service Plan
+    type: string
+    default: S3
+    values:
+      - S1
+      - S2
+      - S3
+  - name: userAmount
+    displayName: Amount of virtual users
+    type: number
+    default: 100
+    values:
+      - 50
+      - 100
+      - 150
+      - 200
+      - 250
+      - 300
+  - name: prefix
+    displayName: Prefix for all resources created in terraform
+    type: string
+    default: umbraco-azure-load-test-pipeline
 
 variables:
   serviceConnection: 'terraform-umbraco-load-testing-az-serviceconnection'
@@ -41,380 +41,250 @@ variables:
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
-  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
-  
+  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/loadtests/k6LoadTest.js'
+
 stages:
-- stage: terraformDeploy
-  displayName: Terraform Setup and Apply
-  jobs:
-    - job: checkResourceGroup
-      displayName: Checks if resource group with defined name already exists
-      steps:
-      - task: AzureCLI@2
-        name: checkGroup
-        displayName: Checks if the resource group exists before running all the steps
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: 'Write-Host "##vso[task.setvariable variable=resourceGroupExists;isOutput=true]$(az group exists -n $(azurergname))"'
-        
-    - job: getFormattedVersions
-      displayName: Formats versions
-      steps:
-      # If a version is empty it is changed to null, otherwise our powershell script would not be able to read the input
-      - script: echo "##vso[task.setvariable variable=firstDotNetVersion]null" 
-        displayName: update value if firstDotNetVersion is empty 
-        condition: eq(variables['firstDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=firstUmbracoVersion]null" 
-        displayName: update value if firstUmbracoVersion is empty
-        condition: eq(variables['firstUmbracoVersion'],'')
-      - script: echo "##vso[task.setvariable variable=secondDotNetVersion]null" 
-        displayName: update value if secondDotNetVersion is empty
-        condition: eq(variables['secondDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=secondUmbracoVersion]null" 
-        displayName: update value if secondUmbracoVersion is empty
-        condition: eq(variables['secondUmbracoVersion'],'')
-      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null" 
-        displayName: update value if thirdDotNetVersion is empty
-        condition: eq(variables['thirdDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=thirdUmbracoVersion]null" 
-        displayName: update value if thirdUmbracoVersion is empty
-        condition: eq(variables['thirdUmbracoVersion'],'')
-      - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null" 
-        displayName: update value if fourthDotNetVersion is empty
-        condition: eq(variables['fourthDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=fourthUmbracoVersion]null" 
-        displayName: update value if fourthUmbracoVersion is empty
-        condition: eq(variables['fourthUmbracoVersion'],'')
-     
-      - task: PowerShell@2
-        name: versionsOutput
-        inputs:
-          filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
-          arguments: |
-            -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-            echo "##vso[task.setvariable variable=umbracoTFversions;isOutput=true]$env:umbracoTFversions"
+  - stage: terraformDeploy
+    displayName: Terraform Setup and Apply
+    jobs:
+      - job: checkResourceGroup
+        displayName: Checks if resource group with defined name already exists
+        steps:
+          - task: AzureCLI@2
+            name: checkGroup
+            displayName: Checks if the resource group exists before running all the steps
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: 'Write-Host "##vso[task.setvariable variable=resourceGroupExists;isOutput=true]$(az group exists -n $(azurergname))"'
 
-    - job: setup 
-      dependsOn: 
-      - checkResourceGroup
-      - getFormattedVersions
-      condition: eq(dependencies.checkResourceGroup.outputs['checkGroup.resourceGroupExists'], false)
-      displayName: Terraform Setup
-      variables:
-        umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
-      steps:
-       - task: TerraformInstaller@0
-         displayName: Install Terraform
-         inputs:
-          terraformVersion: 'latest' 
-       - task: PowerShell@2
-         displayName: Terraform Init
-         inputs:
-           targetType: 'inline'
-           script: 'terraform init -backend=false'
-           workingDirectory: '$(terraformWorkingDirectory)'
-       - task: TerraformTaskV4@4
-         displayName: Validate 
-         inputs:
-          provider: 'azurerm'
-          command: 'validate'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          
-       - script: echo '$(umbracoTFversions)'
-       - task: TerraformTaskV4@4
-         displayName: Terraform Plan
-         inputs:
-          provider: 'azurerm'
-          command: 'plan'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var="umbraco_cms_versions=$(umbracoTFversions)"'
+      - job: getFormattedVersions
+        displayName: Formats versions
+        steps:
+          # If a version is empty it is changed to null, otherwise our powershell script would not be able to read the input
+          - script: echo "##vso[task.setvariable variable=firstDotNetVersion]null"
+            displayName: update value if firstDotNetVersion is empty
+            condition: eq(variables['firstDotNetVersion'],'')
+          - script: echo "##vso[task.setvariable variable=firstUmbracoVersion]null"
+            displayName: update value if firstUmbracoVersion is empty
+            condition: eq(variables['firstUmbracoVersion'],'')
+          - script: echo "##vso[task.setvariable variable=secondDotNetVersion]null"
+            displayName: update value if secondDotNetVersion is empty
+            condition: eq(variables['secondDotNetVersion'],'')
+          - script: echo "##vso[task.setvariable variable=secondUmbracoVersion]null"
+            displayName: update value if secondUmbracoVersion is empty
+            condition: eq(variables['secondUmbracoVersion'],'')
+          - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null"
+            displayName: update value if thirdDotNetVersion is empty
+            condition: eq(variables['thirdDotNetVersion'],'')
+          - script: echo "##vso[task.setvariable variable=thirdUmbracoVersion]null"
+            displayName: update value if thirdUmbracoVersion is empty
+            condition: eq(variables['thirdUmbracoVersion'],'')
+          - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null"
+            displayName: update value if fourthDotNetVersion is empty
+            condition: eq(variables['fourthDotNetVersion'],'')
+          - script: echo "##vso[task.setvariable variable=fourthUmbracoVersion]null"
+            displayName: update value if fourthUmbracoVersion is empty
+            condition: eq(variables['fourthUmbracoVersion'],'')
 
-    - job: apply
-      displayName: Terraform Apply
-      dependsOn: 
-      - getFormattedVersions
-      - setup
-      variables:
-        umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
-      steps:
-      # We need to initialize again, otherwise the pipeline will fail.
-      - task: PowerShell@2
-        displayName: Terraform Init
-        inputs:
-          targetType: 'inline'
-          script: 'terraform init -backend=false'
-          workingDirectory: '$(terraformWorkingDirectory)'
-      - task: AzureCLI@2
-        name: AzLoginInfo
-        displayName: Gets Azure Login Credentials 
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: bash
-         scriptLocation: inlineScript
-         inlineScript: |
-          echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
-          echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
-          echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
-         addSpnToEnvironment: true
-      - task: TerraformTaskV4@4
+          - task: PowerShell@2
+            name: versionsOutput
+            inputs:
+              filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
+              arguments: |
+                -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
+                echo "##vso[task.setvariable variable=umbracoTFversions;isOutput=true]$env:umbracoTFversions"
+
+      - job: setup
+        dependsOn:
+          - checkResourceGroup
+          - getFormattedVersions
+        condition: eq(dependencies.checkResourceGroup.outputs['checkGroup.resourceGroupExists'], false)
+        displayName: Terraform Setup
+        variables:
+          umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
+        steps:
+          - task: TerraformInstaller@0
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: 'latest'
+          - task: PowerShell@2
+            displayName: Terraform Init
+            inputs:
+              targetType: 'inline'
+              script: 'terraform init -backend=false'
+              workingDirectory: '$(terraformWorkingDirectory)'
+          - task: TerraformTaskV4@4
+            displayName: Validate
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+              workingDirectory: '$(terraformWorkingDirectory)'
+
+          - script: echo '$(umbracoTFversions)'
+          - task: TerraformTaskV4@4
+            displayName: Terraform Plan
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              environmentServiceNameAzureRM: '$(serviceConnection)'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var="umbraco_cms_versions=$(umbracoTFversions)"'
+
+      - job: apply
         displayName: Terraform Apply
-        inputs:
-          provider: 'azurerm'
-          command: 'apply'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var app_service_plan_sku=${{ parameters.appServicePlanSku }} -var="umbraco_cms_versions=$(umbracoTFversions)"'
-      - task: TerraformTaskV4@4
-        displayName: Terraform Output
-        inputs:
-          provider: 'azurerm'
-          command: 'output'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          environmentServiceNameAzureRM: '$(serviceConnection)'
-      - task: PowerShell@2
-        name: outputVars
-        displayName: Sets the output as variables
-        inputs:
-          targetType: 'inline'
-          script: |
-            Write-Host "##vso[task.setvariable variable=firstHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[0]')"
-            Write-Host "##vso[task.setvariable variable=secondHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[1]')"
-            Write-Host "##vso[task.setvariable variable=thirdHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[2]')"
-            Write-Host "##vso[task.setvariable variable=fourthHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[3]')"
+        dependsOn:
+          - getFormattedVersions
+          - setup
+        variables:
+          umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
+        steps:
+          # We need to initialize again, otherwise the pipeline will fail.
+          - task: PowerShell@2
+            displayName: Terraform Init
+            inputs:
+              targetType: 'inline'
+              script: 'terraform init -backend=false'
+              workingDirectory: '$(terraformWorkingDirectory)'
+          - task: AzureCLI@2
+            name: AzLoginInfo
+            displayName: Gets Azure Login Credentials
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
+                echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
+                echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
+              addSpnToEnvironment: true
+          - task: TerraformTaskV4@4
+            displayName: Terraform Apply
+            inputs:
+              provider: 'azurerm'
+              command: 'apply'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              environmentServiceNameAzureRM: '$(serviceConnection)'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var app_service_plan_sku=${{ parameters.appServicePlanSku }} -var="umbraco_cms_versions=$(umbracoTFversions)"'
+          - task: TerraformTaskV4@4
+            displayName: Terraform Output
+            inputs:
+              provider: 'azurerm'
+              command: 'output'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              environmentServiceNameAzureRM: '$(serviceConnection)'
+          - task: PowerShell@2
+            name: outputVars
+            displayName: Sets the output as variables
+            inputs:
+              targetType: 'inline'
+              script: |
+                Write-Host "##vso[task.setvariable variable=firstHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[0]')"
+                Write-Host "##vso[task.setvariable variable=secondHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[1]')"
+                Write-Host "##vso[task.setvariable variable=thirdHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[2]')"
+                Write-Host "##vso[task.setvariable variable=fourthHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[3]')"
+                
+                Write-Host "##vso[task.setvariable variable=firstUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[0]')"
+                Write-Host "##vso[task.setvariable variable=secondUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[1]')"
+                Write-Host "##vso[task.setvariable variable=thirdUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[2]')"
+                Write-Host "##vso[task.setvariable variable=fourthUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[3]')"
+                
+                Write-Host "##vso[task.setvariable variable=firstAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[0]')"
+                Write-Host "##vso[task.setvariable variable=secondAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[1]')"
+                Write-Host "##vso[task.setvariable variable=thirdAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[2]')"
+                Write-Host "##vso[task.setvariable variable=fourthAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[3]')"
+              workingDirectory: '$(terraformWorkingDirectory)'
 
-            Write-Host "##vso[task.setvariable variable=firstUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[0]')"
-            Write-Host "##vso[task.setvariable variable=secondUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[1]')"
-            Write-Host "##vso[task.setvariable variable=thirdUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[2]')"
-            Write-Host "##vso[task.setvariable variable=fourthUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[3]')"
 
-            Write-Host "##vso[task.setvariable variable=firstAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[0]')"
-            Write-Host "##vso[task.setvariable variable=secondAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[1]')"
-            Write-Host "##vso[task.setvariable variable=thirdAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[2]')"
-            Write-Host "##vso[task.setvariable variable=fourthAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[3]')"
-          workingDirectory: '$(terraformWorkingDirectory)'
+      - job: runLoadTest
+        displayName: Runs the load test
+        dependsOn: apply
+        variables:
+          loadTests:
+            - name: 'first'
+              hostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
+              umbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
+              appServiceName: $[dependencies.apply.outputs['outputVars.firstAppServiceName']]
+            - name: 'second'
+              hostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
+              umbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
+              appServiceName: $[dependencies.apply.outputs['outputVars.secondAppServiceName']]
+            - name: 'third'
+              hostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
+              umbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
+              appServiceName: $[dependencies.apply.outputs['outputVars.thirdAppServiceName']]
 
-
-    - job: runLoadTest
-      displayName: Runs the load test
-      dependsOn: apply
-      variables: 
-        firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
-        secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
-        thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
-        fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
-
-        firstUmbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
-        secondUmbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
-        thirdUmbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
-        fourthUmbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
+            - name: 'fourth'
+              hostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
+              umbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
+              appServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
         
-        firstAppServiceName: $[dependencies.apply.outputs['outputVars.firstAppServiceName']]
-        secondAppServiceName: $[dependencies.apply.outputs['outputVars.secondAppServiceName']]
-        thirdAppServiceName: $[dependencies.apply.outputs['outputVars.thirdAppServiceName']]
-        fourthAppServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
-      steps: 
-      # The load test are set up so we will be able to load test up to 4 different hostnames. A load test is only gonna run if the hostName variable is not null
-      - task: AzureCLI@2
-        name: startAppServiceOne
-        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
-        displayName: Starts the first hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: az webapp start -n $(firstAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
-        displayName: LoadTest 1
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(firstUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(firstHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]
-      - task: AzureCLI@2
-        name: startAppServiceTwo
-        condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
-        displayName: Starts the second hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: |
-          az webapp stop -n $(firstAppServiceName) -g $(azurergname)
-          az webapp start -n $(secondAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
-        displayName: LoadTest 2
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(secondUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(secondHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]  
-      - task: AzureCLI@2
-        name: startAppServiceThree
-        condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
-        displayName: Starts the third hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: |
-          az webapp stop -n $(secondAppServiceName) -g $(azurergname)
-          az webapp start -n $(thirdAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
-        displayName: LoadTest 3
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(thirdUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(thirdHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]    
-      - task: AzureCLI@2
-        name: startAppServiceFour
-        condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
-        displayName: Starts the fourth hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: |
-          az webapp stop -n $(thirdAppServiceName) -g $(azurergname)
-          az webapp start -n $(fourthAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
-        displayName: LoadTest 4
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(fourthUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(fourthHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]
+        steps:
+          - script: npm install -g k6-to-junit
+            displayName: 'Install k6-to-junit CLI'
 
+          - script: npm install -g k6
+            displayName: 'Install k6'
 
-    - job: doesResourceGroupExists
-      dependsOn: runLoadTest
-      condition: succeededOrFailed()
-      displayName: Checks if the resource group exists
-      steps:
-       - task: AzureCLI@2
-         name: checkResourceGroup
-         displayName: Checks if the resource group exists
-         inputs:
-           azureSubscription: '$(serviceConnection)'
-           scriptType: 'pscore'
-           scriptLocation: 'inlineScript'
-           inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
-    - job: manualValidationResourceGroup
-      dependsOn: doesResourceGroupExists
-      condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
-      displayName: Manual validation for deleting the resource group
-      pool: server
-      timeoutInMinutes: 1440
-      steps:
-       - task: ManualValidation@0
-         displayName: Wait for external validation
-         timeoutInMinutes: 1440
-         inputs:
-           # notifyUsers: aze@umbraco.dk
-           instructions: 'Please press "Resume" if you want to keep the resource group $(azurergname). If you press "Reject" or do not pick an option after 24 hours, The resource group $(azurergname), and all the content inside of the resource group will be deleted'
+          # Loop over each test in the loadTests array
+          - ${{ each test in variables.loadTests }}:
+              - task: AzureCLI@2
+                displayName: 'Start App Service - ${{ test.umbracoVersion }}'
+                condition: ne('${{ test.hostName }}', 'null')
+                inputs:
+                  azureSubscription: '$(serviceConnection)'
+                  scriptType: 'pscore'
+                  scriptLocation: 'inlineScript'
+                  inlineScript: |
+                    az webapp start -n ${{ test.appServiceName }} -g $(azurergname)
 
+              - task: PowerShell@2
+                displayName: 'Sleep for warm-up - ${{ test.umbracoVersion }}'
+                condition: ne('${{ test.hostName }}', 'null')
+                inputs:
+                  targetType: 'inline'
+                  script: Start-Sleep -Seconds 180
 
-    - job: deleteResourceGroup
-      displayName: Deletes the resource group
-      dependsOn: manualValidationResourceGroup
-      condition: eq(dependencies.manualValidationResourceGroup.result, 'failed')
-      steps:
-      - task: AzureCLI@2
-        name: checkResourceGroupAgain
-        displayName: Checks if the resource group exists before deleting it
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: 'Write-Host "##vso[task.setvariable variable=doesResourceGroupExist;isOutput=true]$(az group exists -n $(azurergname))"'
-      - task: AzureCLI@2
-        displayName: Deletes the resource group
-        retryCountOnTaskFailure: 5
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          scriptType: 'pscore'
-          scriptLocation: 'inlineScript'
-          inlineScript: 'az group delete -n $(azurergname) --yes'
+              - script: |
+                  k6 run -e HOST_NAME=${{ test.hostName }} -e USERS=${{ parameters.userAmount }} \
+                  --summary-export=results-${{ test.umbracoVersion }}.json \
+                  $(loadTestFileLocation)
+                condition: ne('${{ test.hostName }}', 'null')
+                displayName: 'Run k6 Load Test (version ${{ test.umbracoVersion }})'
+
+              - script: |
+                  k6-to-junit results-${{ test.umbracoVersion }}.json > k6-results-${{ test.umbracoVersion }}.xml
+                condition: succeeded()
+                displayName: 'Convert to JUnit XML (version ${{ test.umbracoVersion }})'
+
+              - task: PublishTestResults@2
+                condition: succeeded()
+                displayName: 'Publish k6 Test Results (version ${{ test.umbracoVersion }})'
+                inputs:
+                  testResultsFormat: 'JUnit'
+                  testResultsFiles: '**/k6-results-${{ test.umbracoVersion }}.xml'
+                  failTaskOnFailedTests: true
+                  testRunTitle: 'k6 Load Test - ${{ test.umbracoVersion }}'
+
+          - job: deleteResourceGroup
+            displayName: Deletes the resource group
+            dependsOn: manualValidationResourceGroup
+            condition: eq(dependencies.manualValidationResourceGroup.result, 'failed')
+            steps:
+              - task: AzureCLI@2
+                name: checkResourceGroupAgain
+                displayName: Checks if the resource group exists before deleting it
+                inputs:
+                  azureSubscription: '$(serviceConnection)'
+                  scriptType: 'pscore'
+                  scriptLocation: 'inlineScript'
+                  inlineScript: 'Write-Host "##vso[task.setvariable variable=doesResourceGroupExist;isOutput=true]$(az group exists -n $(azurergname))"'
+              - task: AzureCLI@2
+                displayName: Deletes the resource group
+                retryCountOnTaskFailure: 5
+                inputs:
+                  azureSubscription: '$(serviceConnection)'
+                  scriptType: 'pscore'
+                  scriptLocation: 'inlineScript'
+                  inlineScript: 'az group delete -n $(azurergname) --yes'
