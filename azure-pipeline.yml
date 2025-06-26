@@ -200,28 +200,22 @@ stages:
         displayName: Runs the load test
         dependsOn: apply
         variables:
-          loadTests:
-            -
-              name: 'first'
-              hostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
-              umbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
-              appServiceName: $[dependencies.apply.outputs['outputVars.firstAppServiceName']]
-            -
-              name: 'second'
-              hostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
-              umbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
-              appServiceName: $[dependencies.apply.outputs['outputVars.secondAppServiceName']]
-            -  
-              name: 'third'
-              hostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
-              umbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
-              appServiceName: $[dependencies.apply.outputs['outputVars.thirdAppServiceName']]
-            -
-              name: 'fourth'
-              hostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
-              umbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
-              appServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
-              
+          firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
+          firstUmbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
+          firstAppServiceName: $[dependencies.apply.outputs['outputVars.firstAppServiceName']]
+          
+          secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
+          secondUmbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
+          secondAppServiceName: $[dependencies.apply.outputs['outputVars.secondAppServiceName']]
+
+          thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
+          thirdUmbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
+          thirdAppServiceName: $[dependencies.apply.outputs['outputVars.thirdAppServiceName']]
+
+          fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
+          fourthUmbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
+          fourthAppServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
+
         steps:
           - script: npm install -g k6-to-junit
             displayName: 'Install k6-to-junit CLI'
@@ -229,45 +223,41 @@ stages:
           - script: npm install -g k6
             displayName: 'Install k6'
 
-          # Loop over each test in the loadTests array
-          - ${{ each test in variables.loadTests }}:
-              - task: AzureCLI@2
-                displayName: 'Start App Service - ${{ test.umbracoVersion }}'
-                condition: ne('${{ test.hostName }}', 'null')
-                inputs:
-                  azureSubscription: '$(serviceConnection)'
-                  scriptType: 'pscore'
-                  scriptLocation: 'inlineScript'
-                  inlineScript: |
-                    az webapp start -n ${{ test.appServiceName }} -g $(azurergname)
+          # First test
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(firstHostName)
+              umbracoVersion: $(firstUmbracoVersion)
+              appServiceName: $(firstAppServiceName)
+              testName: 'Test for version $(firstUmbracoVersion)'
+              condition: ne(variables['firstHostName'], '')
 
-              - task: PowerShell@2
-                displayName: 'Sleep for warm-up - ${{ test.umbracoVersion }}'
-                condition: ne('${{ test.hostName }}', 'null')
-                inputs:
-                  targetType: 'inline'
-                  script: Start-Sleep -Seconds 180
+          # Second test
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(secondHostName)
+              umbracoVersion: $(secondUmbracoVersion)
+              appServiceName: $(secondAppServiceName)
+              testName: 'Test for version $(secondUmbracoVersion)'
+              condition: ne(variables['secondHostName'], '')
 
-              - script: |
-                  k6 run -e HOST_NAME=${{ test.hostName }} -e USERS=${{ parameters.userAmount }} \
-                  --summary-export=results-${{ test.umbracoVersion }}.json \
-                  $(loadTestFileLocation)
-                condition: ne('${{ test.hostName }}', 'null')
-                displayName: 'Run k6 Load Test (version ${{ test.umbracoVersion }})'
+          # Third test
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(thirdHostName)
+              umbracoVersion: $(thirdUmbracoVersion)
+              appServiceName: $(thirdAppServiceName)
+              testName: 'Test for version $(thirdUmbracoVersion)'
+              condition: ne(variables['thirdHostName'], '')
 
-              - script: |
-                  k6-to-junit results-${{ test.umbracoVersion }}.json > k6-results-${{ test.umbracoVersion }}.xml
-                condition: succeeded()
-                displayName: 'Convert to JUnit XML (version ${{ test.umbracoVersion }})'
-
-              - task: PublishTestResults@2
-                condition: succeeded()
-                displayName: 'Publish k6 Test Results (version ${{ test.umbracoVersion }})'
-                inputs:
-                  testResultsFormat: 'JUnit'
-                  testResultsFiles: '**/k6-results-${{ test.umbracoVersion }}.xml'
-                  failTaskOnFailedTests: true
-                  testRunTitle: 'k6 Load Test - ${{ test.umbracoVersion }}'
+          # Fourth test
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(fourthHostName)
+              umbracoVersion: $(fourthUmbracoVersion)
+              appServiceName: $(fourthAppServiceName)
+              testName: 'Test for version $(fourthUmbracoVersion)'
+              condition: ne(variables['fourthHostName'], '')
 
       - job: deleteResourceGroup
         displayName: Deletes the resource group
