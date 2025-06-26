@@ -196,30 +196,32 @@ stages:
                 Write-Host "##vso[task.setvariable variable=fourthAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[3]')"
               workingDirectory: '$(terraformWorkingDirectory)'
 
-
       - job: runLoadTest
         displayName: Runs the load test
         dependsOn: apply
         variables:
           loadTests:
-            - name: 'first'
+            -
+              name: 'first'
               hostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
               umbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
               appServiceName: $[dependencies.apply.outputs['outputVars.firstAppServiceName']]
-            - name: 'second'
+            -
+              name: 'second'
               hostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
               umbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
               appServiceName: $[dependencies.apply.outputs['outputVars.secondAppServiceName']]
-            - name: 'third'
+            -  
+              name: 'third'
               hostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
               umbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
               appServiceName: $[dependencies.apply.outputs['outputVars.thirdAppServiceName']]
-
-            - name: 'fourth'
+            -
+              name: 'fourth'
               hostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
               umbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
               appServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
-        
+              
         steps:
           - script: npm install -g k6-to-junit
             displayName: 'Install k6-to-junit CLI'
@@ -267,24 +269,24 @@ stages:
                   failTaskOnFailedTests: true
                   testRunTitle: 'k6 Load Test - ${{ test.umbracoVersion }}'
 
-          - job: deleteResourceGroup
+      - job: deleteResourceGroup
+        displayName: Deletes the resource group
+        dependsOn: manualValidationResourceGroup
+        condition: eq(dependencies.manualValidationResourceGroup.result, 'failed')
+        steps:
+          - task: AzureCLI@2
+            name: checkResourceGroupAgain
+            displayName: Checks if the resource group exists before deleting it
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: 'Write-Host "##vso[task.setvariable variable=doesResourceGroupExist;isOutput=true]$(az group exists -n $(azurergname))"'
+          - task: AzureCLI@2
             displayName: Deletes the resource group
-            dependsOn: manualValidationResourceGroup
-            condition: eq(dependencies.manualValidationResourceGroup.result, 'failed')
-            steps:
-              - task: AzureCLI@2
-                name: checkResourceGroupAgain
-                displayName: Checks if the resource group exists before deleting it
-                inputs:
-                  azureSubscription: '$(serviceConnection)'
-                  scriptType: 'pscore'
-                  scriptLocation: 'inlineScript'
-                  inlineScript: 'Write-Host "##vso[task.setvariable variable=doesResourceGroupExist;isOutput=true]$(az group exists -n $(azurergname))"'
-              - task: AzureCLI@2
-                displayName: Deletes the resource group
-                retryCountOnTaskFailure: 5
-                inputs:
-                  azureSubscription: '$(serviceConnection)'
-                  scriptType: 'pscore'
-                  scriptLocation: 'inlineScript'
-                  inlineScript: 'az group delete -n $(azurergname) --yes'
+            retryCountOnTaskFailure: 5
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: 'az group delete -n $(azurergname) --yes'
