@@ -11,40 +11,36 @@ parameters:
     type: number
 
 steps:
-  - task: AzureCLI@2
-    name: startAppService${{ parameters.testName }}
-    condition: and(ne(${{ parameters.hostName }}, 'null'), ne(${{ parameters.umbracoVersion }}, 'null'))
-    displayName: 'Start App Service for ${{ parameters.testName }}'
-    inputs:
-      azureSubscription: '$(serviceConnection)'
-      scriptType: 'pscore'
-      scriptLocation: 'inlineScript'
-      inlineScript: az webapp start -n ${{ parameters.appServiceName }} -g $(azurergname)
+  - ${{ if ne(parameters.hostName, '') }}:
+      - task: AzureCLI@2
+        name: startAppService${{ parameters.testName }}
+        displayName: 'Start App Service for ${{ parameters.testName }}'
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: az webapp start -n ${{ parameters.appServiceName }} -g $(azurergname)
 
-  - task: PowerShell@2
-    condition: and(ne(${{ parameters.hostName }}, 'null'), ne(${{ parameters.umbracoVersion }}, 'null'))
-    displayName: 'Sleep for Warm-up - ${{ parameters.testName }}'
-    inputs:
-      targetType: 'inline'
-      script: Start-Sleep -Seconds 180
+      - task: PowerShell@2
+        displayName: 'Sleep for Warm-up - ${{ parameters.testName }}'
+        inputs:
+          targetType: 'inline'
+          script: Start-Sleep -Seconds 180
 
-  - script: |
-      k6 run -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} \
-      --summary-export=results-${{ parameters.umbracoVersion }}.json \
-      $(loadTestFileLocation)
-    condition: and(ne(${{ parameters.hostName }}, 'null'), ne(${{ parameters.umbracoVersion }}, 'null'))
-    displayName: 'Run k6 Load Test for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
+      - script: |
+          k6 run -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} \
+          --summary-export=results-${{ parameters.umbracoVersion }}.json \
+          $(loadTestFileLocation)
+        displayName: 'Run k6 Load Test for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
-  - script: |
-      k6-to-junit results-${{ parameters.umbracoVersion }}.json > k6-results-${{ parameters.umbracoVersion }}.xml
-    condition: succeeded()
-    displayName: 'Convert k6 Results to JUnit (version ${{ parameters.umbracoVersion }})'
+      - script: |
+          k6-to-junit results-${{ parameters.umbracoVersion }}.json > k6-results-${{ parameters.umbracoVersion }}.xml
+        displayName: 'Convert k6 Results to JUnit (version ${{ parameters.umbracoVersion }})'
 
-  - task: PublishTestResults@2
-    condition: succeeded()
-    displayName: 'Publish k6 Test Results (version ${{ parameters.umbracoVersion }})'
-    inputs:
-      testResultsFormat: 'JUnit'
-      testResultsFiles: '**/k6-results-${{ parameters.umbracoVersion }}.xml'
-      failTaskOnFailedTests: true
-      testRunTitle: 'k6 Load Test - ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
+      - task: PublishTestResults@2
+        displayName: 'Publish k6 Test Results (version ${{ parameters.umbracoVersion }})'
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/k6-results-${{ parameters.umbracoVersion }}.xml'
+          failTaskOnFailedTests: true
+          testRunTitle: 'k6 Load Test - ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'

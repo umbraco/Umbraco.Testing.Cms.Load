@@ -228,44 +228,44 @@ stages:
             displayName: 'Install k6'
 
           # First test
-          - ${{ if ne(variables['firstHostName'], '') }}:
-              - template: loadTestTemplate.yml
-                parameters:
-                  hostName: $(firstHostName)
-                  umbracoVersion: $(firstUmbracoVersion)
-                  appServiceName: $(firstAppServiceName)
-                  testName: 'First'
-                  userAmount: ${{ parameters.userAmount }}
+          #          - ${{ if ne(variables['firstHostName'], '') }}:
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(firstHostName)
+              umbracoVersion: $(firstUmbracoVersion)
+              appServiceName: $(firstAppServiceName)
+              testName: 'First'
+              userAmount: ${{ parameters.userAmount }}
 
           # Second test
-          - ${{ if ne(variables['secondHostName'], '') }}:
-              - template: loadTestTemplate.yml
-                parameters:
-                  hostName: $(secondHostName)
-                  umbracoVersion: $(secondUmbracoVersion)
-                  appServiceName: $(secondAppServiceName)
-                  testName: 'Second'
-                  userAmount: ${{ parameters.userAmount }}
+          #          - ${{ if ne(variables['secondHostName'], '') }}:
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(secondHostName)
+              umbracoVersion: $(secondUmbracoVersion)
+              appServiceName: $(secondAppServiceName)
+              testName: 'Second'
+              userAmount: ${{ parameters.userAmount }}
 
           # Third test
-          - ${{ if ne(variables['thirdHostName'], '') }}:
-              - template: loadTestTemplate.yml
-                parameters:
-                  hostName: $(thirdHostName)
-                  umbracoVersion: $(thirdUmbracoVersion)
-                  appServiceName: $(thirdAppServiceName)
-                  testName: 'Third'
-                  userAmount: ${{ parameters.userAmount }}
+          #          - ${{ if ne(variables['thirdHostName'], '') }}:
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(thirdHostName)
+              umbracoVersion: $(thirdUmbracoVersion)
+              appServiceName: $(thirdAppServiceName)
+              testName: 'Third'
+              userAmount: ${{ parameters.userAmount }}
 
           # Fourth test
-          - ${{ if ne(variables['fourthHostName'], '') }}:
-              - template: loadTestTemplate.yml
-                parameters:
-                  hostName: $(fourthHostName)
-                  umbracoVersion: $(fourthUmbracoVersion)
-                  appServiceName: $(fourthAppServiceName)
-                  testName: 'Fourth'
-                  userAmount: ${{ parameters.userAmount }}
+          #          - ${{ if ne(variables['fourthHostName'], '') }}:
+          - template: loadTestTemplate.yml
+            parameters:
+              hostName: $(fourthHostName)
+              umbracoVersion: $(fourthUmbracoVersion)
+              appServiceName: $(fourthAppServiceName)
+              testName: 'Fourth'
+              userAmount: ${{ parameters.userAmount }}
 
       - job: doesResourceGroupExists
         dependsOn: runLoadTest
