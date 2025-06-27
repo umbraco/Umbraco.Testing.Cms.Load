@@ -28,6 +28,17 @@ steps:
           script: Start-Sleep -Seconds 180
 
       - script: |
+          echo "Test Name: ${{ parameters.testName }}"
+          echo "Host Name: ${{ parameters.hostName }}"
+          echo "Umbraco Version: ${{ parameters.umbracoVersion }}"
+          echo "App Service Name: ${{ parameters.appServiceName }}"
+          echo "User Amount: ${{ parameters.userAmount }}"
+          echo "System.DefaultWorkingDirectory: $(System.DefaultWorkingDirectory)"
+          echo "Load Test File Location: $(loadTestFileLocation)"
+        displayName: 'All values'
+
+
+      - script: |
           docker run --rm \
           -e HOST_NAME=${{ parameters.hostName }} \
           -e USERS=${{ parameters.userAmount }} \
