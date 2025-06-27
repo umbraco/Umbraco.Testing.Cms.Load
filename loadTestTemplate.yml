@@ -29,11 +29,11 @@ steps:
 
       - script: |
           docker run --rm \
-            -e HOST_NAME=${{ parameters.hostName }} \
-            -e USERS=${{ parameters.userAmount }} \
-            -v $(System.DefaultWorkingDirectory):/scripts \
-            grafana/k6 run /scripts/$(loadTestFileLocation) \
-            --summary-export=/scripts/results-${{ parameters.umbracoVersion }}.json
+          -e HOST_NAME=${{ parameters.hostName }} \
+          -e USERS=${{ parameters.userAmount }} \
+          -v $(System.DefaultWorkingDirectory):/scripts \
+          grafana/k6 run /scripts/loadtests/k6LoadTest.js \
+          --summary-export=/scripts/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
       - script: npm install -g k6-to-junit
