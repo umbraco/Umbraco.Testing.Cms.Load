@@ -221,11 +221,6 @@ stages:
           fourthAppServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
 
         steps:
-          - script: npm install -g k6-to-junit
-            displayName: 'Install k6-to-junit CLI'
-
-          - script: npm install -g k6
-            displayName: 'Install k6'
 
           # First test
           #          - ${{ if ne(variables['firstHostName'], '') }}:
