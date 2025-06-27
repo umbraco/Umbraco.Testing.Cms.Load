@@ -51,7 +51,7 @@ steps:
             -e USERS=${{ parameters.userAmount }} \
             -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
             grafana/k6 run /testScripts/k6LoadTest.js \
-            --summary-export=/loadtests/results-${{ parameters.umbracoVersion }}.json
+            --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
       - script: npm install -g k6-to-junit
