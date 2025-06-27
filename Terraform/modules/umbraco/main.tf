@@ -12,9 +12,15 @@ resource "random_string" "admin_login" {
 }
 
 resource "random_password" "admin_password" {
-  length     = 16
-  special    = false
-  depends_on = [azurerm_resource_group.rg]
+  length      = 20
+  special     = false
+  upper       = true    
+  lower       = true      
+  number      = true     
+  min_upper   = 2           
+  min_lower   = 2           
+  min_numeric = 2        
+  depends_on  = [azurerm_resource_group.rg]
 }
 
 # App Service Plan
