@@ -36,14 +36,21 @@ steps:
           echo "System.DefaultWorkingDirectory: $(System.DefaultWorkingDirectory)"
           echo "Load Test File Location: $(loadTestFileLocation)"
         displayName: 'All values'
-
+        
+      - script: |
+          echo "Listing root of working directory:"
+          ls -al $(System.DefaultWorkingDirectory)
+          echo ""
+          echo "Listing contents of /loadtests folder:"
+          ls -al $(System.DefaultWorkingDirectory)/loadtests
+        displayName: 'Debug: List test script files'
 
       - script: |
           docker run --rm \
             -e HOST_NAME=${{ parameters.hostName }} \
             -e USERS=${{ parameters.userAmount }} \
-            -v $(System.DefaultWorkingDirectory)/loadtests:/loadtests \
-            grafana/k6 run /loadtests/k6LoadTest.js \
+            -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
+            grafana/k6 run /testScripts/k6LoadTest.js \
             --summary-export=/loadtests/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
