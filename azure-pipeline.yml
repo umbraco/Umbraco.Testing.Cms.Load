@@ -140,6 +140,10 @@ stages:
         variables:
           umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
         steps:
+          - task: TerraformInstaller@0
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: 'latest'
           # We need to initialize again, otherwise the pipeline will fail.
           - task: PowerShell@2
             displayName: Terraform Init
