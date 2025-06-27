@@ -28,13 +28,13 @@ resource "azurerm_service_plan" "appserviceplan" {
   sku_name            = var.app_service_plan_sku
 }
 
-resource "azurerm_load_test" "load_test" {
-  location            = var.resource_group_location
-  name                = "${var.resource_name_prefix}-loadtest"
-  resource_group_name = var.resource_group_name
-
-  depends_on = [azurerm_service_plan.appserviceplan]
-}
+# resource "azurerm_load_test" "load_test" {
+#   location            = var.resource_group_location
+#   name                = "${var.resource_name_prefix}-loadtest"
+#   resource_group_name = var.resource_group_name
+# 
+#   depends_on = [azurerm_service_plan.appserviceplan]
+# }
 
 # We create a module called versions, the reason for that is because we want to have multiple app services with different Umbraco Versions.
 module "versions" {
