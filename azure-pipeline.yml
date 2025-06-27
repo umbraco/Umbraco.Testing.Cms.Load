@@ -41,7 +41,7 @@ variables:
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
-  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/loadtests/k6LoadTest.js'
+  loadTestFileLocation: 'loadtests/k6LoadTest.js'
 
 stages:
   - stage: terraformDeploy
