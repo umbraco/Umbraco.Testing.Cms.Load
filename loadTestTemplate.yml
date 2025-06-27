@@ -20,6 +20,12 @@ steps:
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: az webapp start -n ${{ parameters.appServiceName }} -g $(azurergname)
+          
+      - script: npm install -g k6-to-junit
+        displayName: 'Install k6-to-junit CLI'
+
+      - script: npm install -g k6
+        displayName: 'Install k6'
 
       - task: PowerShell@2
         displayName: 'Sleep for Warm-up - ${{ parameters.testName }}'
