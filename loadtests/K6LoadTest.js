@@ -2,8 +2,11 @@ import http from 'k6/http';
 import {check} from 'k6';
 import {sleep} from 'k6';
 
-const host = __ENV.HOST_NAME || 'localhost';
+let host = __ENV.HOST_NAME;
 
+if (!host.startsWith('http')) {
+    host = `https://${host}`;
+}
 export let options = {
     vus: Number(__ENV.USERS) || 10, // Virtual users
     stages: [
