@@ -45,14 +45,23 @@ steps:
           ls -al $(System.DefaultWorkingDirectory)/loadtests
         displayName: 'Debug: List test script files'
 
-      - script: docker run --rm -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts grafana/k6 run /testScripts/K6LoadTest.js --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json
+      - script: |
+          # Create local directory to store k6 results
+          mkdir -p $(System.DefaultWorkingDirectory)/k6-results
+          docker run --rm \
+            -e HOST_NAME=${{ parameters.hostName }} \
+            -e USERS=${{ parameters.userAmount }} \
+            -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
+            -v $(System.DefaultWorkingDirectory)/k6-results:/results \
+            grafana/k6 run /testScripts/K6LoadTest.js \
+            --summary-export=/results/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
       - script: npm install -g k6-to-junit
         displayName: 'Install k6-to-junit CLI'
 
       - script: |
-          k6-to-junit loadtests/results-${{ parameters.umbracoVersion }}.json > loadtests/k6-results-${{ parameters.umbracoVersion }}.xml
+          k6-to-junit k6-results/results-${{ parameters.umbracoVersion }}.json > k6-results/k6-results-${{ parameters.umbracoVersion }}.xml
         workingDirectory: $(System.DefaultWorkingDirectory)
         displayName: 'Convert k6 Results to JUnit (version ${{ parameters.umbracoVersion }})'
 
@@ -60,6 +69,6 @@ steps:
         displayName: 'Publish k6 Test Results (version ${{ parameters.umbracoVersion }})'
         inputs:
           testResultsFormat: 'JUnit'
-          testResultsFiles: '**/k6-results-${{ parameters.umbracoVersion }}.xml'
+          testResultsFiles: 'k6-results/k6-results-${{ parameters.umbracoVersion }}.xml'
           failTaskOnFailedTests: true
           testRunTitle: 'k6 Load Test - ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
