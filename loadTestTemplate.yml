@@ -49,7 +49,7 @@ steps:
       - script: echo "--rm -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts grafana/k6 run /testScripts/k6LoadTest.js --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json"
         displayName: 'Debug: k6 Docker command'
 
-      - script: docker run --rm -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts grafana/k6 run /testScripts/k6LoadTest.js --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json
+      - script: docker run --rm -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts grafana/k6 run /testScripts/K6LoadTest.js --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
       - script: npm install -g k6-to-junit
