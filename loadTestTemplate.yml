@@ -36,7 +36,7 @@ steps:
           echo "System.DefaultWorkingDirectory: $(System.DefaultWorkingDirectory)"
           echo "Load Test File Location: $(loadTestFileLocation)"
         displayName: 'All values'
-        
+
       - script: |
           echo "Listing root of working directory:"
           ls -al $(System.DefaultWorkingDirectory)
@@ -45,13 +45,11 @@ steps:
           ls -al $(System.DefaultWorkingDirectory)/loadtests
         displayName: 'Debug: List test script files'
 
-      - script: |
-          docker run --rm \
-            -e HOST_NAME=${{ parameters.hostName }} \
-            -e USERS=${{ parameters.userAmount }} \
-            -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
-            grafana/k6 run /testScripts/k6LoadTest.js \
-            --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json
+
+      - script: echo "--rm -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts grafana/k6 run /testScripts/k6LoadTest.js --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json"
+        displayName: 'Debug: k6 Docker command'
+
+      - script: docker run --rm -e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts grafana/k6 run /testScripts/k6LoadTest.js --summary-export=/testScripts/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
       - script: npm install -g k6-to-junit
