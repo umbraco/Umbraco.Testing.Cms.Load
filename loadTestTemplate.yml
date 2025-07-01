@@ -57,13 +57,10 @@ steps:
             -e USERS=${{ parameters.userAmount }} \
             -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
             -v $(System.DefaultWorkingDirectory)/k6-results:/results \
+            -u $(id -u):$(id -g) \
             grafana/k6 run /testScripts/K6LoadTest.js \
             --summary-export=/results/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
-
-      - script: |
-          chmod 666 $(System.DefaultWorkingDirectory)/k6-results/results-${{ parameters.umbracoVersion }}.json
-        displayName: 'Fix permissions on k6 result file'
 
       - script: npm install -g k6-to-junit
         displayName: 'Install k6-to-junit CLI'
