@@ -17,8 +17,8 @@ if (!host.startsWith('http')) {
 export let options = {
     vus: Number(USERS) || 10,
     stages: [
-        {duration: '2s', target: Number(USERS) || 10},
-        {duration: '2s', target: Number(USERS) || 10},
+        {duration: '150s', target: Number(USERS) || 10},
+        {duration: '150s', target: Number(USERS) || 10},
     ],
 };
 
