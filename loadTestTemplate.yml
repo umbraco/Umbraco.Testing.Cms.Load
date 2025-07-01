@@ -12,6 +12,8 @@ parameters:
 
 steps:
   - ${{ if ne(parameters.umbracoVersion, '') }}:
+      - script: echo ${{ parameters.umbracoVersion }}
+        displayName: testVersion
       - task: AzureCLI@2
         name: startAppService${{ parameters.testName }}
         displayName: 'Start App Service for ${{ parameters.testName }}'
@@ -27,45 +29,33 @@ steps:
           targetType: 'inline'
           script: Start-Sleep -Seconds 180
 
-      - script: |
-          echo "Test Name: ${{ parameters.testName }}"
-          echo "Host Name: ${{ parameters.hostName }}"
-          echo "Umbraco Version: ${{ parameters.umbracoVersion }}"
-          echo "App Service Name: ${{ parameters.appServiceName }}"
-          echo "User Amount: ${{ parameters.userAmount }}"
-          echo "System.DefaultWorkingDirectory: $(System.DefaultWorkingDirectory)"
-          echo "Load Test File Location: $(loadTestFileLocation)"
-        displayName: 'All values'
-
-      - script: |
-          echo "Listing root of working directory:"
-          ls -al $(System.DefaultWorkingDirectory)
-          echo ""
-          echo "Listing contents of /loadtests folder:"
-          ls -al $(System.DefaultWorkingDirectory)/loadtests
-        displayName: 'Debug: List test script files'
-
-      - script: |
-          # Create k6-results directory and make it writable by Docker container
-          # 'chmod 777' ensures the container has full read/write access to the directory
-          mkdir -p $(System.DefaultWorkingDirectory)/k6-results
-          chmod 777 $(System.DefaultWorkingDirectory)/k6-results
-
-          # Run the k6 load test inside Docker with the grafana/k6 image
-          docker run --rm \
-            -e K6_WEB_DASHBOARD=true \
-            -e HOST_NAME=${{ parameters.hostName }} \
-            -e USERS=${{ parameters.userAmount }} \
-            -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
-            -v $(System.DefaultWorkingDirectory)/k6-results:/results \
-            -u $(id -u):$(id -g) \
-            grafana/k6 run /testScripts/K6LoadTest.js \
-            --summary-export=/results/results-${{ parameters.umbracoVersion }}.json
-        displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
-
-      - task: PublishPipelineArtifact@1
+      - task: k6-load-test@0
+        displayName: 'Run K6 Load Test'
+        continueOnError: true
         inputs:
-          targetPath: '$(System.DefaultWorkingDirectory)/k6-results'
-          artifact: 'k6-results-${{ parameters.umbracoVersion }}'
-          publishLocation: 'pipeline'
-        displayName: 'Publish k6 Test Results (version ${{ parameters.umbracoVersion }})'
+          args: '-e HOST_NAME=${{ parameters.hostName }} -e USERS=${{ parameters.userAmount }} -e K6_WEB_DASHBOARD=true -e K6_WEB_DASHBOARD_EXPORT=${{ parameters.umbracoVersion }}-dashboard.html -e K6_SUMMARY_EXPORT=${{ parameters.umbracoVersion }}-summary.html'
+          fileName: '$(System.DefaultWorkingDirectory)/loadtests/K6LoadTest.js'
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish K6 Dashboard HTML for ${{ parameters.umbracoVersion }}'
+        continueOnError: true
+        inputs:
+          PathtoPublish: '$(System.DefaultWorkingDirectory)/${{ parameters.umbracoVersion }}-dashboard.html'
+          ArtifactName: 'dashboard-for-${{ parameters.umbracoVersion }}'
+          publishLocation: 'Container'
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish K6 Summary HTML for ${{ parameters.umbracoVersion }}'
+        continueOnError: true
+        inputs:
+          PathtoPublish: '$(System.DefaultWorkingDirectory)/${{ parameters.umbracoVersion }}-summary.html'
+          ArtifactName: 'summary-for-${{ parameters.umbracoVersion }}'
+          publishLocation: 'Container'
+
+      - task: PublishTestResults@2
+        displayName: 'Publish K6 JUnit Results'
+        continueOnError: true
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/k6-results.xml'
+          testRunTitle: 'K6 Load Testing for ${{ parameters.umbracoVersion }}'
