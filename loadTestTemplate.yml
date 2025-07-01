@@ -62,19 +62,9 @@ steps:
             --summary-export=/results/results-${{ parameters.umbracoVersion }}.json
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
-      - script: npm install -g k6-to-junit
-        displayName: 'Install k6-to-junit CLI'
-
-      - script: |
-          # Convert k6 JSON results to JUnit XML format for publishing
-          k6-to-junit k6-results/results-${{ parameters.umbracoVersion }}.json > k6-results/k6-results-${{ parameters.umbracoVersion }}.xml
-        workingDirectory: $(System.DefaultWorkingDirectory)
-        displayName: 'Convert k6 Results to JUnit (version ${{ parameters.umbracoVersion }})'
-
-      - task: PublishTestResults@2
-        displayName: 'Publish k6 Test Results (version ${{ parameters.umbracoVersion }})'
+      - task: PublishPipelineArtifact@1
         inputs:
-          testResultsFormat: 'JUnit'
-          testResultsFiles: 'k6-results/k6-results-${{ parameters.umbracoVersion }}.xml'
-          failTaskOnFailedTests: true
-          testRunTitle: 'k6 Load Test - ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
+          targetPath: '$(System.DefaultWorkingDirectory)/k6-results'
+          artifact: 'k6-results-${{ parameters.umbracoVersion }}'
+          publishLocation: 'pipeline'
+        displayName: 'Publish k6 Test Results (version ${{ parameters.umbracoVersion }})'
