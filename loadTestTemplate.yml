@@ -46,8 +46,12 @@ steps:
         displayName: 'Debug: List test script files'
 
       - script: |
-          # Create local directory to store k6 results
+          # Create k6-result directory and make it writable by Docker container
+          # 'chmod 777' ensures the container has write/read access to the k6-results volume
           mkdir -p $(System.DefaultWorkingDirectory)/k6-results
+          chmod 777 $(System.DefaultWorkingDirectory)/k6-results
+          
+          # Run the k6 load test in Docker with the grafana/k6 image
           docker run --rm \
             -e HOST_NAME=${{ parameters.hostName }} \
             -e USERS=${{ parameters.userAmount }} \
@@ -61,6 +65,7 @@ steps:
         displayName: 'Install k6-to-junit CLI'
 
       - script: |
+          # Convert k6 JSON results to JUnit XML format for publishing
           k6-to-junit k6-results/results-${{ parameters.umbracoVersion }}.json > k6-results/k6-results-${{ parameters.umbracoVersion }}.xml
         workingDirectory: $(System.DefaultWorkingDirectory)
         displayName: 'Convert k6 Results to JUnit (version ${{ parameters.umbracoVersion }})'
