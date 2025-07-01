@@ -11,7 +11,7 @@ parameters:
     type: number
 
 steps:
-  - ${{ if ne(parameters.hostName, '') }}:
+  - ${{ if ne(parameters.umbracoVersion, '') }}:
       - task: AzureCLI@2
         name: startAppService${{ parameters.testName }}
         displayName: 'Start App Service for ${{ parameters.testName }}'
@@ -53,6 +53,7 @@ steps:
 
           # Run the k6 load test inside Docker with the grafana/k6 image
           docker run --rm \
+            -e K6_WEB_DASHBOARD=true \
             -e HOST_NAME=${{ parameters.hostName }} \
             -e USERS=${{ parameters.userAmount }} \
             -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
