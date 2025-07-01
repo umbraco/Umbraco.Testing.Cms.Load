@@ -42,7 +42,7 @@ export default function () {
 export function handleSummary(data) {
     return {
         [summaryExport]: htmlReport(data),
-        'k6-results.xml': jUnit(data),
+        './k6-results.xml': jUnit(data),
         stdout: textSummary(data, {indent: ' ', enableColors: true})
     };
 }
