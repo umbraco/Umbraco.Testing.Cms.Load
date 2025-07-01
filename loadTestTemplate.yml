@@ -11,7 +11,7 @@ parameters:
     type: number
 
 steps:
-  - ${{ if and(ne(parameters.umbracoVersion, ''), ne(parameters.umbracoVersion, null)) }}:
+  - ${{ if parameters.umbracoVersion }}:
       - script: echo ${{ parameters.umbracoVersion }}
         displayName: testVersion
       - task: AzureCLI@2
