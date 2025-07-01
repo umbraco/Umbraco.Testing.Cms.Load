@@ -46,19 +46,22 @@ steps:
         displayName: 'Debug: List test script files'
 
       - script: |
-          # Create k6-result directory and make it writable by Docker container
-          # 'chmod 777' ensures the container has write/read access to the k6-results volume
+          # Create k6-results directory and make it writable by Docker container
+          # 'chmod 777' ensures the container has full read/write access to the directory
           mkdir -p $(System.DefaultWorkingDirectory)/k6-results
           chmod 777 $(System.DefaultWorkingDirectory)/k6-results
-          
-          # Run the k6 load test in Docker with the grafana/k6 image
+
+          # Run the k6 load test inside Docker with the grafana/k6 image
+          # 'chmod 666' gives read/write permission on the results file so the pipeline can access it
           docker run --rm \
             -e HOST_NAME=${{ parameters.hostName }} \
             -e USERS=${{ parameters.userAmount }} \
             -v $(System.DefaultWorkingDirectory)/loadtests:/testScripts \
             -v $(System.DefaultWorkingDirectory)/k6-results:/results \
-            grafana/k6 run /testScripts/K6LoadTest.js \
-            --summary-export=/results/results-${{ parameters.umbracoVersion }}.json
+            grafana/k6 sh -c "\
+              k6 run /testScripts/K6LoadTest.js \
+              --summary-export=/results/results-${{ parameters.umbracoVersion }}.json && \
+              chmod 666 /results/results-${{ parameters.umbracoVersion }}.json"
         displayName: 'Run k6 Load Test with Docker for ${{ parameters.testName }} (version ${{ parameters.umbracoVersion }})'
 
       - script: npm install -g k6-to-junit
