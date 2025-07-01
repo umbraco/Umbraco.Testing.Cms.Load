@@ -1,21 +1,29 @@
 import http from 'k6/http';
-import {check} from 'k6';
-import {sleep} from 'k6';
+import {check, sleep} from 'k6';
+import {htmlReport} from "https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js";
+import {jUnit, textSummary} from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 
-let host = __ENV.HOST_NAME;
+
+
+// Environment Configuration
+const { HOST_NAME, USERS, K6_SUMMARY_EXPORT } = __ENV;
+
+
+let host = HOST_NAME;
 
 if (!host.startsWith('http')) {
     host = `https://${host}`;
 }
 export let options = {
-    vus: Number(__ENV.USERS) || 10, // Virtual users
+    vus: Number(USERS) || 10,
     stages: [
-        {duration: '150s', target: Number(__ENV.USERS) || 10}, // ramp-up
-        {duration: '150s', target: Number(__ENV.USERS) || 10}, // steady state
+        {duration: '2s', target: Number(USERS) || 10},
+        {duration: '2s', target: Number(USERS) || 10},
     ],
 };
 
-// List of URLs to test
+const summaryExport = K6_SUMMARY_EXPORT || "k6-summary.html";
+
 const urls = [
     '/',
     '/blog/',
@@ -24,12 +32,17 @@ const urls = [
 ];
 
 export default function () {
-    // Loop through each URL and make a GET request
     urls.forEach((url) => {
         let res = http.get(host + url);
         check(res, {[`${url} loaded`]: (r) => r.status === 200});
     });
-
-    // Sleep between iterations
     sleep(1);
+}
+
+export function handleSummary(data) {
+    return {
+        [summaryExport]: htmlReport(data),
+        'k6-results.xml': jUnit(data),
+        stdout: textSummary(data, {indent: ' ', enableColors: true})
+    };
 }
