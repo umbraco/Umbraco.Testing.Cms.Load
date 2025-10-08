@@ -48,12 +48,15 @@ cd $nameToApp
 # Adds the starter kit Clean
 # If the Umbraco version is 13.0.0 and above, the newest version of Clean is installed.
 # Otherwise, version 3.1.4 of Clean will be installed.
-if ($umbracoVersion -le "13.0.0") {
-    dotnet add package clean --version 3.1.4
-} else {
+if ($umbracoVersion -ge "16.0.0") {
     dotnet add package clean
+} elseif ($umbracoVersion -ge "15.0.0" -and $umbracoVersion -lt "16.0.0") {
+    dotnet add package clean --version 5.2.2
+} elseif ($umbracoVersion -ge "13.0.0" -and $umbracoVersion -lt "15.0.0") {
+    dotnet add package clean --version 4.1.0
+} else {
+    dotnet add package clean --version 3.1.4
 }
-
 
 # Build the project to retrieve files from the Clean Starter Kit
 dotnet build
