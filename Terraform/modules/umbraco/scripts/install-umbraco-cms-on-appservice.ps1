@@ -45,20 +45,13 @@ dotnet new umbraco -n $nameToApp
 
 cd $nameToApp
 
-# Adds the starter kit Clean
-# If the Umbraco version is 13.0.0 and above, the newest version of Clean is installed.
-# Otherwise, version 3.1.4 of Clean will be installed.
-if ($umbracoVersion -ge "16.0.0") {
-    dotnet add package clean
-} elseif ($umbracoVersion -ge "15.0.0" -and $umbracoVersion -lt "16.0.0") {
-    dotnet add package clean --version 5.2.2
-} elseif ($umbracoVersion -ge "13.0.0" -and $umbracoVersion -lt "15.0.0") {
-    dotnet add package clean --version 4.1.0
-} else {
-    dotnet add package clean --version 3.1.4
+# We might need to do the same as before related to versioning 
+# Add DummyDataSeeder package (supports Umbraco 13+)
+if ($umbracoVersion -ge "13.0.0") {
+    dotnet add package Umbraco.Community.DummyDataSeeder
 }
 
-# Build the project to retrieve files from the Clean Starter Kit
+# Build the project
 dotnet build
 
 cd ..
@@ -82,7 +75,7 @@ Set-Location ..
 # Clean up the Umbraco Template install folder
 Remove-Item -Force $updatedVersionName
 
-# Ping the App Service to trigger the installation process
+# Helper function to get URL status code
 function Get-UrlStatusCode([string] $Url)
 {
     try
@@ -95,8 +88,52 @@ function Get-UrlStatusCode([string] $Url)
     }
 }
 
-$statusCode = Get-UrlStatusCode $appserviceHostname
-Write-Host "StatusCode is: $statusCode"
+# Trigger Umbraco startup
+$statusCode = Get-UrlStatusCode "https://$appserviceHostname"
+Write-Host "Initial StatusCode is: $statusCode"
+
+# Wait for seeder to complete (max 60 minutes for large presets)
+$seederStatusUrl = "https://$appserviceHostname/umbraco/api/seederstatus/status"
+$maxAttempts = 360
+$attempt = 0
+$seederComplete = $false
+
+Write-Host "Waiting for DummyDataSeeder to complete..."
+
+while ($attempt -lt $maxAttempts -and -not $seederComplete) {
+    Start-Sleep -Seconds 10
+    $attempt++
+
+    try {
+        $response = Invoke-WebRequest -Uri $seederStatusUrl -UseBasicParsing
+        $seederStatusCode = $response.StatusCode
+        $responseBody = $response.Content | ConvertFrom-Json
+
+        Write-Host "Attempt $attempt`: Seeder status: $($responseBody.Status)"
+
+        if ($seederStatusCode -eq 200) {
+            $elapsedSeconds = [math]::Round($responseBody.ElapsedMs / 1000, 2)
+            Write-Host "DummyDataSeeder completed successfully!"
+            Write-Host "Seeding took $elapsedSeconds seconds ($($responseBody.ElapsedMs) ms)"
+            Write-Host "Executed: $($responseBody.ExecutedCount), Failed: $($responseBody.FailedCount)"
+            $seederComplete = $true
+        }
+        elseif ($seederStatusCode -eq 503) {
+            Write-Host "WARNING: Seeder reported failure - $($responseBody.ErrorMessage)"
+            $seederComplete = $true
+        }
+        elseif ($responseBody.CurrentSeeder) {
+            Write-Host "Currently running: $($responseBody.CurrentSeeder)"
+        }
+    }
+    catch {
+        Write-Host "Attempt $attempt`: Error checking seeder status: $_"
+        if ($attempt -gt 6) {
+            Write-Host "Seeder endpoint not responding - assuming complete"
+            $seederComplete = $true
+        }
+    }
+}
 
 # Stop the app service
 az webapp stop -n $appserviceName -g $rgName

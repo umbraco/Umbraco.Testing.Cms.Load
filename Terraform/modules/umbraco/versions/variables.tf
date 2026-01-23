@@ -48,3 +48,13 @@ variable "tenant_id" {
   type = string
   sensitive = true
 }
+
+variable "seeder_preset" {
+  type        = string
+  description = "DummyDataSeeder preset (Small, Medium, Large, Massive)"
+  default     = "Medium"
+  validation {
+    condition     = contains(["Small", "Medium", "Large", "Massive"], var.seeder_preset)
+    error_message = "seeder_preset must be one of: Small, Medium, Large, Massive"
+  }
+}

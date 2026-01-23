@@ -60,6 +60,8 @@ resource "azurerm_windows_web_app" "appservice" {
     "Umbraco__CMS__Unattended__UnattendedUserPassword" = "1234567890"
     "SCM_DO_BUILD_DURING_DEPLOYMENT"                   = true
     "Serilog__MinimumLevel__Override__Microsoft"       = "Information"
+    "DummyDataSeeder__Options__Enabled"                = "true"
+    "DummyDataSeeder__Options__Preset"                 = var.seeder_preset
   }
 
   connection_string {
