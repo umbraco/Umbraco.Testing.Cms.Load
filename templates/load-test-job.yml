@@ -1,0 +1,80 @@
+# Template for running a single load test against an Umbraco version
+parameters:
+  - name: serviceConnection
+    type: string
+  - name: resourceGroupName
+    type: string
+  - name: loadTestResourceName
+    type: string
+  - name: loadTestFileLocation
+    type: string
+  - name: hostNameVar
+    type: string
+  - name: appServiceNameVar
+    type: string
+  - name: umbracoVersionVar
+    type: string
+  - name: userAmount
+    type: number
+  - name: stopPreviousAppServiceVar
+    type: string
+    default: ''
+  - name: testIndex
+    type: number
+
+steps:
+  # Stop previous app service if specified
+  - ${{ if ne(parameters.stopPreviousAppServiceVar, '') }}:
+    - task: AzureCLI@2
+      displayName: 'Stop previous App Service'
+      condition: and(succeeded(), ne(variables['${{ parameters.stopPreviousAppServiceVar }}'], 'null'))
+      inputs:
+        azureSubscription: '${{ parameters.serviceConnection }}'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az webapp stop -n $(${{ parameters.stopPreviousAppServiceVar }}) -g ${{ parameters.resourceGroupName }}
+
+  # Start current app service
+  - task: AzureCLI@2
+    displayName: 'Start App Service [${{ parameters.testIndex }}]'
+    condition: and(succeeded(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    inputs:
+      azureSubscription: '${{ parameters.serviceConnection }}'
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        az webapp start -n $(${{ parameters.appServiceNameVar }}) -g ${{ parameters.resourceGroupName }}
+
+  # Wait for app to warm up (3 minutes)
+  - task: PowerShell@2
+    displayName: 'Warm up (180s) [${{ parameters.testIndex }}]'
+    condition: and(succeeded(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "Waiting 180 seconds for app service to warm up..."
+        Start-Sleep -Seconds 180
+
+  # Run load test
+  - task: AzureLoadTest@1
+    displayName: 'Load Test [${{ parameters.testIndex }}]'
+    condition: and(succeeded(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    inputs:
+      azureSubscription: '${{ parameters.serviceConnection }}'
+      loadTestConfigFile: '${{ parameters.loadTestFileLocation }}'
+      resourceGroup: '${{ parameters.resourceGroupName }}'
+      loadTestResource: '${{ parameters.loadTestResourceName }}'
+      loadTestRunName: '$(${{ parameters.umbracoVersionVar }})'
+      loadTestRunDescription: 'Load testing Umbraco'
+      env: |
+        [
+          {
+            "name": "hostName",
+            "value": "$(${{ parameters.hostNameVar }})"
+          },
+          {
+            "name": "users",
+            "value": "${{ parameters.userAmount }}"
+          }
+        ]

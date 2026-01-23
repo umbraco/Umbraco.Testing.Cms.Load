@@ -1,27 +1,34 @@
 output "versions_output" {
   value = {
-    for version_list, module_versions in module.versions :
-    version_list => ({ "appserviceName" = module_versions.umbraco_version_values.appserviceName, "appserviceHostname" = module_versions.umbraco_version_values.appserviceHostname, "umbraco_cms_version" = module_versions.umbraco_version_values.umbraco_cms_version })
+    for version_key, module_version in module.versions :
+    version_key => {
+      app_service_name     = module_version.umbraco_version_values.app_service_name
+      app_service_hostname = module_version.umbraco_version_values.app_service_hostname
+      umbraco_cms_version  = module_version.umbraco_version_values.umbraco_cms_version
+    }
   }
 }
 
 output "hostnames" {
+  description = "List of App Service hostnames"
   value = [
-    for module_versions in module.versions :
-    module_versions.umbraco_version_values.appserviceHostname
+    for module_version in module.versions :
+    module_version.umbraco_version_values.app_service_hostname
   ]
 }
 
 output "cms_versions" {
+  description = "List of Umbraco CMS versions deployed"
   value = [
-    for module_versions in module.versions :
-    module_versions.umbraco_version_values.umbraco_cms_version
+    for module_version in module.versions :
+    module_version.umbraco_version_values.umbraco_cms_version
   ]
 }
 
-output "app_service_name" {
+output "app_service_names" {
+  description = "List of App Service names"
   value = [
-    for module_versions in module.versions :
-    module_versions.umbraco_version_values.appserviceName
+    for module_version in module.versions :
+    module_version.umbraco_version_values.app_service_name
   ]
 }

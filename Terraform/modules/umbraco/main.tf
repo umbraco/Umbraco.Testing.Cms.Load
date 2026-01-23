@@ -4,7 +4,7 @@ resource "azurerm_resource_group" "rg" {
   location = var.resource_group_location
 }
 
-# Random string for SQL server login
+# Random credentials for SQL server (shared across all versions)
 resource "random_string" "admin_login" {
   length     = 16
   special    = false
@@ -17,40 +17,50 @@ resource "random_password" "admin_password" {
   depends_on = [azurerm_resource_group.rg]
 }
 
-# App Service Plan
+# App Service Plan (shared across all versions)
 resource "azurerm_service_plan" "appserviceplan" {
   name                = "${var.resource_name_prefix}-appserviceplan"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Windows"
-  
-  # We are using a variable for the sku version because we want to be able to change it if needed. 
   sku_name            = var.app_service_plan_sku
 }
 
+# Azure Load Test resource
 resource "azurerm_load_test" "load_test" {
-  location            = var.resource_group_location
   name                = "${var.resource_name_prefix}-loadtest"
+  location            = var.resource_group_location
   resource_group_name = var.resource_group_name
 
   depends_on = [azurerm_service_plan.appserviceplan]
 }
 
-# We create a module called versions, the reason for that is because we want to have multiple app services with different Umbraco Versions.
+# Per-version infrastructure module
 module "versions" {
-  # We use a for_each so it creates a module for each version of Umbraco we have defined in variables.
-  for_each                = var.umbraco_cms_versions
-  source                  = "./versions"
+  for_each = var.umbraco_cms_versions
+  source   = "./versions"
+
+  # Resource configuration
   resource_name_prefix    = var.resource_name_prefix
   resource_group_name     = azurerm_resource_group.rg.name
   resource_group_location = azurerm_resource_group.rg.location
   service_plan_id         = azurerm_service_plan.appserviceplan.id
-  dotnet_version          = each.value["dotnet_version"]
-  umbraco_cms_version     = each.value["umbraco_version"]
-  admin_login             = random_string.admin_login.result
-  admin_password          = random_password.admin_password.result
-  client_id               = var.client_id
-  client_secret           = var.client_secret
-  tenant_id               = var.tenant_id
-  seeder_preset           = var.seeder_preset
+
+  # Version-specific settings
+  dotnet_version      = each.value["dotnet_version"]
+  umbraco_cms_version = each.value["umbraco_version"]
+
+  # SQL configuration
+  admin_login    = random_string.admin_login.result
+  admin_password = random_password.admin_password.result
+  sql_sku        = var.sql_sku
+  sql_max_size_gb = var.sql_max_size_gb
+
+  # Seeder configuration
+  seeder_preset = var.seeder_preset
+
+  # Azure credentials for deployment
+  client_id     = var.client_id
+  client_secret = var.client_secret
+  tenant_id     = var.tenant_id
 }

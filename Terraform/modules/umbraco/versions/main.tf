@@ -1,11 +1,11 @@
-# Replace . with - in Umbraco versions. This is necessary for resource naming.
+# Replace . with - in Umbraco versions for resource naming
 locals {
-  short_version_name = (split("-", var.umbraco_cms_version)[0])
-  version_name = replace(local.short_version_name, ".", "-")
+  short_version_name = split("-", var.umbraco_cms_version)[0]
+  version_name       = replace(local.short_version_name, ".", "-")
 }
 
-# SQL server
-resource "azurerm_mssql_server" "msserver" {
+# SQL Server
+resource "azurerm_mssql_server" "sql_server" {
   name                         = "${var.resource_name_prefix}-sqlserver-${local.version_name}"
   resource_group_name          = var.resource_group_name
   location                     = var.resource_group_location
@@ -13,32 +13,31 @@ resource "azurerm_mssql_server" "msserver" {
   administrator_login          = var.admin_login
   administrator_login_password = var.admin_password
   minimum_tls_version          = "1.2"
-  
-  # Added a timeout for creating the server because it can sometimes fail and run for 60 minutes
+
   timeouts {
     create = "7m"
   }
 }
 
-# Allow all Azure services to access the SQL Server
-resource "azurerm_mssql_firewall_rule" "firewallrule" {
-  name             = "Allow all azure services-${local.version_name}"
-  server_id        = azurerm_mssql_server.msserver.id
+# Firewall rule to allow Azure services
+resource "azurerm_mssql_firewall_rule" "allow_azure_services" {
+  name             = "AllowAzureServices-${local.version_name}"
+  server_id        = azurerm_mssql_server.sql_server.id
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
 }
 
-# Database
-resource "azurerm_mssql_database" "db" {
+# SQL Database
+resource "azurerm_mssql_database" "database" {
   name        = "${var.resource_name_prefix}-db-${local.version_name}"
-  server_id   = azurerm_mssql_server.msserver.id
+  server_id   = azurerm_mssql_server.sql_server.id
   collation   = "SQL_Latin1_General_CP1_CI_AS"
-  max_size_gb = 5
-  sku_name    = "S0"
+  max_size_gb = var.sql_max_size_gb
+  sku_name    = var.sql_sku
 }
 
-# App Service
-resource "azurerm_windows_web_app" "appservice" {
+# Windows App Service
+resource "azurerm_windows_web_app" "app_service" {
   name                = "${var.resource_name_prefix}-appservice-${local.version_name}"
   location            = var.resource_group_location
   resource_group_name = var.resource_group_name
@@ -52,32 +51,41 @@ resource "azurerm_windows_web_app" "appservice" {
   }
 
   app_settings = {
-    "Umbraco.Core.LocalTempStorage"                    = "EnvironmentTemp"
-    "Umbraco.Examine.LuceneDirectoryFactory"           = "Examine.LuceneEngine.Directories.SyncTempEnvDirectoryFactory, Examine"
+    # Umbraco Azure configuration
+    "Umbraco.Core.LocalTempStorage"          = "EnvironmentTemp"
+    "Umbraco.Examine.LuceneDirectoryFactory" = "Examine.LuceneEngine.Directories.SyncTempEnvDirectoryFactory, Examine"
+
+    # Unattended installation
     "Umbraco__CMS__Unattended__InstallUnattended"      = "true"
     "Umbraco__CMS__Unattended__UnattendedUserName"     = "John Doe"
     "Umbraco__CMS__Unattended__UnattendedUserEmail"    = "admin@admin.admin"
     "Umbraco__CMS__Unattended__UnattendedUserPassword" = "1234567890"
-    "SCM_DO_BUILD_DURING_DEPLOYMENT"                   = true
-    "Serilog__MinimumLevel__Override__Microsoft"       = "Information"
-    "DummyDataSeeder__Options__Enabled"                = "true"
-    "DummyDataSeeder__Options__Preset"                 = var.seeder_preset
+
+    # Build settings
+    "SCM_DO_BUILD_DURING_DEPLOYMENT" = "true"
+
+    # Logging
+    "Serilog__MinimumLevel__Override__Microsoft" = "Information"
+
+    # DummyDataSeeder
+    "DummyDataSeeder__Options__Enabled" = "true"
+    "DummyDataSeeder__Options__Preset"  = var.seeder_preset
   }
 
   connection_string {
     name  = "umbracoDbDSN"
     type  = "SQLAzure"
-    value = "Server=tcp:${azurerm_mssql_server.msserver.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.db.name};Persist Security Info=False;User ID=${azurerm_mssql_server.msserver.administrator_login}@${azurerm_mssql_server.msserver.name};Password=${azurerm_mssql_server.msserver.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;"
+    value = "Server=tcp:${azurerm_mssql_server.sql_server.fully_qualified_domain_name},1433;Initial Catalog=${azurerm_mssql_database.database.name};Persist Security Info=False;User ID=${azurerm_mssql_server.sql_server.administrator_login}@${azurerm_mssql_server.sql_server.name};Password=${azurerm_mssql_server.sql_server.administrator_login_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=120;"
   }
 }
 
-# Runs the script to create and deploy Umbraco CMS with the defined version.
-resource "null_resource" "deploy_umbraco_windows_host" {
+# Deploy Umbraco CMS via PowerShell script
+resource "null_resource" "deploy_umbraco" {
   provisioner "local-exec" {
-    command = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -rgName \"${var.resource_group_name}\" -appserviceName \"${azurerm_windows_web_app.appservice.name}\" -appserviceHostname \"${azurerm_windows_web_app.appservice.default_hostname}\" -umbracoVersion \"${var.umbraco_cms_version}\" -client_id \"${var.client_id}\" -client_secret \"${var.client_secret}\" -tenant_id \"${var.tenant_id}\""
-    // Remember to change to "pwsh" for the pipeline
-    // "Powershell" for local
+    command = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -rgName \"${var.resource_group_name}\" -appserviceName \"${azurerm_windows_web_app.app_service.name}\" -appserviceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -umbracoVersion \"${var.umbraco_cms_version}\" -client_id \"${var.client_id}\" -client_secret \"${var.client_secret}\" -tenant_id \"${var.tenant_id}\""
+    # Use "pwsh" for CI pipeline, "PowerShell" for local Windows
     interpreter = ["pwsh", "-Command"]
   }
-  depends_on = [azurerm_windows_web_app.appservice]
+
+  depends_on = [azurerm_windows_web_app.app_service]
 }
