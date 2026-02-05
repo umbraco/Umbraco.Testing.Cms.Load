@@ -1,0 +1,154 @@
+# Load Test Template - runs Azure Load Testing with k6 against a single Umbraco instance
+
+parameters:
+  - name: hostName
+    type: string
+  - name: umbracoVersion
+    type: string
+  - name: appServiceName
+    type: string
+  - name: previousAppServiceName
+    type: string
+    default: ''
+  - name: testName
+    type: string
+  - name: userAmount
+    type: number
+  - name: testDuration
+    type: string
+    default: '3m'
+  - name: warmupSeconds
+    type: number
+    default: 180
+  - name: appServiceSku
+    type: string
+    default: 'S3'
+  - name: sqlSku
+    type: string
+    default: 'S0'
+
+steps:
+  - ${{ if parameters.umbracoVersion }}:
+
+      # Stop previous app service (if provided)
+      - ${{ if parameters.previousAppServiceName }}:
+          - task: AzureCLI@2
+            displayName: 'Stop previous App Service'
+            continueOnError: true
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: az webapp stop -n ${{ parameters.previousAppServiceName }} -g $(azurergname)
+
+      # Start current app service
+      - task: AzureCLI@2
+        name: startAppService${{ parameters.testName }}
+        displayName: 'Start App Service - ${{ parameters.umbracoVersion }}'
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: az webapp start -n ${{ parameters.appServiceName }} -g $(azurergname)
+
+      # Wait for warm-up
+      - task: PowerShell@2
+        displayName: 'Warm-up wait (${{ parameters.warmupSeconds }}s) - ${{ parameters.umbracoVersion }}'
+        inputs:
+          targetType: 'inline'
+          script: Start-Sleep -Seconds ${{ parameters.warmupSeconds }}
+
+      # Create Azure Load Test config
+      - task: PowerShell@2
+        displayName: 'Configure test for ${{ parameters.umbracoVersion }}'
+        inputs:
+          targetType: 'inline'
+          script: |
+            $configContent = @"
+            version: v0.1
+            testId: umbraco-${{ parameters.umbracoVersion }}
+            displayName: Umbraco ${{ parameters.umbracoVersion }} Load Test
+            testPlan: dist/main.js
+            description: Load test for Umbraco ${{ parameters.umbracoVersion }}
+            engineInstances: 1
+            env:
+              - name: HOST_NAME
+                value: ${{ parameters.hostName }}
+              - name: USERS
+                value: "${{ parameters.userAmount }}"
+              - name: TEST_DURATION
+                value: "${{ parameters.testDuration }}"
+            "@
+            $configContent | Out-File -FilePath "$(System.DefaultWorkingDirectory)/loadtests/azure-load-test.yaml" -Encoding utf8
+
+      # Run Azure Load Test
+      - task: AzureLoadTest@1
+        displayName: 'Azure Load Test - ${{ parameters.umbracoVersion }}'
+        continueOnError: true
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          loadTestConfigFile: '$(System.DefaultWorkingDirectory)/loadtests/azure-load-test.yaml'
+          resourceGroup: '$(azurergname)'
+          loadTestResource: '$(loadTestResource)'
+
+      # Publish results to pipeline artifacts
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish Results - ${{ parameters.umbracoVersion }}'
+        continueOnError: true
+        inputs:
+          PathtoPublish: '$(System.DefaultWorkingDirectory)/loadTest'
+          ArtifactName: 'loadtest-results-${{ parameters.umbracoVersion }}'
+          publishLocation: 'Container'
+
+      # Export results to blob storage for permanent history
+      - task: AzureCLI@2
+        displayName: 'Save to Blob Storage - ${{ parameters.umbracoVersion }}'
+        continueOnError: true
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            $date = Get-Date -Format "yyyy-MM-dd"
+            $blobPath = "v${{ parameters.umbracoVersion }}_$date"
+
+            # Create config.txt
+            $configContent = @"
+Umbraco Load Test
+=================
+Date: $date
+Version: ${{ parameters.umbracoVersion }}
+
+Infrastructure
+--------------
+App Service SKU: ${{ parameters.appServiceSku }}
+SQL SKU: ${{ parameters.sqlSku }}
+Region: West Europe
+
+Test Settings
+-------------
+Users: ${{ parameters.userAmount }}
+Duration: ${{ parameters.testDuration }}
+"@
+
+            $configContent | Out-File -FilePath "$(System.DefaultWorkingDirectory)/config.txt" -Encoding utf8
+
+            # Upload config.txt
+            az storage blob upload `
+              --account-name $(storageAccountName) `
+              --container-name loadtest-results `
+              --name "$blobPath/config.txt" `
+              --file "$(System.DefaultWorkingDirectory)/config.txt" `
+              --auth-mode login
+
+            # Upload result files
+            if (Test-Path "$(System.DefaultWorkingDirectory)/loadTest") {
+              az storage blob upload-batch `
+                --account-name $(storageAccountName) `
+                --destination loadtest-results `
+                --destination-path "$blobPath/results" `
+                --source "$(System.DefaultWorkingDirectory)/loadTest" `
+                --auth-mode login
+            }
+
+            Write-Host "Results saved to: loadtest-results/$blobPath"

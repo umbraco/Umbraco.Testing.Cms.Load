@@ -1,33 +1,22 @@
 [CmdletBinding()]
 param (
     [Parameter()]
-    [string]
-    $firstDotNetVersion,
+    [string]$firstDotNetVersion,
     [Parameter()]
-    [string]
-    $firstUmbracoVersion, 
+    [string]$firstUmbracoVersion,
     [Parameter()]
-    [string]
-    $secondDotNetVersion,
+    [string]$secondDotNetVersion,
     [Parameter()]
-    [string]
-    $secondUmbracoVersion, 
+    [string]$secondUmbracoVersion,
     [Parameter()]
-    [string]
-    $thirdDotNetVersion,
+    [string]$thirdDotNetVersion,
     [Parameter()]
-    [string]
-    $thirdUmbracoVersion, 
+    [string]$thirdUmbracoVersion,
     [Parameter()]
-    [string]
-    $fourthDotNetVersion,
+    [string]$fourthDotNetVersion,
     [Parameter()]
-    [string]
-    $fourthUmbracoVersion,
-
-    [hashtable[]]
-    $Hashtables
-    )
+    [string]$fourthUmbracoVersion
+)
 
 $Hashtables = 
 @{"dotnet_version"    = $firstDotNetVersion; 
@@ -39,11 +28,11 @@ $Hashtables =
 @{"dotnet_version"    = $thirdDotNetVersion; 
     "umbraco_version" = $thirdUmbracoVersion
 }, 
-@{"dotnet_version"    = $fourthDotNetVersion; 
+@{"dotnet_version"    = $fourthDotNetVersion;
     "umbraco_version" = $fourthUmbracoVersion
 }
 
-$JsonTest
+$JsonTest = ""
 
 for ($versions = 0; $versions -lt $Hashtables.count; $versions++) {
     if ($Hashtables[$versions]["dotnet_version"] -ne "null" -and $Hashtables[$versions]["umbraco_version"] -ne "null") {

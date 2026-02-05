@@ -1,0 +1,45 @@
+# =============================================================================
+# Terraform Backend Configuration (Example)
+# =============================================================================
+# This file shows how to configure remote state storage in Azure.
+# Copy to backend.tf and update with your values.
+#
+# Prerequisites:
+#   1. Create a Storage Account and Container in Azure
+#   2. Update the values below
+#   3. Run: terraform init -reconfigure
+# =============================================================================
+
+terraform {
+  backend "azurerm" {
+    # Storage account details
+    resource_group_name  = "terraform-state-rg"
+    storage_account_name = "tfstateloadtest"
+    container_name       = "tfstate"
+    key                  = "loadtest.terraform.tfstate"
+
+    # Optional: Use Azure AD authentication instead of storage key
+    # use_azuread_auth = true
+  }
+}
+
+# =============================================================================
+# To create the storage account, run these Azure CLI commands:
+# =============================================================================
+#
+# # Create resource group
+# az group create -n terraform-state-rg -l "West Europe"
+#
+# # Create storage account (name must be globally unique)
+# az storage account create \
+#   -n tfstateloadtest \
+#   -g terraform-state-rg \
+#   -l "West Europe" \
+#   --sku Standard_LRS
+#
+# # Create container
+# az storage container create \
+#   -n tfstate \
+#   --account-name tfstateloadtest
+#
+# =============================================================================

@@ -1,0 +1,79 @@
+# =============================================================================
+# Umbraco Load Test Configuration
+# =============================================================================
+# Copy this file to terraform.tfvars and customize the values.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Resource Naming & Location
+# -----------------------------------------------------------------------------
+
+# Prefix for all Azure resources (lowercase, numbers, hyphens only)
+resource_name_prefix = "umbraco-load-test"
+
+# Name of the resource group (will be created)
+resource_group_name = "umbraco-load-test-rg"
+
+# Azure region for all resources
+resource_group_location = "West Europe"
+
+# -----------------------------------------------------------------------------
+# Results Storage (must be created manually - see Prerequisites)
+# -----------------------------------------------------------------------------
+
+results_storage_account_name = "umbaboratestresults"
+
+# -----------------------------------------------------------------------------
+# Infrastructure
+# -----------------------------------------------------------------------------
+
+# App Service Plan SKU (shared by all Umbraco instances)
+# S1 (1 core, 1.75 GB), S2 (2 cores, 3.5 GB), S3 (4 cores, 7 GB)
+app_service_plan_sku = "S3"
+
+# SQL Database SKU (per Umbraco instance)
+# Options: S0 (10 DTU), S1 (20 DTU), S2 (50 DTU)
+sql_sku = "S0"
+
+# Maximum SQL Database size in GB (per instance)
+sql_max_size_gb = 5
+
+# -----------------------------------------------------------------------------
+# Umbraco Versions to Deploy
+# -----------------------------------------------------------------------------
+# Each entry creates a separate App Service + SQL Database.
+# Key names become part of resource names - keep them short!
+#
+# dotnet_version: "v8.0" for .NET 8, "v9.0" for .NET 9
+# umbraco_version: Full version number (e.g., "14.3.0", "15.1.0")
+# -----------------------------------------------------------------------------
+
+umbraco_cms_versions = {
+  "v14" = {
+    dotnet_version  = "v8.0"
+    umbraco_version = "14.3.0"
+  }
+  "v15" = {
+    dotnet_version  = "v9.0"
+    umbraco_version = "15.1.0"
+  }
+  # Add more versions as needed (up to ~4 recommended for cost reasons)
+  # "v16" = {
+  #   dotnet_version  = "v9.0"
+  #   umbraco_version = "16.0.0"
+  # }
+}
+
+# -----------------------------------------------------------------------------
+# Azure Service Principal Credentials
+# -----------------------------------------------------------------------------
+# RECOMMENDED: Set these via environment variables instead of this file:
+#   export ARM_CLIENT_ID="your-client-id"
+#   export ARM_CLIENT_SECRET="your-client-secret"
+#   export ARM_TENANT_ID="your-tenant-id"
+#
+# If you must set them here (not recommended for security):
+# client_id     = "your-client-id"
+# client_secret = "your-client-secret"
+# tenant_id     = "your-tenant-id"
+# -----------------------------------------------------------------------------
