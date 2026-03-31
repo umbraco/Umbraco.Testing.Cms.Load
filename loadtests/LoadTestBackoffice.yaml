@@ -1,0 +1,7 @@
+version: v0.1
+testId: k6-backoffice-load-test
+displayName: Umbraco Backoffice k6 Load Test
+testPlan: loadtests/src/main.js
+testType: K6
+description: k6 load tests for Umbraco CMS backoffice Management API
+engineInstances: 1
