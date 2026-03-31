@@ -27,6 +27,16 @@ parameters:
     - 200
     - 250
     - 300
+- name: duration
+  displayName: Test duration
+  type: string
+  default: 3m
+  values:
+    - 1m
+    - 2m
+    - 3m
+    - 5m
+    - 10m
 - name: prefix
   displayName: Prefix for all resources created in terraform
   type: string
@@ -41,7 +51,7 @@ variables:
   # Terraform settings
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
   # LoadTestLocation
-  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
+  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/loadtests/LoadTestBackoffice.yaml'
   
 stages:
 - stage: terraformDeploy
@@ -256,6 +266,10 @@ stages:
               {
               "name": "users",
               "value": "${{ parameters.userAmount }}"
+              },
+              {
+              "name": "duration",
+              "value": "${{ parameters.duration }}"
               }
             ]
       - task: AzureCLI@2
@@ -294,6 +308,10 @@ stages:
               {
               "name": "users",
               "value": "${{ parameters.userAmount }}"
+              },
+              {
+              "name": "duration",
+              "value": "${{ parameters.duration }}"
               }
             ]  
       - task: AzureCLI@2
@@ -332,6 +350,10 @@ stages:
               {
               "name": "users",
               "value": "${{ parameters.userAmount }}"
+              },
+              {
+              "name": "duration",
+              "value": "${{ parameters.duration }}"
               }
             ]    
       - task: AzureCLI@2
@@ -370,6 +392,10 @@ stages:
               {
               "name": "users",
               "value": "${{ parameters.userAmount }}"
+              },
+              {
+              "name": "duration",
+              "value": "${{ parameters.duration }}"
               }
             ]
 
