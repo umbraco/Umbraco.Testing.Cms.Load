@@ -9,13 +9,15 @@ resource_group_name  = "umbraco-load-test-rg"
 resource_group_location = "West Europe"
 
 # App Service configuration
-app_service_plan_sku = "S3"  # Options: S1, S2, S3
+# Premium v3 (current Umbraco Cloud): P1v3 (2 core, 8 GB), P2v3 (4 cores, 16 GB), P3v3 (8 cores, 32 GB)
+# Premium v4 (Umbraco Cloud Dedicated): P0v4, P1v4, P2v4, P3v4, P1mv4-P5mv4
+app_service_plan_sku = "P1v3"
 
 # SQL Database configuration
 sql_sku         = "S0"  # Options: S0, S1, S2
 sql_max_size_gb = 5     # Range: 1-100
 
-# DummyDataSeeder preset
+# Data seeder preset
 seeder_preset = "Medium"  # Options: Small, Medium, Large, Massive
 
 # Umbraco versions to test (up to 4)

@@ -46,7 +46,7 @@ variable "tenant_id" {
 variable "app_service_plan_sku" {
   type        = string
   description = "SKU for the App Service Plan"
-  default     = "S3"
+  default     = "P1v3"
 }
 
 variable "sql_sku" {
@@ -63,6 +63,6 @@ variable "sql_max_size_gb" {
 
 variable "seeder_preset" {
   type        = string
-  description = "DummyDataSeeder preset (Small, Medium, Large, Massive)"
+  description = "Data seeder preset (Small, Medium, Large, Massive)"
   default     = "Medium"
 }

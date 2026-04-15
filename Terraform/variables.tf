@@ -36,13 +36,19 @@ variable "tenant_id" {
 }
 
 # App Service configuration
+# P-series v3: current Umbraco Cloud SKUs
+# P-series v4 / mv4: Umbraco Cloud Dedicated SKUs
 variable "app_service_plan_sku" {
   type        = string
-  description = "SKU for the App Service Plan (S1, S2, S3)"
-  default     = "S3"
+  description = "SKU for the App Service Plan"
+  default     = "P1v3"
   validation {
-    condition     = contains(["S1", "S2", "S3"], var.app_service_plan_sku)
-    error_message = "app_service_plan_sku must be one of: S1, S2, S3"
+    condition = contains([
+      "P1v3", "P2v3", "P3v3",
+      "P0v4", "P1v4", "P2v4", "P3v4",
+      "P1mv4", "P2mv4", "P3mv4", "P4mv4", "P5mv4"
+    ], var.app_service_plan_sku)
+    error_message = "Must be a Premium v3 (P1v3-P3v3) or Premium v4/mv4 (P0v4-P5mv4) SKU."
   }
 }
 
@@ -79,7 +85,7 @@ variable "umbraco_cms_versions" {
 # Seeder configuration
 variable "seeder_preset" {
   type        = string
-  description = "DummyDataSeeder preset (Small, Medium, Large, Massive)"
+  description = "Data seeder preset (Small, Medium, Large, Massive)"
   default     = "Medium"
   validation {
     condition     = contains(["Small", "Medium", "Large", "Massive"], var.seeder_preset)

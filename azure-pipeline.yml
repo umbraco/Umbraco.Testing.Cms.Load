@@ -12,11 +12,20 @@ parameters:
   - name: appServicePlanSku
     displayName: App Service Plan SKU
     type: string
-    default: S3
+    default: P1v3
     values:
-      - S1
-      - S2
-      - S3
+      - P1v3
+      - P2v3
+      - P3v3
+      - P0v4
+      - P1v4
+      - P2v4
+      - P3v4
+      - P1mv4
+      - P2mv4
+      - P3mv4
+      - P4mv4
+      - P5mv4
 
   - name: sqlSku
     displayName: SQL Database SKU
@@ -65,9 +74,45 @@ parameters:
       - 250
       - 300
 
+  - name: spawnRate
+    displayName: Spawn rate (users/second during ramp-up)
+    type: number
+    default: 10
+    values:
+      - 5
+      - 10
+      - 20
+      - 50
+
+  - name: testDuration
+    displayName: Test duration (seconds, steady-state)
+    type: number
+    default: 300
+    values:
+      - 60
+      - 120
+      - 180
+      - 300
+      - 600
+
+  - name: engineInstances
+    displayName: ALT Engine Instances (scale for high user counts)
+    type: number
+    default: 1
+    values:
+      - 1
+      - 2
+      - 4
+
+  # Cold start testing — skip warmup to test cache warm-up behaviour
+  - name: coldStart
+    displayName: Cold Start Test (skip warmup)
+    type: boolean
+    default: false
+
   # Seeder parameters
   - name: seederPreset
-    displayName: DummyDataSeeder Preset
+    displayName: Data Seeder Preset
     type: string
     default: Medium
     values:
@@ -79,9 +124,22 @@ parameters:
 variables:
   serviceConnection: 'terraform-umbraco-load-testing-az-serviceconnection'
   azurergname: '${{ parameters.prefix }}-rg'
-  loadTestResourceName: '${{ parameters.prefix }}-loadtest'
   terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
-  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
+
+  # Long-lived "history" infrastructure — never deleted by the pipeline.
+  # Holds the shared ALT resource (so run history survives) and the storage
+  # account where per-test metrics + raw artifacts are exported.
+  #
+  # IMPORTANT: `historyStorageAccount` must be GLOBALLY unique across all of
+  # Azure (3-24 lowercase alphanumeric chars). The default below is almost
+  # certainly already taken — override it via a variable group with a name
+  # that includes a team/org suffix before the first pipeline run, otherwise
+  # the bootstrap step will fail with a clear "name not available" error.
+  historyResourceGroup: 'umbraco-loadtest-history-rg'
+  historyLocation: 'West Europe'
+  historyLoadTestName: 'umbraco-loadtest-shared'
+  historyStorageAccount: 'umbcmsloadtesthistory'   # OVERRIDE ME — globally unique, 3-24 lowercase alphanumeric
+  historyContainer: 'results'
 
   # Default empty versions (can be overridden by variable groups)
   # Version 1
@@ -98,8 +156,29 @@ variables:
   fourthUmbracoVersion: ''
 
 stages:
+  - stage: bootstrapHistory
+    displayName: Ensure history infrastructure
+    jobs:
+      - job: bootstrap
+        displayName: Bootstrap history RG, ALT, storage
+        steps:
+          - task: AzureCLI@2
+            displayName: Bootstrap history infra
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/bootstrap-history-infra.ps1'
+              arguments: >
+                -HistoryResourceGroup "$(historyResourceGroup)"
+                -HistoryLocation "$(historyLocation)"
+                -LoadTestName "$(historyLoadTestName)"
+                -StorageAccountName "$(historyStorageAccount)"
+                -ContainerName "$(historyContainer)"
+
   - stage: terraformDeploy
     displayName: Terraform Setup and Apply
+    dependsOn: bootstrapHistory
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
@@ -249,6 +328,7 @@ stages:
                 $hostnames = terraform output -json hostnames | ConvertFrom-Json
                 $versions = terraform output -json cms_versions | ConvertFrom-Json
                 $appServices = terraform output -json app_service_names | ConvertFrom-Json
+                $dotnets = terraform output -json dotnet_versions | ConvertFrom-Json
 
                 # Use 1-based indexing (1-4)
                 for ($i = 1; $i -le 4; $i++) {
@@ -256,10 +336,12 @@ stages:
                   $hostname = if ($hostnames -and $arrayIndex -lt $hostnames.Count) { $hostnames[$arrayIndex] } else { 'null' }
                   $version = if ($versions -and $arrayIndex -lt $versions.Count) { $versions[$arrayIndex] } else { 'null' }
                   $appService = if ($appServices -and $arrayIndex -lt $appServices.Count) { $appServices[$arrayIndex] } else { 'null' }
+                  $dotnet = if ($dotnets -and $arrayIndex -lt $dotnets.Count) { $dotnets[$arrayIndex] } else { 'null' }
 
                   Write-Host "##vso[task.setvariable variable=hostName$i;isOutput=true]$hostname"
                   Write-Host "##vso[task.setvariable variable=umbracoVersion$i;isOutput=true]$version"
                   Write-Host "##vso[task.setvariable variable=appServiceName$i;isOutput=true]$appService"
+                  Write-Host "##vso[task.setvariable variable=dotnetVersion$i;isOutput=true]$dotnet"
                 }
 
       - job: runLoadTests
@@ -278,64 +360,165 @@ stages:
           appServiceName2: $[dependencies.apply.outputs['outputVars.appServiceName2']]
           appServiceName3: $[dependencies.apply.outputs['outputVars.appServiceName3']]
           appServiceName4: $[dependencies.apply.outputs['outputVars.appServiceName4']]
+          dotnetVersion1: $[dependencies.apply.outputs['outputVars.dotnetVersion1']]
+          dotnetVersion2: $[dependencies.apply.outputs['outputVars.dotnetVersion2']]
+          dotnetVersion3: $[dependencies.apply.outputs['outputVars.dotnetVersion3']]
+          dotnetVersion4: $[dependencies.apply.outputs['outputVars.dotnetVersion4']]
         steps:
           # Load Test 1
           - template: templates/load-test-job.yml
             parameters:
               serviceConnection: '$(serviceConnection)'
               resourceGroupName: '$(azurergname)'
-              loadTestResourceName: '$(loadTestResourceName)'
-              loadTestFileLocation: '$(loadTestFileLocation)'
               hostNameVar: 'hostName1'
               appServiceNameVar: 'appServiceName1'
               umbracoVersionVar: 'umbracoVersion1'
+              dotnetVersionVar: 'dotnetVersion1'
               userAmount: ${{ parameters.userAmount }}
+              spawnRate: ${{ parameters.spawnRate }}
+              testDuration: '${{ parameters.testDuration }}'
+              engineInstances: ${{ parameters.engineInstances }}
+              coldStart: ${{ parameters.coldStart }}
               testIndex: 1
+              historyResourceGroup: '$(historyResourceGroup)'
+              historyLoadTestName: '$(historyLoadTestName)'
+              historyStorageAccount: '$(historyStorageAccount)'
+              historyContainer: '$(historyContainer)'
+              appServiceSku: '${{ parameters.appServicePlanSku }}'
+              sqlSku: '${{ parameters.sqlSku }}'
+              seederPreset: '${{ parameters.seederPreset }}'
 
           # Load Test 2
           - template: templates/load-test-job.yml
             parameters:
               serviceConnection: '$(serviceConnection)'
               resourceGroupName: '$(azurergname)'
-              loadTestResourceName: '$(loadTestResourceName)'
-              loadTestFileLocation: '$(loadTestFileLocation)'
               hostNameVar: 'hostName2'
               appServiceNameVar: 'appServiceName2'
               umbracoVersionVar: 'umbracoVersion2'
+              dotnetVersionVar: 'dotnetVersion2'
               userAmount: ${{ parameters.userAmount }}
+              spawnRate: ${{ parameters.spawnRate }}
+              testDuration: '${{ parameters.testDuration }}'
+              engineInstances: ${{ parameters.engineInstances }}
+              coldStart: ${{ parameters.coldStart }}
               stopPreviousAppServiceVar: 'appServiceName1'
               testIndex: 2
+              historyResourceGroup: '$(historyResourceGroup)'
+              historyLoadTestName: '$(historyLoadTestName)'
+              historyStorageAccount: '$(historyStorageAccount)'
+              historyContainer: '$(historyContainer)'
+              appServiceSku: '${{ parameters.appServicePlanSku }}'
+              sqlSku: '${{ parameters.sqlSku }}'
+              seederPreset: '${{ parameters.seederPreset }}'
 
           # Load Test 3
           - template: templates/load-test-job.yml
             parameters:
               serviceConnection: '$(serviceConnection)'
               resourceGroupName: '$(azurergname)'
-              loadTestResourceName: '$(loadTestResourceName)'
-              loadTestFileLocation: '$(loadTestFileLocation)'
               hostNameVar: 'hostName3'
               appServiceNameVar: 'appServiceName3'
               umbracoVersionVar: 'umbracoVersion3'
+              dotnetVersionVar: 'dotnetVersion3'
               userAmount: ${{ parameters.userAmount }}
+              spawnRate: ${{ parameters.spawnRate }}
+              testDuration: '${{ parameters.testDuration }}'
+              engineInstances: ${{ parameters.engineInstances }}
+              coldStart: ${{ parameters.coldStart }}
               stopPreviousAppServiceVar: 'appServiceName2'
               testIndex: 3
+              historyResourceGroup: '$(historyResourceGroup)'
+              historyLoadTestName: '$(historyLoadTestName)'
+              historyStorageAccount: '$(historyStorageAccount)'
+              historyContainer: '$(historyContainer)'
+              appServiceSku: '${{ parameters.appServicePlanSku }}'
+              sqlSku: '${{ parameters.sqlSku }}'
+              seederPreset: '${{ parameters.seederPreset }}'
 
           # Load Test 4
           - template: templates/load-test-job.yml
             parameters:
               serviceConnection: '$(serviceConnection)'
               resourceGroupName: '$(azurergname)'
-              loadTestResourceName: '$(loadTestResourceName)'
-              loadTestFileLocation: '$(loadTestFileLocation)'
               hostNameVar: 'hostName4'
               appServiceNameVar: 'appServiceName4'
               umbracoVersionVar: 'umbracoVersion4'
+              dotnetVersionVar: 'dotnetVersion4'
               userAmount: ${{ parameters.userAmount }}
+              spawnRate: ${{ parameters.spawnRate }}
+              testDuration: '${{ parameters.testDuration }}'
+              engineInstances: ${{ parameters.engineInstances }}
+              coldStart: ${{ parameters.coldStart }}
               stopPreviousAppServiceVar: 'appServiceName3'
               testIndex: 4
+              historyResourceGroup: '$(historyResourceGroup)'
+              historyLoadTestName: '$(historyLoadTestName)'
+              historyStorageAccount: '$(historyStorageAccount)'
+              historyContainer: '$(historyContainer)'
+              appServiceSku: '${{ parameters.appServicePlanSku }}'
+              sqlSku: '${{ parameters.sqlSku }}'
+              seederPreset: '${{ parameters.seederPreset }}'
+
+          # Stop the last running App Service so it doesn't burn resources
+          # during the 1-hour validation window.
+          - task: AzureCLI@2
+            displayName: 'Stop App Service [4]'
+            condition: and(succeededOrFailed(), ne(variables['appServiceName4'], 'null'))
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az webapp stop -n $(appServiceName4) -g $(azurergname)
+
+      - job: testSummary
+        dependsOn:
+          - apply
+          - runLoadTests
+        condition: succeededOrFailed()
+        displayName: Test Summary
+        variables:
+          umbracoVersion1: $[dependencies.apply.outputs['outputVars.umbracoVersion1']]
+          umbracoVersion2: $[dependencies.apply.outputs['outputVars.umbracoVersion2']]
+          umbracoVersion3: $[dependencies.apply.outputs['outputVars.umbracoVersion3']]
+          umbracoVersion4: $[dependencies.apply.outputs['outputVars.umbracoVersion4']]
+        steps:
+          - task: PowerShell@2
+            displayName: Print summary
+            inputs:
+              targetType: 'inline'
+              script: |
+                Write-Host ""
+                Write-Host "=============================================="
+                Write-Host "       LOAD TEST SUMMARY"
+                Write-Host "=============================================="
+                Write-Host ""
+                Write-Host "Configuration:"
+                Write-Host "  App Service SKU:  ${{ parameters.appServicePlanSku }}"
+                Write-Host "  SQL SKU:          ${{ parameters.sqlSku }}"
+                Write-Host "  Virtual Users:    ${{ parameters.userAmount }}"
+                Write-Host "  Spawn Rate:       ${{ parameters.spawnRate }} users/sec"
+                Write-Host "  Test Duration:    ${{ parameters.testDuration }}s"
+                Write-Host "  Cold Start:       ${{ parameters.coldStart }}"
+                Write-Host "  Seeder Preset:    ${{ parameters.seederPreset }}"
+                Write-Host ""
+                Write-Host "Versions Tested:"
+                @("$(umbracoVersion1)", "$(umbracoVersion2)", "$(umbracoVersion3)", "$(umbracoVersion4)") | ForEach-Object {
+                  if ($_ -ne "null" -and $_ -ne "") {
+                    Write-Host "  - Umbraco $_"
+                  }
+                }
+                Write-Host ""
+                Write-Host "Results available in:"
+                Write-Host "  - Azure Load Testing portal"
+                Write-Host "  - Pipeline artifacts (loadtest-results-*)"
+                Write-Host "=============================================="
 
       - job: checkResourceGroupForCleanup
-        dependsOn: runLoadTests
+        dependsOn:
+          - runLoadTests
+          - testSummary
         condition: succeededOrFailed()
         displayName: Check resource group for cleanup
         steps:
@@ -355,15 +538,15 @@ stages:
         condition: eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.doesExist'], 'true')
         displayName: Manual validation - keep resources?
         pool: server
-        timeoutInMinutes: 1440
+        timeoutInMinutes: 60
         steps:
           - task: ManualValidation@0
             displayName: Approve to keep resources
-            timeoutInMinutes: 1440
+            timeoutInMinutes: 60
             inputs:
               instructions: |
                 Press "Resume" to KEEP the resource group $(azurergname).
-                Press "Reject" or wait 24 hours to DELETE all resources.
+                Press "Reject" (or wait 1 hour) to DELETE all resources.
 
       - job: deleteResourceGroup
         displayName: Delete resource group

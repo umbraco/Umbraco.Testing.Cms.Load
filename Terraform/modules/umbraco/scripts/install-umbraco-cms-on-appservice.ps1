@@ -54,14 +54,20 @@ dotnet new umbraco -n $nameToApp
 
 Set-Location $nameToApp
 
-# Add DummyDataSeeder package (supports Umbraco 13+)
+# Add data seeder package
+# v17+: PerformanceTestDataSeeder (member auth, contact forms, block nesting, reproducible data)
+# v13-16: DummyDataSeeder (basic content seeding)
 $majorVersion = [int]($umbracoVersion -split '\.')[0]
-if ($majorVersion -ge 13) {
+if ($majorVersion -ge 17) {
+    Write-Host "Adding PerformanceTestDataSeeder package for Umbraco $majorVersion..."
+    dotnet add package Umbraco.Community.PerformanceTestDataSeeder --version "2.*"
+}
+elseif ($majorVersion -ge 13) {
     Write-Host "Adding DummyDataSeeder package for Umbraco $majorVersion..."
     dotnet add package Umbraco.Community.DummyDataSeeder --version "$majorVersion.*"
 }
 else {
-    Write-Host "Skipping DummyDataSeeder (requires Umbraco 13+, found $majorVersion)"
+    Write-Host "Skipping data seeder (requires Umbraco 13+, found $majorVersion)"
 }
 
 # Build the project
@@ -124,7 +130,9 @@ $attempt = 0
 $seederComplete = $false
 
 Write-Host ""
-Write-Host "Waiting for DummyDataSeeder to complete..." -ForegroundColor Yellow
+Write-Host "Waiting for data seeder to complete..." -ForegroundColor Yellow
+
+$seederSuccess = $false
 
 while ($attempt -lt $maxAttempts -and -not $seederComplete) {
     Start-Sleep -Seconds 10
@@ -138,15 +146,16 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         if ($seederStatusCode -eq 200 -and $responseBody.Status -eq "Completed") {
             $elapsedSeconds = [math]::Round($responseBody.ElapsedMs / 1000, 2)
             Write-Host ""
-            Write-Host "DummyDataSeeder completed successfully!" -ForegroundColor Green
+            Write-Host "Data seeder completed successfully!" -ForegroundColor Green
             Write-Host "  Duration: $elapsedSeconds seconds"
             Write-Host "  Executed: $($responseBody.ExecutedCount)"
             Write-Host "  Failed: $($responseBody.FailedCount)"
             $seederComplete = $true
+            $seederSuccess = $true
         }
         elseif ($seederStatusCode -eq 503) {
             Write-Host ""
-            Write-Host "WARNING: Seeder reported failure - $($responseBody.ErrorMessage)" -ForegroundColor Red
+            Write-Host "ERROR: Seeder reported failure - $($responseBody.ErrorMessage)" -ForegroundColor Red
             $seederComplete = $true
         }
         else {
@@ -158,15 +167,17 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         Write-Host "  [$attempt/$maxAttempts] Waiting for seeder endpoint..."
         if ($attempt -gt 12) {
             Write-Host ""
-            Write-Host "Seeder endpoint not responding after 2 minutes - assuming complete" -ForegroundColor Yellow
+            Write-Host "ERROR: Seeder endpoint not responding after 2 minutes" -ForegroundColor Red
             $seederComplete = $true
         }
     }
 }
 
-if (-not $seederComplete) {
+if (-not $seederSuccess) {
     Write-Host ""
-    Write-Host "WARNING: Seeder did not complete within timeout period" -ForegroundColor Red
+    Write-Host "Seeder did not complete successfully — stopping App Service and exiting non-zero" -ForegroundColor Red
+    az webapp stop -n $appserviceName -g $rgName
+    exit 1
 }
 
 # Stop the app service to save resources until load test

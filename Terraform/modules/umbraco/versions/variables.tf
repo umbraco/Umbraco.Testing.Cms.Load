@@ -72,6 +72,6 @@ variable "sql_max_size_gb" {
 
 variable "seeder_preset" {
   type        = string
-  description = "DummyDataSeeder preset (Small, Medium, Large, Massive)"
+  description = "Data seeder preset (Small, Medium, Large, Massive)"
   default     = "Medium"
 }

@@ -32,3 +32,11 @@ output "app_service_names" {
     module_version.umbraco_version_values.app_service_name
   ]
 }
+
+output "dotnet_versions" {
+  description = "List of .NET versions deployed (paired by index with cms_versions)"
+  value = [
+    for module_version in module.versions :
+    module_version.umbraco_version_values.dotnet_version
+  ]
+}

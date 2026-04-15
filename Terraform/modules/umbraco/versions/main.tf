@@ -55,7 +55,7 @@ resource "azurerm_windows_web_app" "app_service" {
     "Umbraco.Core.LocalTempStorage"          = "EnvironmentTemp"
     "Umbraco.Examine.LuceneDirectoryFactory" = "Examine.LuceneEngine.Directories.SyncTempEnvDirectoryFactory, Examine"
 
-    # Unattended installation
+    # Unattended installation (test credentials — resources auto-delete after 1h)
     "Umbraco__CMS__Unattended__InstallUnattended"      = "true"
     "Umbraco__CMS__Unattended__UnattendedUserName"     = "John Doe"
     "Umbraco__CMS__Unattended__UnattendedUserEmail"    = "admin@admin.admin"
@@ -67,9 +67,15 @@ resource "azurerm_windows_web_app" "app_service" {
     # Logging
     "Serilog__MinimumLevel__Override__Microsoft" = "Information"
 
-    # DummyDataSeeder
-    "DummyDataSeeder__Options__Enabled" = "true"
-    "DummyDataSeeder__Options__Preset"  = var.seeder_preset
+    # Data seeder configuration
+    # v17+: PerformanceTestDataSeeder (full load testing support with member auth, contact forms)
+    # v13-16: DummyDataSeeder (basic content seeding)
+    # Both are configured — only the installed package will read its settings
+    "PerformanceTestDataSeeder__Options__Enabled"            = "true"
+    "PerformanceTestDataSeeder__Options__Preset"             = var.seeder_preset
+    "PerformanceTestDataSeeder__Options__SkipContentDomains" = "true"
+    "DummyDataSeeder__Options__Enabled"                      = "true"
+    "DummyDataSeeder__Options__Preset"                       = var.seeder_preset
   }
 
   connection_string {
@@ -81,11 +87,24 @@ resource "azurerm_windows_web_app" "app_service" {
 
 # Deploy Umbraco CMS via PowerShell script
 resource "null_resource" "deploy_umbraco" {
+  # Re-run the provisioner whenever the version or target app service changes.
+  # Without this, `terraform apply` after bumping umbraco_cms_version would no-op
+  # because null_resource has no inputs of its own that Terraform can diff.
+  triggers = {
+    umbraco_version = var.umbraco_cms_version
+    app_service_id  = azurerm_windows_web_app.app_service.id
+  }
+
   provisioner "local-exec" {
     command = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -rgName \"${var.resource_group_name}\" -appserviceName \"${azurerm_windows_web_app.app_service.name}\" -appserviceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -umbracoVersion \"${var.umbraco_cms_version}\" -client_id \"${var.client_id}\" -client_secret \"${var.client_secret}\" -tenant_id \"${var.tenant_id}\""
     # Use "pwsh" for CI pipeline, "PowerShell" for local Windows
     interpreter = ["pwsh", "-Command"]
   }
 
-  depends_on = [azurerm_windows_web_app.app_service]
+  # Wait for the firewall rule too — Umbraco's first-boot startup hits SQL,
+  # and "Allow Azure services" must be in place before the connection succeeds.
+  depends_on = [
+    azurerm_windows_web_app.app_service,
+    azurerm_mssql_firewall_rule.allow_azure_services,
+  ]
 }

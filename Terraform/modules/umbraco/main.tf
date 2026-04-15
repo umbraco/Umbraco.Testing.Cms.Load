@@ -26,14 +26,10 @@ resource "azurerm_service_plan" "appserviceplan" {
   sku_name            = var.app_service_plan_sku
 }
 
-# Azure Load Test resource
-resource "azurerm_load_test" "load_test" {
-  name                = "${var.resource_name_prefix}-loadtest"
-  location            = var.resource_group_location
-  resource_group_name = var.resource_group_name
-
-  depends_on = [azurerm_service_plan.appserviceplan]
-}
+# NOTE: The Azure Load Testing resource is provisioned out-of-band by
+# scripts/bootstrap-history-infra.ps1 in a long-lived "history" RG so its run
+# history (and the storage account holding exported metrics) survives across
+# pipeline runs. If it lived here, every RG cleanup would wipe the history.
 
 # Per-version infrastructure module
 module "versions" {
@@ -51,9 +47,9 @@ module "versions" {
   umbraco_cms_version = each.value["umbraco_version"]
 
   # SQL configuration
-  admin_login    = random_string.admin_login.result
-  admin_password = random_password.admin_password.result
-  sql_sku        = var.sql_sku
+  admin_login     = random_string.admin_login.result
+  admin_password  = random_password.admin_password.result
+  sql_sku         = var.sql_sku
   sql_max_size_gb = var.sql_max_size_gb
 
   # Seeder configuration
