@@ -578,9 +578,12 @@ stages:
                   }
                 }
                 Write-Host ""
-                Write-Host "Results available in:"
-                Write-Host "  - Azure Load Testing portal"
-                Write-Host "  - Pipeline artifacts (loadtest-results-*)"
+                ${{ if eq(parameters.skipLoadTests, true) }}:
+                  Write-Host "Load tests SKIPPED (skipLoadTests=true) — see verifyDeployments job for smoke results."
+                ${{ if eq(parameters.skipLoadTests, false) }}:
+                  Write-Host "Results available in:"
+                  Write-Host "  - Azure Load Testing portal"
+                  Write-Host "  - Pipeline artifacts (loadtest-results-*)"
                 Write-Host "=============================================="
 
       - job: checkResourceGroupForCleanup

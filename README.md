@@ -93,6 +93,7 @@ Locust tests execute on Azure Load Testing's managed infrastructure (dedicated S
 | `userAmount` | Virtual users for load test | 100 | 50, 100, 150, 200, 250, 300 |
 | `spawnRate` | Users spawned per second (ramp-up speed) | 10 | 5, 10, 20, 50 |
 | `testDuration` | Steady-state duration in seconds | 300 | 60, 120, 180, 300, 600 |
+| `engineInstances` | ALT engine VMs (scale for high user counts) | 1 | 1, 2, 4 |
 | `coldStart` | Skip warmup (test cache warm-up) | false | true, false |
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `seederPreset` | Data seeding volume | Medium | Small, Medium, Large, Massive |
