@@ -4,3 +4,6 @@
 *.exe
 *.backup
 *.tfstate
+
+.terraform/
+.idea/

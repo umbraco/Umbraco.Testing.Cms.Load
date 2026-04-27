@@ -55,7 +55,7 @@ resource "azurerm_windows_web_app" "app_service" {
     "Umbraco.Core.LocalTempStorage"          = "EnvironmentTemp"
     "Umbraco.Examine.LuceneDirectoryFactory" = "Examine.LuceneEngine.Directories.SyncTempEnvDirectoryFactory, Examine"
 
-    # Unattended installation (test credentials — resources auto-delete after 1h)
+    # Unattended installation (test credentials — resources auto-delete after 2h)
     "Umbraco__CMS__Unattended__InstallUnattended"      = "true"
     "Umbraco__CMS__Unattended__UnattendedUserName"     = "John Doe"
     "Umbraco__CMS__Unattended__UnattendedUserEmail"    = "admin@admin.admin"

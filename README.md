@@ -94,6 +94,7 @@ Locust tests execute on Azure Load Testing's managed infrastructure (dedicated S
 | `spawnRate` | Users spawned per second (ramp-up speed) | 10 | 5, 10, 20, 50 |
 | `testDuration` | Steady-state duration in seconds | 300 | 60, 120, 180, 300, 600 |
 | `coldStart` | Skip warmup (test cache warm-up) | false | true, false |
+| `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `seederPreset` | Data seeding volume | Medium | Small, Medium, Large, Massive |
 
 ### Version Configuration
@@ -158,9 +159,10 @@ The long-lived RG is bootstrapped idempotently at the start of every pipeline ru
 4. Terraform Apply          -> Provision Azure resources
 5. Deploy Umbraco           -> Install CMS on each App Service
 6. Seed Data                -> Data seeder populates content
-7. Run Load Tests           -> Sequential Locust tests per version (on ALT infra)
-8. Manual Validation        -> 1 hour window to keep resources
-9. Cleanup                  -> Delete resource group if rejected/expired
+7. Verify Deployments       -> Smoke-check each site returns 200
+8. Run Load Tests           -> Sequential Locust tests per version (on ALT infra) — skipped when `skipLoadTests=true`
+9. Manual Validation        -> 2 hour window to keep resources
+10. Cleanup                 -> Delete resource group if rejected/cancelled/expired
 ```
 
 ## Data Seeder Presets
@@ -181,7 +183,7 @@ The long-lived RG is bootstrapped idempotently at the start of every pipeline ru
 3. Select desired parameters (SKU, user count, cold start, etc.)
 4. Wait for infrastructure provisioning and load tests to complete
 5. Review results in Azure Load Testing portal and pipeline artifacts
-6. Approve or reject resource cleanup within 1 hour
+6. Approve or reject resource cleanup within 2 hours
 
 ### Running Terraform Locally
 

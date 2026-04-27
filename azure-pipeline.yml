@@ -110,6 +110,13 @@ parameters:
     type: boolean
     default: false
 
+  # Skip the load tests entirely — useful for validating just the
+  # provisioning + deploy + seed pipeline without burning ALT time.
+  - name: skipLoadTests
+    displayName: Skip load tests (infra-only run)
+    type: boolean
+    default: false
+
   # Seeder parameters
   - name: seederPreset
     displayName: Data Seeder Preset
@@ -243,7 +250,7 @@ stages:
           - task: TerraformInstaller@0
             displayName: Install Terraform
             inputs:
-              terraformVersion: 'latest'
+              terraformVersion: '1.13.3'
 
           - task: PowerShell@2
             displayName: Terraform Init
@@ -279,7 +286,7 @@ stages:
           - task: TerraformInstaller@0
             displayName: Install Terraform
             inputs:
-              terraformVersion: 'latest'
+              terraformVersion: '1.13.3'
 
           - task: PowerShell@2
             displayName: Terraform Init
@@ -344,9 +351,69 @@ stages:
                   Write-Host "##vso[task.setvariable variable=dotnetVersion$i;isOutput=true]$dotnet"
                 }
 
+      - job: verifyDeployments
+        displayName: Smoke-verify deployed sites
+        dependsOn: apply
+        # Only runs when skipLoadTests=true — the load-test job's warm-up
+        # already smoke-tests the homepage. Without this, a skipLoadTests run
+        # would have nothing exercising the deployed sites end-to-end (the
+        # in-process seeder check finishes before MVC/rendering wires up).
+        condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'True'))
+        variables:
+          hostName1: $[dependencies.apply.outputs['outputVars.hostName1']]
+          hostName2: $[dependencies.apply.outputs['outputVars.hostName2']]
+          hostName3: $[dependencies.apply.outputs['outputVars.hostName3']]
+          hostName4: $[dependencies.apply.outputs['outputVars.hostName4']]
+          appServiceName1: $[dependencies.apply.outputs['outputVars.appServiceName1']]
+          appServiceName2: $[dependencies.apply.outputs['outputVars.appServiceName2']]
+          appServiceName3: $[dependencies.apply.outputs['outputVars.appServiceName3']]
+          appServiceName4: $[dependencies.apply.outputs['outputVars.appServiceName4']]
+        steps:
+          - task: AzureCLI@2
+            displayName: Start, hit /, stop each App Service
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $apps = @(
+                  @{ host = '$(hostName1)'; name = '$(appServiceName1)' },
+                  @{ host = '$(hostName2)'; name = '$(appServiceName2)' },
+                  @{ host = '$(hostName3)'; name = '$(appServiceName3)' },
+                  @{ host = '$(hostName4)'; name = '$(appServiceName4)' }
+                )
+                $failed = @()
+                foreach ($a in $apps) {
+                  if ($a.host -eq 'null' -or [string]::IsNullOrWhiteSpace($a.host)) { continue }
+                  Write-Host "=== Verifying $($a.name) ($($a.host)) ==="
+                  az webapp start -n $a.name -g $(azurergname) | Out-Null
+                  $deadline = (Get-Date).AddMinutes(3)
+                  $ok = $false
+                  while ((Get-Date) -lt $deadline) {
+                    try {
+                      $r = Invoke-WebRequest -Uri "https://$($a.host)" -UseBasicParsing -DisableKeepAlive -TimeoutSec 15
+                      if ($r.StatusCode -eq 200) { Write-Host "  -> 200 OK"; $ok = $true; break }
+                      Write-Host "  status=$($r.StatusCode), retrying..."
+                    } catch {
+                      Write-Host "  not ready yet ($($_.Exception.Message.Split([Environment]::NewLine)[0]))"
+                    }
+                    Start-Sleep -Seconds 5
+                  }
+                  az webapp stop -n $a.name -g $(azurergname) | Out-Null
+                  if (-not $ok) { $failed += $a.name }
+                }
+                if ($failed.Count -gt 0) {
+                  Write-Host "##vso[task.logissue type=error]Smoke verify failed for: $($failed -join ', ')"
+                  exit 1
+                }
+                Write-Host "All deployed sites responded 200."
+
       - job: runLoadTests
         displayName: Run Load Tests
         dependsOn: apply
+        # Skipped when skipLoadTests=true. The boolean is stringified to
+        # 'True'/'False' by template substitution, so compare strings.
+        condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'False'))
         variables:
           hostName1: $[dependencies.apply.outputs['outputVars.hostName1']]
           hostName2: $[dependencies.apply.outputs['outputVars.hostName2']]
@@ -461,7 +528,7 @@ stages:
               seederPreset: '${{ parameters.seederPreset }}'
 
           # Stop the last running App Service so it doesn't burn resources
-          # during the 1-hour validation window.
+          # during the 2-hour validation window.
           - task: AzureCLI@2
             displayName: 'Stop App Service [4]'
             condition: and(succeededOrFailed(), ne(variables['appServiceName4'], 'null'))
@@ -475,6 +542,7 @@ stages:
       - job: testSummary
         dependsOn:
           - apply
+          - verifyDeployments
           - runLoadTests
         condition: succeededOrFailed()
         displayName: Test Summary
@@ -517,6 +585,7 @@ stages:
 
       - job: checkResourceGroupForCleanup
         dependsOn:
+          - verifyDeployments
           - runLoadTests
           - testSummary
         condition: succeededOrFailed()
@@ -538,20 +607,25 @@ stages:
         condition: eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.doesExist'], 'true')
         displayName: Manual validation - keep resources?
         pool: server
-        timeoutInMinutes: 60
+        timeoutInMinutes: 120
         steps:
           - task: ManualValidation@0
             displayName: Approve to keep resources
-            timeoutInMinutes: 60
+            timeoutInMinutes: 120
             inputs:
               instructions: |
                 Press "Resume" to KEEP the resource group $(azurergname).
-                Press "Reject" (or wait 1 hour) to DELETE all resources.
+                Press "Reject" (or wait 2 hours) to DELETE all resources.
 
       - job: deleteResourceGroup
         displayName: Delete resource group
         dependsOn: manualValidation
-        condition: eq(dependencies.manualValidation.result, 'failed')
+        # Fire on Failed (rejected), Canceled (pipeline cancelled), or Skipped
+        # (manualValidation didn't run because cleanup-check found no RG, or
+        # an upstream job didn't run). 'Succeeded' is the only result that
+        # KEEPS the RG. Without this, cancelling mid-run leaves the ephemeral
+        # RG burning cost.
+        condition: in(dependencies.manualValidation.result, 'Failed', 'Canceled', 'Skipped')
         steps:
           - task: AzureCLI@2
             displayName: Delete resource group
