@@ -1,6 +1,11 @@
 variable "resource_name_prefix" {
   type        = string
-  description = "This name will prefix all the created resources"
+  description = "Prefix for all created resources. Capped at 16 chars to fit Azure App Service's 60-char name limit once the per-case suffix is appended."
+
+  validation {
+    condition     = length(var.resource_name_prefix) <= 16 && can(regex("^[0-9a-z]([-0-9a-z]{0,14}[0-9a-z])?$", var.resource_name_prefix))
+    error_message = "resource_name_prefix must be 1-16 chars, lowercase alphanumeric + hyphens, not starting or ending with hyphen."
+  }
 }
 
 variable "resource_group_location" {
@@ -35,54 +40,24 @@ variable "tenant_id" {
   sensitive   = true
 }
 
-# App Service configuration
-# P-series v3: current Umbraco Cloud SKUs
-# P-series v4 / mv4: Umbraco Cloud Dedicated SKUs
-variable "app_service_plan_sku" {
-  type        = string
-  description = "SKU for the App Service Plan"
-  default     = "P1v3"
-  validation {
-    condition = contains([
-      "P1v3", "P2v3", "P3v3",
-      "P0v4", "P1v4", "P2v4", "P3v4",
-      "P1mv4", "P2mv4", "P3mv4", "P4mv4", "P5mv4"
-    ], var.app_service_plan_sku)
-    error_message = "Must be a Premium v3 (P1v3-P3v3) or Premium v4/mv4 (P0v4-P5mv4) SKU."
-  }
-}
-
-# SQL Database configuration
-variable "sql_sku" {
-  type        = string
-  description = "SKU for the SQL Database (S0, S1, S2)"
-  default     = "S0"
-  validation {
-    condition     = contains(["S0", "S1", "S2"], var.sql_sku)
-    error_message = "sql_sku must be one of: S0, S1, S2"
-  }
-}
-
-variable "sql_max_size_gb" {
-  type        = number
-  description = "Maximum size of the SQL Database in GB"
-  default     = 5
-  validation {
-    condition     = var.sql_max_size_gb >= 1 && var.sql_max_size_gb <= 100
-    error_message = "sql_max_size_gb must be between 1 and 100"
-  }
-}
-
-# Umbraco versions
-variable "umbraco_cms_versions" {
+variable "test_cases" {
   type = map(object({
-    dotnet_version  = string
-    umbraco_version = string
+    dotnet_version       = string
+    umbraco_version      = string
+    tier                 = string
+    scenario             = string
+    app_settings_overlay = map(string)
   }))
-  description = "Map of Umbraco versions to deploy with their .NET runtime versions"
+  description = "Map of test cases keyed by '{umbraco}__{tier}__{scenario}'. Built by scripts/prepare-test-cases.ps1 from the pipeline's testCases parameter."
 }
 
-# Seeder configuration
+# Surfaces in resource tags. Defaults to "local" for hand runs.
+variable "build_id" {
+  type        = string
+  description = "Pipeline build ID (or 'local'). Used as a tag on every resource."
+  default     = "local"
+}
+
 variable "seeder_preset" {
   type        = string
   description = "Data seeder preset (Small, Medium, Large, Massive)"

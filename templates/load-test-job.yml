@@ -1,42 +1,26 @@
-# Template for running a Locust load test against a single Umbraco version.
-# Locust executes on Azure Load Testing managed infrastructure (Standard_D4d_v4 VMs),
-# not on the pipeline agent. The pipeline only orchestrates start/stop and passes config.
+# Per-case load test step group: hydrate -> start -> warm-up -> ALT run -> publish.
+
 parameters:
   - name: serviceConnection
     type: string
   - name: resourceGroupName
     type: string
-  - name: hostNameVar
+  - name: testCaseId
     type: string
-  - name: appServiceNameVar
+  - name: tier
     type: string
-  - name: umbracoVersionVar
+  - name: scenario
     type: string
-  - name: dotnetVersionVar
+  - name: umbracoVersion
     type: string
-  - name: userAmount
-    type: number
-  - name: spawnRate
-    type: number
-    default: 10
-  - name: testDuration
+  - name: dotnetVersion
     type: string
-    default: '300'
   - name: engineInstances
     type: number
     default: 1
   - name: coldStart
     type: boolean
     default: false
-  - name: stopPreviousAppServiceVar
-    type: string
-    default: ''
-  - name: testIndex
-    type: number
-
-  # Long-lived "history" infrastructure — shared across all pipeline runs.
-  # The ALT resource lives here (so portal history persists) and the storage
-  # account holds exported per-test metrics + raw artifacts.
   - name: historyResourceGroup
     type: string
   - name: historyLoadTestName
@@ -45,51 +29,80 @@ parameters:
     type: string
   - name: historyContainer
     type: string
-
-  # Test-config metadata — passed through to the publish step so each row in
-  # the metrics history is fully labelled and queryable without joins.
-  - name: appServiceSku
-    type: string
-  - name: sqlSku
-    type: string
   - name: seederPreset
     type: string
 
 steps:
-  # Stop previous app service if specified
-  - ${{ if ne(parameters.stopPreviousAppServiceVar, '') }}:
-    - task: AzureCLI@2
-      displayName: 'Stop previous App Service'
-      condition: and(succeeded(), ne(variables['${{ parameters.stopPreviousAppServiceVar }}'], 'null'))
-      inputs:
-        azureSubscription: '${{ parameters.serviceConnection }}'
-        scriptType: 'pscore'
-        scriptLocation: 'inlineScript'
-        inlineScript: |
-          az webapp stop -n $(${{ parameters.stopPreviousAppServiceVar }}) -g ${{ parameters.resourceGroupName }}
+  - task: PowerShell@2
+    displayName: 'Hydrate case [${{ parameters.testCaseId }}]'
+    env:
+      # Env vars sidestep $(var) quote escaping.
+      RESOLVED_TEST_CASES: $(resolvedTestCases)
+      TEST_CASE_OUTPUTS: $(testCaseOutputs)
+    inputs:
+      targetType: 'inline'
+      script: |
+        $resolved = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
+        $outputs  = $env:TEST_CASE_OUTPUTS   | ConvertFrom-Json
 
-  # Start current app service
+        $testCaseId = '${{ parameters.testCaseId }}'
+        $myCase    = $resolved.$testCaseId
+        $tfOut   = $outputs.$testCaseId
+
+        if (-not $myCase)  { Write-Host "##vso[task.logissue type=error]No resolved entry for case $testCaseId"; exit 1 }
+        if (-not $tfOut) { Write-Host "##vso[task.logissue type=error]No terraform output entry for case $testCaseId"; exit 1 }
+
+        Write-Host "##vso[task.setvariable variable=hostName]$($tfOut.hostname)"
+        Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
+        Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
+        Write-Host "##vso[task.setvariable variable=sqlSku]$($tfOut.sql_sku)"
+        Write-Host "##vso[task.setvariable variable=sqlServerName]$($tfOut.sql_server_name)"
+        Write-Host "##vso[task.setvariable variable=sqlServerResourceId]$($tfOut.sql_server_resource_id)"
+        Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
+        Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
+        Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
+        Write-Host "##vso[task.setvariable variable=testCaseLabel]$($myCase.label)"
+
+        # Resolve the preceding case's app service for the stop-chain.
+        $previousTestCaseId = $myCase.previousTestCaseId
+        $prevAppService = ''
+        if ($previousTestCaseId -and $outputs.$previousTestCaseId) {
+          $prevAppService = $outputs.$previousTestCaseId.app_service_name
+        }
+        Write-Host "##vso[task.setvariable variable=previousAppServiceName]$prevAppService"
+
+        Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s prev=$prevAppService"
+
+  # Sequential start/stop chain: only one app is hot at a time per plan.
   - task: AzureCLI@2
-    displayName: 'Start App Service [${{ parameters.testIndex }}]'
-    condition: and(succeeded(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    displayName: 'Stop previous App Service'
+    condition: and(succeeded(), ne(variables['previousAppServiceName'], ''))
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |
-        az webapp start -n $(${{ parameters.appServiceNameVar }}) -g ${{ parameters.resourceGroupName }}
+        az webapp stop -n $(previousAppServiceName) -g ${{ parameters.resourceGroupName }}
 
-  # Wait for app to warm up (skip when coldStart is true to test cache warm-up behaviour).
-  # Poll the homepage until it returns 200 instead of a fixed sleep — finishes as soon as
-  # the app is responsive and bounds the wait at 5 minutes.
+  - task: AzureCLI@2
+    displayName: 'Start App Service [${{ parameters.testCaseId }}]'
+    condition: and(succeeded(), ne(variables['hostName'], ''))
+    inputs:
+      azureSubscription: '${{ parameters.serviceConnection }}'
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        az webapp start -n $(appServiceName) -g ${{ parameters.resourceGroupName }}
+
+  # Skipped when coldStart=true - so the test hits a freshly started App Service.
   - ${{ if not(parameters.coldStart) }}:
     - task: PowerShell@2
-      displayName: 'Warm up [${{ parameters.testIndex }}]'
-      condition: and(succeeded(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+      displayName: 'Warm up [${{ parameters.testCaseId }}]'
+      condition: and(succeeded(), ne(variables['hostName'], ''))
       inputs:
         targetType: 'inline'
         script: |
-          $hostname = "$(${{ parameters.hostNameVar }})"
+          $hostname = "$(hostName)"
           $url = "https://$hostname"
           $deadline = (Get-Date).AddMinutes(5)
           $ready = $false
@@ -98,7 +111,7 @@ steps:
               try {
                   $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -DisableKeepAlive -TimeoutSec 15
                   if ($resp.StatusCode -eq 200) {
-                      Write-Host "App responded 200 — warm-up complete."
+                      Write-Host "App responded 200 - warm-up complete."
                       $ready = $true
                       break
                   }
@@ -110,38 +123,29 @@ steps:
               Start-Sleep -Seconds 5
           }
           if (-not $ready) {
-              Write-Host "##vso[task.logissue type=warning]App did not respond 200 within 5 minutes; running test anyway"
+              # Fail so the load-test step is skipped; ALT against an unready app gives misleading metrics.
+              Write-Host "##vso[task.logissue type=error]App did not respond 200 within 5 minutes - skipping load test for this case"
+              exit 1
           }
 
-  # Generate load test config with appComponents for server-side monitoring (CPU, memory, network, disk)
+  # ALT config is per-case so runs stay distinguishable in the portal.
   - task: AzureCLI@2
-    displayName: 'Generate ALT config [${{ parameters.testIndex }}]'
-    condition: and(succeeded(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    displayName: 'Generate ALT config [${{ parameters.testCaseId }}]'
+    condition: and(succeeded(), ne(variables['hostName'], ''))
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |
         $subscriptionId = az account show --query id -o tsv
-        $appServiceName = "$(${{ parameters.appServiceNameVar }})"
+        $appServiceName = "$(appServiceName)"
         $resourceGroup = "${{ parameters.resourceGroupName }}"
         $appServiceResourceId = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.Web/sites/$appServiceName"
 
-        # Find the SQL Server associated with this App Service (same version suffix in naming)
-        $sqlServers = az sql server list -g $resourceGroup --query "[].{name:name, id:id}" -o json | ConvertFrom-Json
-        $sqlServerResourceId = ""
-        $sqlServerName = ""
-        if ($sqlServers -and $sqlServers.Count -gt 0) {
-          $versionSuffix = $appServiceName -replace ".*-appservice-", ""
-          # Anchor with leading "-" and end-of-string to avoid matching e.g. "17_0_1" when looking for "17_0"
-          $matchedSql = $sqlServers | Where-Object { $_.name -like "*-$versionSuffix" } | Select-Object -First 1
-          if ($matchedSql) {
-            $sqlServerResourceId = $matchedSql.id
-            $sqlServerName = $matchedSql.name
-          }
-        }
+        # SQL identity comes from terraform outputs hydrated above.
+        $sqlServerResourceId = "$(sqlServerResourceId)"
+        $sqlServerName       = "$(sqlServerName)"
 
-        # Build appComponents YAML — App Service always, SQL Server if found
         $sqlComponent = ""
         if ($sqlServerResourceId) {
         $sqlComponent = @"
@@ -170,19 +174,26 @@ steps:
         "@
         }
 
+        # ALT testId is ^[a-z0-9_-]{2,50}$. With prefix "umbraco-lt-" (11 chars), safeKey caps at 39.
+        $rawKey = '${{ parameters.testCaseId }}'.ToLowerInvariant()
+        $safeKey = ($rawKey -replace '[^a-z0-9]', '-') -replace '-+', '-'
+        $safeKey = $safeKey.Trim('-')
+        if ($safeKey.Length -gt 39) { $safeKey = $safeKey.Substring(0, 39) }
+        $testId = "umbraco-lt-$safeKey"
+        Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
+
         $config = @"
         version: v0.1
-        testId: umbraco-load-test-${{ parameters.testIndex }}
-        displayName: Umbraco Load Test [${{ parameters.testIndex }}]
+        testId: $testId
+        displayName: Umbraco $(testCaseLabel)
         testPlan: loadtests/locustfile.py
         testType: Locust
-        description: Locust load test for Umbraco
+        description: Locust load test for $(testCaseLabel)
         engineInstances: ${{ parameters.engineInstances }}
         configurationFiles:
           - loadtests/locust.conf
           - loadtests/requirements.txt
-        # When you add scenario modules under loadtests/, append them here so
-        # ALT uploads them to the test engines alongside the test plan.
+        # Append scenario modules here when added so ALT uploads them too.
         failureCriteria:
           - avg(response_time_ms) > 2000
           - p95(response_time_ms) > 5000
@@ -192,13 +203,13 @@ steps:
           timeWindow: 60
         env:
           - name: LOCUST_HOST
-            value: "https://$(${{ parameters.hostNameVar }})"
+            value: "https://$(hostName)"
           - name: LOCUST_USERS
-            value: "${{ parameters.userAmount }}"
+            value: "$(userAmount)"
           - name: LOCUST_SPAWN_RATE
-            value: "${{ parameters.spawnRate }}"
+            value: "$(spawnRate)"
           - name: LOCUST_RUN_TIME
-            value: "${{ parameters.testDuration }}"
+            value: "$(testDuration)"
         appComponents:
           - resourceId: "$appServiceResourceId"
             resourceName: "$appServiceName"
@@ -225,43 +236,40 @@ steps:
         $sqlComponent
         "@
 
-        $configPath = "$(System.DefaultWorkingDirectory)/loadtest-config-${{ parameters.testIndex }}.yaml"
+        $configPath = "$(System.DefaultWorkingDirectory)/loadtest-config-$safeKey.yaml"
         $config | Out-File -FilePath $configPath -Encoding utf8
+        Write-Host "##vso[task.setvariable variable=loadTestConfigPath]$configPath"
         Write-Host "Generated ALT config at: $configPath"
         Write-Host "App Service: $appServiceResourceId"
         if ($sqlServerResourceId) { Write-Host "SQL Server: $sqlServerResourceId" }
 
-  # Run load test via Azure Load Testing (Locust on ALT infrastructure).
-  # Uses the long-lived shared ALT resource so run history accumulates across
-  # pipeline runs. Run name is enriched with branch + commit + buildId so each
-  # run is identifiable in the portal.
+  # continueOnError: an SLO breach here is meaningful data, not a reason to skip the rest.
+  # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.
   - task: AzureLoadTest@1
-    displayName: 'Load Test [${{ parameters.testIndex }}]'
-    condition: and(succeeded(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    displayName: 'Load Test [${{ parameters.testCaseId }}]'
+    condition: and(succeeded(), ne(variables['hostName'], ''))
+    continueOnError: true
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
-      loadTestConfigFile: '$(System.DefaultWorkingDirectory)/loadtest-config-${{ parameters.testIndex }}.yaml'
+      loadTestConfigFile: '$(loadTestConfigPath)'
       resourceGroup: '${{ parameters.historyResourceGroup }}'
       loadTestResource: '${{ parameters.historyLoadTestName }}'
-      loadTestRunName: 'Umbraco $(${{ parameters.umbracoVersionVar }}) - $(Build.SourceBranchName)@$(Build.SourceVersion) - run $(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco $(${{ parameters.umbracoVersionVar }}) on $(${{ parameters.dotnetVersionVar }}), ${{ parameters.appServiceSku }} app / ${{ parameters.sqlSku }} SQL, ${{ parameters.seederPreset }} preset, ${{ parameters.userAmount }} users for ${{ parameters.testDuration }}s'
+      loadTestRunName: 'Umbraco ${{ parameters.umbracoVersion }} [${{ parameters.tier }}/${{ parameters.scenario }}] - $(Build.SourceBranchName)@$(Build.SourceVersion) - run $(Build.BuildId)'
+      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on ${{ parameters.dotnetVersion }} [${{ parameters.tier }}/${{ parameters.scenario }}], ${{ parameters.seederPreset }} preset, $(userAmount) users for $(testDuration)s'
 
-  # Publish results as pipeline artifacts (per-build, expires with build retention)
   - task: PublishBuildArtifacts@1
-    displayName: 'Publish Results [${{ parameters.testIndex }}]'
-    condition: and(succeededOrFailed(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    displayName: 'Publish Results [${{ parameters.testCaseId }}]'
+    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
     continueOnError: true
     inputs:
       PathtoPublish: '$(System.DefaultWorkingDirectory)/loadTest'
-      ArtifactName: 'loadtest-results-${{ parameters.testIndex }}'
+      ArtifactName: 'loadtest-results-$(safeTestCaseId)'
       publishLocation: 'Container'
 
   # Export to long-lived history storage for cross-run comparison.
-  # Writes per-scenario NDJSON rows + raw artifact dump. Failure here doesn't
-  # fail the test job — historical export is best-effort.
   - task: AzureCLI@2
-    displayName: 'Publish to history [${{ parameters.testIndex }}]'
-    condition: and(succeededOrFailed(), ne(variables['${{ parameters.hostNameVar }}'], 'null'))
+    displayName: 'Publish to history [${{ parameters.testCaseId }}]'
+    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
     continueOnError: true
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
@@ -277,13 +285,15 @@ steps:
         -Commit "$(Build.SourceVersion)"
         -Branch "$(Build.SourceBranchName)"
         -RunStartedAt "$(System.PipelineStartTime)"
-        -UmbracoVersion "$(${{ parameters.umbracoVersionVar }})"
-        -DotNetVersion "$(${{ parameters.dotnetVersionVar }})"
-        -AppServiceSku "${{ parameters.appServiceSku }}"
-        -SqlSku "${{ parameters.sqlSku }}"
+        -UmbracoVersion "${{ parameters.umbracoVersion }}"
+        -DotNetVersion "${{ parameters.dotnetVersion }}"
+        -AppServiceSku "$(appServiceSku)"
+        -SqlSku "$(sqlSku)"
         -SeederPreset "${{ parameters.seederPreset }}"
-        -UserCount ${{ parameters.userAmount }}
-        -SpawnRate ${{ parameters.spawnRate }}
-        -DurationSeconds ${{ parameters.testDuration }}
+        -Tier "${{ parameters.tier }}"
+        -Scenario "${{ parameters.scenario }}"
+        -UserCount $(userAmount)
+        -SpawnRate $(spawnRate)
+        -DurationSeconds $(testDuration)
         -ColdStart "${{ parameters.coldStart }}"
-        -TestIndex ${{ parameters.testIndex }}
+        -TestCaseId "${{ parameters.testCaseId }}"

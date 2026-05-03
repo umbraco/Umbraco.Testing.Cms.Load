@@ -2,35 +2,44 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = ">=4.20.0"
+      version = "~> 4.20"
     }
   }
 
   required_version = ">= 1.3.9"
+
+  # Local state is fine for the ephemeral RG-per-run model. Uncomment the backend below
+  # for shared state (pre-create the `tfstate` container in the history storage account).
+  # backend "azurerm" {
+  #   resource_group_name  = "umbraco-loadtest-history-rg"
+  #   storage_account_name = "<your-history-storage-account>"
+  #   container_name       = "tfstate"
+  #   key                  = "loadtest.tfstate"
+  # }
 }
 
 provider "azurerm" {
   features {}
 }
 
+# Read tier catalog from loadtests/tiers.json.
+locals {
+  tier_specs = jsondecode(file("${path.module}/../loadtests/tiers.json")).tiers
+}
+
 module "umbraco" {
   source = "./modules/umbraco"
 
-  # Resource naming
   resource_name_prefix    = var.resource_name_prefix
   resource_group_name     = var.resource_group_name
   resource_group_location = var.resource_group_location
 
-  # Infrastructure configuration
-  app_service_plan_sku = var.app_service_plan_sku
-  sql_sku              = var.sql_sku
-  sql_max_size_gb      = var.sql_max_size_gb
+  tier_specs    = local.tier_specs
+  test_cases    = var.test_cases
+  seeder_preset = var.seeder_preset
 
-  # Umbraco versions
-  umbraco_cms_versions = var.umbraco_cms_versions
-  seeder_preset        = var.seeder_preset
+  build_id = var.build_id
 
-  # Azure credentials
   client_id     = var.client_id
   client_secret = var.client_secret
   tenant_id     = var.tenant_id

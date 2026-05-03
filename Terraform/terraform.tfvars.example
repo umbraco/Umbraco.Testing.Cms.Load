@@ -1,47 +1,33 @@
-# Umbraco Load Test Configuration
-# Copy this file to terraform.tfvars and customize values
+# Hand-craftable test_cases for local `terraform plan`. The pipeline builds
+# this via scripts/prepare-test-cases.ps1.
 
-# Resource naming
-resource_name_prefix = "umbraco-load-test"
-resource_group_name  = "umbraco-load-test-rg"
-
-# Azure region
+resource_name_prefix    = "umbraco-loadtest"
+resource_group_name     = "umbraco-loadtest-rg"
 resource_group_location = "West Europe"
+seeder_preset           = "Medium"   # Small / Medium / Large / Massive
 
-# App Service configuration
-# Premium v3 (current Umbraco Cloud): P1v3 (2 core, 8 GB), P2v3 (4 cores, 16 GB), P3v3 (8 cores, 32 GB)
-# Premium v4 (Umbraco Cloud Dedicated): P0v4, P1v4, P2v4, P3v4, P1mv4-P5mv4
-app_service_plan_sku = "P1v3"
-
-# SQL Database configuration
-sql_sku         = "S0"  # Options: S0, S1, S2
-sql_max_size_gb = 5     # Range: 1-100
-
-# Data seeder preset
-seeder_preset = "Medium"  # Options: Small, Medium, Large, Massive
-
-# Umbraco versions to test (up to 4)
-# Each entry requires dotnet_version and umbraco_version
-umbraco_cms_versions = {
-  "version14" = {
-    dotnet_version  = "v8.0"
-    umbraco_version = "14.3.0"
+# Tier values must exist in loadtests/tiers.json. app_settings_overlay normally
+# comes from the validator; hand-write a small one for local plans.
+test_cases = {
+  "17.0.0__Standard__Default" = {
+    dotnet_version       = "v10.0"
+    umbraco_version      = "17.0.0"
+    tier                 = "Standard"
+    scenario             = "Default"
+    app_settings_overlay = {}
   }
-  "version15" = {
-    dotnet_version  = "v9.0"
-    umbraco_version = "15.1.0"
-  }
-  "version16" = {
-    dotnet_version  = "v9.0"
-    umbraco_version = "16.0.0"
-  }
-  "version17" = {
-    dotnet_version  = "v9.0"
+  "17.0.0__Pro__RedisCache" = {
+    dotnet_version  = "v10.0"
     umbraco_version = "17.0.0"
+    tier            = "Pro"
+    scenario        = "RedisCache"
+    app_settings_overlay = {
+      "Umbraco__CMS__DistributedLockingMechanism" = "RedisDistributedLockingMechanism"
+    }
   }
 }
 
-# Azure credentials (set via environment variables or Azure CLI login)
-# client_id     = ""  # Set via ARM_CLIENT_ID env var
-# client_secret = ""  # Set via ARM_CLIENT_SECRET env var
-# tenant_id     = ""  # Set via ARM_TENANT_ID env var
+# Azure credentials normally flow via ARM_CLIENT_ID / ARM_CLIENT_SECRET / ARM_TENANT_ID.
+# client_id     = ""
+# client_secret = ""
+# tenant_id     = ""

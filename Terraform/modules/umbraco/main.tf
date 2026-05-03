@@ -1,61 +1,83 @@
-# Resource group
+locals {
+  tiers_in_use = toset([for v in var.test_cases : v.tier])
+
+  # Azure SQL admin login must start with a letter; prefix one since random_string can start with a digit.
+  sql_admin_login = "u${random_string.admin_login.result}"
+
+  common_tags = {
+    project    = "umbraco-loadtest"
+    managed_by = "terraform"
+    build_id   = var.build_id
+  }
+}
+
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
   location = var.resource_group_location
+  tags     = local.common_tags
 }
 
-# Random credentials for SQL server (shared across all versions)
 resource "random_string" "admin_login" {
-  length     = 16
-  special    = false
-  depends_on = [azurerm_resource_group.rg]
+  length  = 15
+  special = false
 }
 
+# SQL admin password. Azure SQL needs 3 of 4 char categories; force upper+lower+numeric.
 resource "random_password" "admin_password" {
-  length     = 16
-  special    = false
-  depends_on = [azurerm_resource_group.rg]
+  length      = 24
+  special     = false
+  min_upper   = 1
+  min_lower   = 1
+  min_numeric = 1
 }
 
-# App Service Plan (shared across all versions)
+# Umbraco unattended-install admin password. Retrievable via `az webapp config appsettings list`.
+resource "random_password" "unattended_admin" {
+  length      = 16
+  special     = false
+  min_upper   = 1
+  min_lower   = 1
+  min_numeric = 1
+}
+
+# One plan per tier in use; same-tier cases share it (only one app hot at a time).
 resource "azurerm_service_plan" "appserviceplan" {
-  name                = "${var.resource_name_prefix}-appserviceplan"
+  for_each            = local.tiers_in_use
+  name                = "${var.resource_name_prefix}-asp-${lower(each.key)}"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Windows"
-  sku_name            = var.app_service_plan_sku
+  sku_name            = var.tier_specs[each.key].app_sku
+  tags                = merge(local.common_tags, { tier = each.key })
 }
 
-# NOTE: The Azure Load Testing resource is provisioned out-of-band by
-# scripts/bootstrap-history-infra.ps1 in a long-lived "history" RG so its run
-# history (and the storage account holding exported metrics) survives across
-# pipeline runs. If it lived here, every RG cleanup would wipe the history.
+# ALT resource lives in a long-lived RG (see scripts/ensure-history-infra.ps1).
 
-# Per-version infrastructure module
 module "versions" {
-  for_each = var.umbraco_cms_versions
+  for_each = var.test_cases
   source   = "./versions"
 
-  # Resource configuration
   resource_name_prefix    = var.resource_name_prefix
   resource_group_name     = azurerm_resource_group.rg.name
   resource_group_location = azurerm_resource_group.rg.location
-  service_plan_id         = azurerm_service_plan.appserviceplan.id
+  service_plan_id         = azurerm_service_plan.appserviceplan[each.value.tier].id
 
-  # Version-specific settings
-  dotnet_version      = each.value["dotnet_version"]
-  umbraco_cms_version = each.value["umbraco_version"]
+  test_case_id         = each.key
+  dotnet_version       = each.value.dotnet_version
+  umbraco_version      = each.value.umbraco_version
+  scenario             = each.value.scenario
+  app_settings_overlay = each.value.app_settings_overlay
 
-  # SQL configuration
-  admin_login     = random_string.admin_login.result
+  admin_login     = local.sql_admin_login
   admin_password  = random_password.admin_password.result
-  sql_sku         = var.sql_sku
-  sql_max_size_gb = var.sql_max_size_gb
+  sql_sku         = var.tier_specs[each.value.tier].sql_sku
+  sql_max_size_gb = var.tier_specs[each.value.tier].sql_max_size_gb
 
-  # Seeder configuration
+  unattended_admin_password = random_password.unattended_admin.result
+
   seeder_preset = var.seeder_preset
+  common_tags   = local.common_tags
 
-  # Azure credentials for deployment
   client_id     = var.client_id
   client_secret = var.client_secret
   tenant_id     = var.tenant_id

@@ -10,19 +10,27 @@ variable "resource_group_name" {
 
 variable "resource_name_prefix" {
   type        = string
-  description = "This name will prefix all the created resources"
-  validation {
-    condition     = can(regex("^[0-9a-z]([-0-9a-z]{0,100}[0-9a-z])?$", var.resource_name_prefix))
-    error_message = "The prefix can contain only lowercase letters, numbers, and '-', but can't start or end with '-' or have more than 100 characters."
-  }
+  description = "Prefix for all created resources. Validated at the root module (max 16 chars)."
 }
 
-variable "umbraco_cms_versions" {
+variable "tier_specs" {
   type = map(object({
-    dotnet_version  = string
-    umbraco_version = string
+    app_sku         = string
+    sql_sku         = string
+    sql_max_size_gb = number
   }))
-  description = "Map of Umbraco versions to deploy with their .NET runtime versions"
+  description = "Decoded tier catalog (loadtests/tiers.json), keyed by tier name."
+}
+
+variable "test_cases" {
+  type = map(object({
+    dotnet_version       = string
+    umbraco_version      = string
+    tier                 = string
+    scenario             = string
+    app_settings_overlay = map(string)
+  }))
+  description = "Map of test cases keyed by '{umbraco}__{tier}__{scenario}'."
 }
 
 variable "client_id" {
@@ -43,26 +51,14 @@ variable "tenant_id" {
   sensitive   = true
 }
 
-variable "app_service_plan_sku" {
-  type        = string
-  description = "SKU for the App Service Plan"
-  default     = "P1v3"
-}
-
-variable "sql_sku" {
-  type        = string
-  description = "SKU for the SQL Database"
-  default     = "S0"
-}
-
-variable "sql_max_size_gb" {
-  type        = number
-  description = "Maximum size of the SQL Database in GB"
-  default     = 5
-}
-
 variable "seeder_preset" {
   type        = string
   description = "Data seeder preset (Small, Medium, Large, Massive)"
   default     = "Medium"
+}
+
+variable "build_id" {
+  type        = string
+  description = "Pipeline build ID, surfaced as a resource tag"
+  default     = "local"
 }

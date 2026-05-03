@@ -5,5 +5,10 @@
 *.backup
 *.tfstate
 
+# Re-allow project files that the broad rules above would otherwise ignore.
+!loadtests/tiers.json
+!loadtests/scenarios/**/*.json
+!**/.terraform.lock.hcl
+
 .terraform/
 .idea/

@@ -4,9 +4,19 @@ Automated infrastructure for load testing multiple Umbraco CMS versions on Azure
 
 ## Overview
 
-This project provisions isolated Azure environments for each Umbraco version, seeds them with test data using [PerformanceTestDataSeeder](https://github.com/umbraco/Umbraco.Community.PerformanceTestDataSeeder) (v17+) or [DummyDataSeeder](https://github.com/nhudinh0309/performance-test-data-v13) (v13-16), and runs Locust load tests via Azure Load Testing service.
+This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs Locust load tests via Azure Load Testing service.
+
+**Supported Umbraco versions: v17 and newer.** Older majors (v13–v16) are rejected at validation time — the seeder package doesn't yet have a release train for them.
 
 Locust tests execute on Azure Load Testing's managed infrastructure (dedicated Standard_D4d_v4 VMs), not on the pipeline agent. This ensures consistent, reliable performance measurements.
+
+A pipeline run is parameterised by a list of **test cases**. Each case picks:
+
+- **Umbraco/.NET version pair** (e.g. `17.0.0` on `v10.0`)
+- **Infrastructure tier** — `Starter` / `Standard` / `Pro`, defined in [`loadtests/tiers.json`](loadtests/tiers.json) (App Service Plan SKU + SQL SKU + max DB size)
+- **Scenario** — a folder under `loadtests/scenarios/` containing the Umbraco `appsettings.json` overlay for that scenario plus optional `scenario.yaml` load-profile overrides
+
+Cases on the same tier in one run share an App Service Plan; cases on different tiers each get their own. Tests within a run run sequentially (one App Service hot at a time) so each measurement gets the full plan capacity.
 
 ## Architecture
 
@@ -14,22 +24,28 @@ Locust tests execute on Azure Load Testing's managed infrastructure (dedicated S
 ┌──────────────────────────────────────────────────────────────────────────────────┐
 │                              Azure Resource Group                                 │
 ├──────────────────────────────────────────────────────────────────────────────────┤
-│  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐  ┌───────────────┐      │
-│  │ App Service   │  │ App Service   │  │ App Service   │  │ App Service   │      │
-│  │ (Umbraco 14)  │  │ (Umbraco 15)  │  │ (Umbraco 16)  │  │ (Umbraco 17)  │      │
-│  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘  └───────┬───────┘      │
-│          │                  │                  │                  │              │
-│  ┌───────▼───────┐  ┌───────▼───────┐  ┌───────▼───────┐  ┌───────▼───────┐      │
-│  │ SQL Database  │  │ SQL Database  │  │ SQL Database  │  │ SQL Database  │      │
-│  └───────────────┘  └───────────────┘  └───────────────┘  └───────────────┘      │
+│  ┌────────────────┐     ┌────────────────┐     ┌────────────────┐                │
+│  │ App Service    │     │ App Service    │     │ App Service    │                │
+│  │ (case 1)       │     │ (case 2)       │     │ (case N)       │ …              │
+│  └────────┬───────┘     └────────┬───────┘     └────────┬───────┘                │
+│           │                      │                      │                        │
+│  ┌────────▼───────┐     ┌────────▼───────┐     ┌────────▼───────┐                │
+│  │ SQL Database   │     │ SQL Database   │     │ SQL Database   │                │
+│  └────────────────┘     └────────────────┘     └────────────────┘                │
 │                                                                                   │
 │  ┌───────────────────────────────────────────────────────────────────────────┐   │
-│  │                        Shared App Service Plan                             │   │
-│  └───────────────────────────────────────────────────────────────────────────┘   │
-│  ┌───────────────────────────────────────────────────────────────────────────┐   │
-│  │                           Azure Load Test                                  │   │
+│  │  App Service Plans — one per *distinct tier* used by the run's cases     │   │
+│  │  (e.g. Starter plan + Pro plan if cases span both)                       │   │
 │  └───────────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────────┘
+                                   ▲
+                                   │ run name + NDJSON tagged with tier + scenario
+                                   ▼
+              ┌──────────────────────────────────────────────────────┐
+              │  Long-lived "history" RG (umbraco-loadtest-history-rg)│
+              │  - Shared Azure Load Test resource (run history)      │
+              │  - Storage account for NDJSON metrics + raw artifacts │
+              └──────────────────────────────────────────────────────┘
 ```
 
 ## Prerequisites
@@ -37,44 +53,56 @@ Locust tests execute on Azure Load Testing's managed infrastructure (dedicated S
 - Azure subscription with appropriate permissions
 - Azure DevOps organization with:
   - Service connection to Azure (`terraform-umbraco-load-testing-az-serviceconnection`)
-  - Variable group with Umbraco versions to test
+  - Override of `historyStorageAccount` in pipeline variables (the default `loadtestchangeme` is an obvious placeholder that fails name-availability check; replace with your own globally-unique 3–24 lowercase alphanumeric value)
 - Terraform >= 1.3.9
-- PowerShell Core (pwsh)
+- PowerShell Core (pwsh) 7+ (Pester 5+ ships preinstalled)
 
 ## Project Structure
 
 ```
-├── azure-pipeline.yml           # Main CI/CD pipeline
+├── azure-pipeline.yml           # Main load test pipeline (manual queue)
+├── quality-gates.yml            # PR-triggered lint + tests pipeline
 ├── README.md
 │
 ├── templates/
-│   └── load-test-job.yml        # Reusable per-version load test template
+│   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
 │
 ├── scripts/
-│   ├── bootstrap-history-infra.ps1     # Idempotently provisions the long-lived RG, ALT, storage
-│   └── publish-load-test-results.ps1   # Exports per-test metrics + raw artifacts to history storage
+│   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, ALT, storage
+│   ├── prepare-test-cases.ps1          # Validator: validates testCases, flattens scenario appsettings,
+│   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
+│   ├── prepare-test-cases.tests.ps1    # Pester suite for the validator
+│   ├── verify-deployments.ps1          # Smoke-check each deployed site (skipLoadTests=true path)
+│   ├── stop-all-app-services.ps1       # End-of-run sweep: stop all App Services in the case set
+│   └── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
 │
 ├── loadtests/
 │   ├── locustfile.py            # Test plan — currently a homepage smoke-test scaffold
 │   ├── locust.conf              # Local development config
-│   └── requirements.txt         # Extra Python packages installed on ALT engines
+│   ├── requirements.txt         # Extra Python packages installed on ALT engines
+│   ├── tiers.json               # Tier catalog (Starter / Standard / Pro → SKUs)
+│   └── scenarios/
+│       └── Default/
+│           ├── AdditionalSetup/
+│           │   └── appsettings.json  # {} — identity overlay
+│           └── scenario.yaml         # description; no profile overrides
 │
 └── Terraform/
     ├── main.tf                  # Root module
-    ├── variables.tf             # Input variables
-    ├── output.tf                # Output values
+    ├── variables.tf             # Input variables (testCases-shaped test_cases)
+    ├── output.tf                # test_case_outputs map keyed by testCaseId
     ├── terraform.tfvars.example # Example configuration
     │
     └── modules/umbraco/
-        ├── main.tf              # Resource group, App Service Plan, Load Test
+        ├── main.tf              # Reads tiers.json; for_each App Service Plan over tiers in use
         ├── variables.tf
         ├── output.tf
         │
         ├── scripts/
         │   └── install-umbraco-cms-on-appservice.ps1
         │
-        └── versions/            # Per-version resources
-            ├── main.tf          # SQL Server, Database, App Service
+        └── versions/            # Per-case resources
+            ├── main.tf          # SQL Server, Database, App Service (merges overlay into app_settings)
             ├── variables.tf
             └── output.tf
 ```
@@ -85,45 +113,180 @@ Locust tests execute on Azure Load Testing's managed infrastructure (dedicated S
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `appServicePlanSku` | App Service Plan tier | P1v3 | P1v3-P3v3 (Cloud), P0v4-P5mv4 (Dedicated) |
-| `sqlSku` | SQL Database tier | S0 | S0, S1, S2 |
-| `sqlMaxSizeGb` | SQL Database max size | 5 | 2, 5, 10, 20 |
+| `testCases` | List of test cases (see schema below) | 1 entry × 3 tiers (`v17.0.0` × `Starter`/`Standard`/`Pro`) | object — set at queue time |
 | `azureRegion` | Azure region | West Europe | West Europe, North Europe, East US, West US 2 |
-| `prefix` | Resource name prefix | umbraco-azure-load-test-pipeline | - |
-| `userAmount` | Virtual users for load test | 100 | 50, 100, 150, 200, 250, 300 |
-| `spawnRate` | Users spawned per second (ramp-up speed) | 10 | 5, 10, 20, 50 |
-| `testDuration` | Steady-state duration in seconds | 300 | 60, 120, 180, 300, 600 |
+| `prefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
+| `userAmount` | Default virtual users per case (scenarios may override) | 100 | 50, 100, 150, 200, 250, 300 |
+| `spawnRate` | Default users spawned/sec during ramp-up | 10 | 5, 10, 20, 50 |
+| `testDuration` | Default steady-state duration (seconds) | 300 | 60, 120, 180, 300, 600 |
 | `engineInstances` | ALT engine VMs (scale for high user counts) | 1 | 1, 2, 4 |
-| `coldStart` | Skip warmup (test cache warm-up) | false | true, false |
+| `coldStart` | Skip warmup (test cache warm-up behaviour) | false | true, false |
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `seederPreset` | Data seeding volume | Medium | Small, Medium, Large, Massive |
+| `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 
-### Version Configuration
+### testCases schema
 
-Versions are configured via Azure DevOps variable groups:
+Each entry in `parameters.testCases` describes a `(version, scenario)` and the tiers to exercise it against. The validator expands one entry × N tiers into N test cases internally — so a "compare v17 across tiers" run is one entry with three tier names, not three duplicated entries.
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `firstDotNetVersion` | .NET version for first test | v8.0 |
-| `firstUmbracoVersion` | Umbraco version for first test | 14.3.0 |
-| `secondDotNetVersion` | .NET version for second test | v9.0 |
-| `secondUmbracoVersion` | Umbraco version for second test | 15.1.0 |
-| (up to fourth) | ... | ... |
+```yaml
+- umbraco:  '17.0.0'                          # Umbraco CMS version (required)
+  dotnet:   'v10.0'                           # .NET runtime version (required)
+  scenario: 'Default'                         # folder name under loadtests/scenarios/ (required)
+  tiers:    ['Starter', 'Standard', 'Pro']    # array of tier names (required, ≥1)
+```
 
-## Load Test Scenarios
+Examples:
 
-`loadtests/locustfile.py` currently contains only a **homepage smoke-test User** that hits `/`. It exists to validate the end-to-end pipeline (provisioning -> deploy -> seed -> ALT engine -> results upload), not to exercise real workloads.
+| What you want | What you write |
+|---|---|
+| 4 versions, all on Standard | 4 entries, each with `tiers: ['Standard']` |
+| v17, compared across all 3 tiers | 1 entry with `tiers: ['Starter', 'Standard', 'Pro']` |
+| Smoke + comparison | mixed entries — 1 entry per (version, scenario), tiers vary |
 
-Real scenarios will be added later. To add one:
+Queue-time editing: in Azure DevOps, click **Run pipeline** → expand **Test cases** → edit the YAML inline. Add/remove/edit entries as needed.
 
-1. Define an `HttpUser` subclass either in `locustfile.py` or in a sibling module
-2. If you create new modules, add them to the `configurationFiles:` list in `templates/load-test-job.yml` so ALT uploads them to the test engines
+The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate post-expansion `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned.
+
+## Tiers
+
+`loadtests/tiers.json` is the **single source of truth** for tier names + SKUs. Both Terraform (provisioning) and the PowerShell validator read this same file:
+
+```json
+{
+  "tiers": {
+    "Starter":  { "app_sku": "P0v4", "sql_sku": "S0", "sql_max_size_gb": 5 },
+    "Standard": { "app_sku": "P1v3", "sql_sku": "S1", "sql_max_size_gb": 10 },
+    "Pro":      { "app_sku": "P3v3", "sql_sku": "S2", "sql_max_size_gb": 20 }
+  }
+}
+```
+
+Add a tier by adding a key here. Both the validator and Terraform will pick it up automatically.
+
+A pipeline run only provisions plans for tiers actually referenced by its `testCases` — an all-Standard run creates one plan; a mixed-tier run creates one per distinct tier in use.
+
+## Scenarios
+
+A **scenario** is an Umbraco-side configuration variant. The layout mirrors how Umbraco's own [acceptance test repo](https://github.com/umbraco/Umbraco-CMS) organises tests — a folder per scenario with an `AdditionalSetup/appsettings.json` carrying the configuration overlay:
+
+```
+loadtests/scenarios/
+  Default/
+    AdditionalSetup/
+      appsettings.json     # {} — empty overlay
+    scenario.yaml          # description; no profile overrides
+  RedisCache/              # add when needed
+    AdditionalSetup/
+      appsettings.json     # Redis-specific Umbraco keys
+    scenario.yaml          # optional load profile overrides
+```
+
+### Naming convention
+
+Name scenarios after **what they configure**, not what they test. Examples that fit the convention: `Default`, `RedisCache`, `LuceneDisabled`, `BackofficeOnly`. Examples that don't: `BulkPublishTest`, `PerfRun3` — those are tests, not configs.
+
+This matches Umbraco's pattern (`ContentSettingConfig`, `DeliveryApi`, `SMTP` …) and means future per-scenario test plans will live naturally inside the same folder.
+
+### Naming constraints
+
+Scenario names participate in Azure resource names (App Service is capped at 60 chars), so the validator enforces:
+
+- **≤ 15 characters** (e.g. `RedisCache` ✓, `BackofficeOnly` ✓, `ContentDeliveryApi` ✗)
+- **alphanumeric + hyphens only** (no underscores, dots, spaces). Folder names are matched case-strictly on every agent (the validator enumerates the actual folders and rejects mismatches with a "did you mean 'X'?" hint).
+
+The `resource_name_prefix` Terraform variable is similarly capped at **16 chars** (validated). Default is `umbraco-loadtest`. The 60-char App Service budget breaks down as:
+
+```
+${prefix}-appservice-${umbraco}-${tier}-${scenario}
+   ≤16        12           ≤7      ≤8       ≤15        + connectors = 60 max
+```
+
+Long Umbraco prerelease tags (e.g. `17.0.0-rc.1.beta`) eat into the budget. Prefer release versions (`X.Y.Z`) when possible, and shorten the scenario name if running prereleases on a long-named tier.
+
+### `appsettings.json` overlay
+
+The contents of a scenario's `AdditionalSetup/appsettings.json` are **flattened** by the validator to App Service envvar form (`Section:Sub:Key` → `Section__Sub__Key`) and **merged into the base `app_settings` block** of the deployed App Service. Overlay keys win over base keys.
+
+Example — `loadtests/scenarios/RedisCache/AdditionalSetup/appsettings.json`:
+
+```json
+{
+  "Umbraco": {
+    "CMS": {
+      "DistributedLockingMechanism": "RedisDistributedLockingMechanism"
+    }
+  },
+  "ConnectionStrings": {
+    "Redis": {
+      "ConnectionString": "redis://..."
+    }
+  }
+}
+```
+
+Becomes (in the App Service `app_settings`):
+
+```
+Umbraco__CMS__DistributedLockingMechanism = RedisDistributedLockingMechanism
+ConnectionStrings__Redis__ConnectionString = redis://...
+```
+
+⚠️ **Overlay precedence sharp edge.** Because overlay keys win over base keys, a sufficiently aggressive scenario can clobber base settings — including `Umbraco__CMS__Unattended__*` (which would break unattended install) or `Umbraco.Cms.TestDataSeeder__Options__Preset` (which would override the run-level seeder preset). This is intentional flexibility, but be deliberate about what your overlay touches.
+
+### Code overlays (`*.cs`, `*.cshtml`, `App_Plugins/`, …)
+
+Some Umbraco features can't be flipped via `appsettings.json` alone — they need source-code changes (e.g. `.AddDeliveryApi()` in the builder chain, custom composers, backoffice extensions). Mirroring how Umbraco's acceptance tests handle this, **any file in `AdditionalSetup/` other than `appsettings.json` is treated as a code overlay**: copied into the dotnet project tree before `dotnet build`, preserving relative paths.
+
+Example — enabling Delivery API requires a custom `Program.cs`:
+
+```
+loadtests/scenarios/DeliveryApi/
+  AdditionalSetup/
+    appsettings.json     # { "Umbraco": { "CMS": { "DeliveryApi": { "Enabled": true } } } }
+    Program.cs           # CreateUmbracoBuilder().AddBackOffice().AddWebsite().AddDeliveryApi()…
+```
+
+When the install script deploys the `DeliveryApi` scenario:
+
+1. `dotnet new umbraco -n …` creates the project (with a default `Program.cs`).
+2. The seeder package is added (`dotnet add package …`).
+3. **Code overlay is applied**: `Program.cs` from the scenario's `AdditionalSetup/` overwrites the generated one. Any other files (e.g. `Composers/MyComposer.cs`, `wwwroot/App_Plugins/myplugin/...`) are copied to the same relative path under the project root.
+4. `dotnet build` picks up the overlay automatically.
+
+Convention notes:
+- Mirror the dotnet project structure inside `AdditionalSetup/`. A file at `AdditionalSetup/Composers/MyComposer.cs` lands at `<project>/Composers/MyComposer.cs`.
+- For Umbraco 14+ backoffice extensions, drop your built JS/TS into `AdditionalSetup/wwwroot/App_Plugins/{Name}/`.
+- Scenarios with broken C# will fail `dotnet build` — the install script propagates the failure to the pipeline run.
+- An empty `AdditionalSetup/` (or one containing only `appsettings.json`, like `Default`) just skips the overlay step.
+
+### `scenario.yaml` schema
+
+Optional metadata + load profile overrides:
+
+```yaml
+description: "Free-text description shown in run summaries"   # optional
+loadProfile:                                                  # optional whole block
+  users:     200    # overrides pipeline.userAmount    when present
+  spawnRate:  20    # overrides pipeline.spawnRate     when present
+  duration:  600    # overrides pipeline.testDuration  when present
+```
+
+All fields optional. A missing `scenario.yaml` (or an empty `loadProfile` block) means the case uses the queue-time pipeline-level defaults. The override resolution happens once in the validator — every downstream consumer (Terraform, ALT, NDJSON publisher) sees the resolved values, not the override logic.
+
+### Adding a new scenario
+
+1. Create `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json` with your config overlay.
+2. Optionally add `loadtests/scenarios/{Name}/scenario.yaml` with description + load profile overrides.
+3. Reference it in a `testCases` entry: `scenario: '{Name}'`.
+
+That's it. No HCL or pipeline edits needed.
 
 ### Load Pattern
 
 Azure Load Testing controls the load pattern:
-- **Ramp-up**: Users are spawned at a configurable rate (default: 10/second)
-- **Steady-state**: All virtual users active for the test duration
+- **Ramp-up**: Users are spawned at the resolved spawn rate
+- **Steady-state**: All virtual users active for the resolved duration
 - **Ramp-down**: Handled by ALT when the test duration expires
 
 ### Cold Start Testing
@@ -134,9 +297,9 @@ Set `coldStart: true` to skip the warmup poll. The load test then hits a freshly
 
 The pipeline writes results to three places:
 
-- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The ALT resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. Each run is named `Umbraco {version} - {branch}@{commit} - run {buildId}` for easy identification.
-- **Pipeline artifacts**: per-test ZIP under `loadtest-results-{N}` on the build, useful for forensic deep-dives. Expires with the pipeline's build retention policy.
-- **History storage account** (long-lived): for each test, a per-scenario NDJSON summary at `runs/{yyyy/MM/dd}/{buildId}/test-{N}/summary.ndjson` plus the raw artifact dump under `raw/`. Each row carries the full run metadata (commit, version, SKUs, seeder preset, user count), so cross-run queries don't need joins.
+- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The ALT resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. Each run is named `Umbraco {version} [{tier}/{scenario}] - {branch}@{commit} - run {buildId}`.
+- **Pipeline artifacts**: per-case ZIP under `loadtest-results-{sanitised-testCaseId}` on the build, useful for forensic deep-dives. Expires with the pipeline's build retention policy.
+- **History storage account** (long-lived): for each test, a per-case NDJSON summary at `runs/{yyyy/MM/dd}/{buildId}/{sanitised-testCaseId}/summary.ndjson` plus the raw artifact dump under `raw/`. Each row carries the full run metadata (commit, version, tier, scenario, SKUs, seeder preset, user count), so cross-run queries don't need joins.
 
 NDJSON is ingestible directly by Azure Data Explorer, pandas, Postgres `COPY`, etc. — pick whatever query layer fits, the data shape stays the same.
 
@@ -146,24 +309,24 @@ The pipeline manages two separate resource groups:
 
 | Resource group | Lifetime | Contents |
 |---|---|---|
-| `${prefix}-rg` (ephemeral) | Created and destroyed per pipeline run | App Service plan, App Services, SQL servers + databases for each Umbraco version |
+| `${prefix}-rg` (ephemeral) | Created and destroyed per pipeline run | App Service plans (one per used tier), App Services + SQL servers + databases (one per case) |
 | `umbraco-loadtest-history-rg` (long-lived) | Created once, never deleted by the pipeline | Shared Azure Load Testing resource, storage account for results history |
 
-The long-lived RG is bootstrapped idempotently at the start of every pipeline run by `scripts/bootstrap-history-infra.ps1` — first run creates it, subsequent runs no-op. Override the names via the `historyResourceGroup`, `historyLoadTestName`, `historyStorageAccount`, `historyContainer` pipeline variables (or pin them in a variable group) if multiple teams share the subscription. **The storage account name must be globally unique and 3-24 lowercase alphanumeric chars.**
+The long-lived RG is provisioned idempotently at the start of every pipeline run by `scripts/ensure-history-infra.ps1` — first run creates it, subsequent runs no-op. Override the names via the `historyResourceGroup`, `historyLoadTestName`, `historyStorageAccount`, `historyContainer` pipeline variables (or pin them in a variable group) if multiple teams share the subscription. **The storage account name must be globally unique and 3-24 lowercase alphanumeric chars.**
 
 ## Pipeline Workflow
 
 ```
-1. Check Resource Group     -> Does it already exist?
-2. Format Versions          -> Convert variables to Terraform JSON
-3. Terraform Plan           -> Preview infrastructure changes
-4. Terraform Apply          -> Provision Azure resources
-5. Deploy Umbraco           -> Install CMS on each App Service
-6. Seed Data                -> Data seeder populates content
-7. Verify Deployments       -> Smoke-check each site returns 200
-8. Run Load Tests           -> Sequential Locust tests per version (on ALT infra) — skipped when `skipLoadTests=true`
-9. Manual Validation        -> 2 hour window to keep resources
-10. Cleanup                 -> Delete resource group if rejected/cancelled/expired
+0. validateTestCases            -> Validate testCases, read scenario folders, resolve load profile
+1. ensureHistoryInfra           -> Idempotent: shared ALT + storage
+2. Check Resource Group         -> Does it already exist?
+3. Terraform Setup              -> Init + Validate + Plan
+4. Terraform Apply              -> Provision App Service Plans (one per tier), per-case App Services + SQL DBs
+5. Verify Deployments           -> Smoke-check each site (only when skipLoadTests=true)
+6. Run Load Tests               -> Sequential per-case Locust tests (on ALT infra)
+7. Test Summary                 -> Print run-level + per-case config
+8. Manual Validation            -> Configurable window to keep resources (default 60 min)
+9. Cleanup                      -> Delete resource group if rejected/cancelled/expired
 ```
 
 ## Data Seeder Presets
@@ -175,16 +338,18 @@ The long-lived RG is bootstrapped idempotently at the start of every pipeline ru
 | Large | ~2000 | ~500 | ~500 | 15-30 min |
 | Massive | ~10000 | ~2000 | ~2000 | 30-60 min |
 
+The seeder preset is **run-level** — applied uniformly to every case. (A scenario *can* override it via the `appsettings.json` overlay key `Umbraco.Cms.TestDataSeeder__Options__Preset` if you really need it per-case, but that's the overlay-precedence sharp edge — be deliberate.)
+
 ## Usage
 
 ### Running via Azure Pipelines
 
-1. Configure your Azure DevOps variable group with the Umbraco versions to test
-2. Run the pipeline manually from Azure DevOps
-3. Select desired parameters (SKU, user count, cold start, etc.)
-4. Wait for infrastructure provisioning and load tests to complete
-5. Review results in Azure Load Testing portal and pipeline artifacts
-6. Approve or reject resource cleanup within 2 hours
+1. Run the pipeline manually from Azure DevOps.
+2. Edit `testCases` in the queue-time YAML editor (defaults to v17.0.0 × all 3 tiers on the `Default` scenario).
+3. Adjust other parameters (region, default users, seeder preset, cold start, etc.) as needed.
+4. Wait for validation → ensure-history-infra → provisioning → load tests to complete.
+5. Review results in Azure Load Testing portal, pipeline artifacts, and history storage NDJSON.
+6. Approve or reject resource cleanup within the validation window (default 60 min).
 
 ### Running Terraform Locally
 
@@ -192,7 +357,7 @@ The long-lived RG is bootstrapped idempotently at the start of every pipeline ru
 cd Terraform
 terraform init
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your values
+# Edit terraform.tfvars — note the testCaseId-keyed map shape
 terraform plan
 terraform apply
 ```
@@ -210,6 +375,15 @@ locust -f locustfile.py --host https://<app-service-url>
 
 ### Common Issues
 
+**Preflight fails with "tier 'X' is not in tiers.json"**
+- Check `loadtests/tiers.json` — the tier catalog. Either fix the typo in your `testCases` entry or add the tier to the catalog.
+
+**Preflight fails with "scenario folder not found"**
+- The scenario folder must exist at `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json`. Folder lookup is case-strict on every agent — the validator will suggest the closest match if the casing differs.
+
+**Preflight fails with "duplicate testCaseId"**
+- You have two cases with the same `(umbraco, tier, scenario)` triple. Either remove the duplicate, or change one of the dimensions (e.g. different scenario folder).
+
 **SQL Server creation timeout**
 - The 7-minute timeout may not be enough in busy regions
 - Solution: Re-run the pipeline or increase timeout in `versions/main.tf`
@@ -221,3 +395,50 @@ locust -f locustfile.py --host https://<app-service-url>
 **Template version mismatch**
 - Ensure Umbraco template version matches CMS version
 - Pre-release versions require NuGet sources (automatically configured)
+
+## Quality gates
+
+A separate `quality-gates.yml` pipeline runs on every PR. It does NOT touch Azure — costs zero. Four jobs:
+
+- `terraformFmt` — `terraform fmt -check -recursive` blocks malformatted HCL.
+- `terraformValidate` — schema check.
+- `powershellLint` — PSScriptAnalyzer at Warning+Error level (excluding `PSAvoidUsingWriteHost`).
+- `pesterTests` — `Invoke-Pester` over `scripts/prepare-test-cases.tests.ps1`.
+
+Run any of these locally before pushing.
+
+## Azure resource tagging
+
+Every provisioned resource carries:
+
+| Tag | Where | Value |
+|---|---|---|
+| `project` | All | `umbraco-loadtest` |
+| `managed_by` | Ephemeral resources | `terraform` |
+| `managed_by` | Long-lived history infra | `bootstrap-script` |
+| `build_id` | Ephemeral resources | `$(Build.BuildId)` from the pipeline (or `local` for hand runs) |
+| `tier` | App Service Plan | The tier name (`Starter` / `Standard` / `Pro`) |
+| `test_case_id` | App Service, SQL Server, SQL DB | The full testCaseId |
+| `umbraco_version` | App Service, SQL Server, SQL DB | The Umbraco CMS version |
+| `scenario` | App Service, SQL Server, SQL DB | The scenario folder name |
+
+Cost reports in Azure Portal can group/filter by any of these — `managed_by` separates the per-run ephemeral spend from the long-lived history infra.
+
+Pre-existing untagged history infra (created before this change) won't be retroactively tagged. Either re-tag manually (`az group update -n umbraco-loadtest-history-rg --set tags.project=umbraco-loadtest tags.managed_by=bootstrap-script`) or recreate the RG.
+
+## Security posture
+
+This is **test-only infrastructure**. Resources auto-delete after the validation window. That said, the deployed App Services are public during the test:
+
+- `https_only = true` on every App Service (forces TLS).
+- FTPS basic auth + WebDeploy basic auth disabled.
+- `client_affinity_enabled = false` — load tests round-robin across plan instances.
+- Umbraco unattended-install admin password is randomised per pipeline run (retrievable via `az webapp config appsettings list -n <appservice> -g <rg>` if needed for debugging).
+- SQL admin password randomised per run, satisfies Azure's "3 of 4 categories" requirement.
+- Service principal credentials flow through Terraform's `local-exec` `environment` block — not visible in process arg listings.
+
+What's **not** locked down (deliberate, called out for awareness):
+
+- App Services accept public-internet traffic (ALT engines + arbitrary discovery). For sensitive scenarios, add an `ip_restriction` block on the App Service narrowing to ALT service tags + your team's egress.
+- SQL Server's "Allow Azure services" firewall rule is open (any Azure resource in any subscription can connect with credentials). The seeded database has no real data, but consider VNet integration for production-shaped tests.
+- Anonymous test endpoints (`/umbraco/api/seederstatus/*`, `/umbraco/api/contactform/*` etc.) are exposed during the test window — by design, since load runners need them. Don't run this against an app you care about.

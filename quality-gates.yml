@@ -1,0 +1,91 @@
+# Lint + tests on every PR. No Azure resources touched, no costs incurred.
+
+name: quality_gates
+
+trigger: none
+
+pr:
+  branches:
+    include:
+      - '*'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: gates
+    displayName: Lint and tests
+    jobs:
+
+      - job: terraformFmt
+        displayName: terraform fmt -check
+        steps:
+          - task: TerraformInstaller@0
+            inputs:
+              terraformVersion: '1.13.3'
+          - script: terraform fmt -check -recursive
+            workingDirectory: $(System.DefaultWorkingDirectory)/Terraform
+            displayName: terraform fmt -check -recursive
+
+      - job: terraformValidate
+        displayName: terraform validate
+        steps:
+          - task: TerraformInstaller@0
+            inputs:
+              terraformVersion: '1.13.3'
+          - task: PowerShell@2
+            displayName: terraform init + validate
+            inputs:
+              targetType: 'inline'
+              script: |
+                terraform init -backend=false -input=false
+                terraform validate
+              workingDirectory: $(System.DefaultWorkingDirectory)/Terraform
+
+      - job: powershellLint
+        displayName: PSScriptAnalyzer
+        steps:
+          - task: PowerShell@2
+            displayName: Run PSScriptAnalyzer
+            inputs:
+              targetType: 'inline'
+              script: |
+                # PSScriptAnalyzer ships preinstalled on ubuntu-latest pwsh; pin major as fallback.
+                if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer | Where-Object { $_.Version.Major -eq 1 })) {
+                    Install-Module -Name PSScriptAnalyzer -MinimumVersion '1.0' -MaximumVersion '1.999.999' -Force -Scope CurrentUser -SkipPublisherCheck
+                }
+                $issues = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+                if ($issues) {
+                    $issues | Format-Table -AutoSize | Out-String | Write-Host
+                    Write-Host "##vso[task.logissue type=error]PSScriptAnalyzer found $($issues.Count) issue(s)"
+                    exit 1
+                }
+                Write-Host "PSScriptAnalyzer clean."
+
+      - job: pesterTests
+        displayName: Pester tests (validator)
+        steps:
+          - task: PowerShell@2
+            displayName: Invoke-Pester
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Pin Pester 5.x; suite uses 5.x syntax that 6+ would break.
+                if (-not (Get-Module -ListAvailable -Name Pester | Where-Object { $_.Version.Major -eq 5 })) {
+                    Install-Module -Name Pester -MinimumVersion '5.0' -MaximumVersion '5.999.999' -Force -Scope CurrentUser -SkipPublisherCheck
+                }
+                $config = New-PesterConfiguration
+                $config.Run.Path = './scripts/prepare-test-cases.tests.ps1'
+                $config.Run.Exit = $true
+                $config.Output.Verbosity = 'Detailed'
+                $config.TestResult.Enabled = $true
+                $config.TestResult.OutputPath = '$(System.DefaultWorkingDirectory)/pester-results.xml'
+                $config.TestResult.OutputFormat = 'NUnitXml'
+                Invoke-Pester -Configuration $config
+
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: NUnit
+              testResultsFiles: '$(System.DefaultWorkingDirectory)/pester-results.xml'
+              testRunTitle: 'Pester (prepare-test-cases.ps1)'
