@@ -22,7 +22,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 
 - Azure subscription with appropriate permissions
 - Azure DevOps organization with:
-  - Service connection to Azure (`terraform-umbraco-load-testing-az-serviceconnection`)
+  - Service connection to Azure (`terraform-umbraco-load-testing-az-connection`)
   - Override of `historyStorageAccount` in pipeline variables (the default `loadtestchangeme` is an obvious placeholder that fails name-availability check; replace with your own globally-unique 3–24 lowercase alphanumeric value)
 - Terraform >= 1.3.9
 - PowerShell Core (pwsh) 7+ (Pester 5+ ships preinstalled)
