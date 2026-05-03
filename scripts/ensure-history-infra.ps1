@@ -23,12 +23,6 @@ Override the variable with a globally-unique 3-24 lowercase alphanumeric value, 
     exit 1
 }
 
-# Container name must be 3-63 chars, lowercase alphanumeric + single hyphens.
-if ($ContainerName -notmatch '^[a-z0-9](-?[a-z0-9])+$' -or $ContainerName.Length -lt 3 -or $ContainerName.Length -gt 63) {
-    Write-Error "historyContainer '$ContainerName' is invalid (3-63 chars, lowercase alphanumeric + single hyphens, no leading/trailing hyphen)."
-    exit 1
-}
-
 # `az load` extension isn't pre-installed on every agent image.
 az extension add --name load --upgrade --only-show-errors | Out-Null
 
@@ -57,13 +51,7 @@ else {
 Write-Host "-> Load test resource"
 $altExisting = az load show -n $LoadTestName -g $HistoryResourceGroup 2>$null
 if ($altExisting) {
-    # Fail if the existing resource is in a different region than requested.
-    $existingLocation = ($altExisting | ConvertFrom-Json).location
-    if ($existingLocation -and $existingLocation -ne $HistoryLocation) {
-        Write-Error "Load test '$LoadTestName' exists in region '$existingLocation' but '$HistoryLocation' was requested. Update historyLocation, rename historyLoadTestName, or delete the existing resource."
-        exit 1
-    }
-    Write-Host "   already exists (region: $existingLocation)"
+    Write-Host "   already exists"
 }
 else {
     az load create -n $LoadTestName -g $HistoryResourceGroup -l $HistoryLocation --tags $tags | Out-Null

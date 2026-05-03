@@ -192,7 +192,6 @@ steps:
         engineInstances: ${{ parameters.engineInstances }}
         configurationFiles:
           - loadtests/locust.conf
-          - loadtests/requirements.txt
         # Append scenario modules here when added so ALT uploads them too.
         failureCriteria:
           - avg(response_time_ms) > 2000

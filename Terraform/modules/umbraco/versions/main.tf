@@ -63,14 +63,6 @@ resource "azurerm_windows_web_app" "app_service" {
   service_plan_id     = var.service_plan_id
   tags                = local.case_tags
 
-  # Azure caps App Service names at 60 chars; fail at plan time with the computed name.
-  lifecycle {
-    precondition {
-      condition     = length(local.app_service_name) <= 60
-      error_message = "Computed App Service name '${local.app_service_name}' is ${length(local.app_service_name)} chars; Azure caps at 60. Shorten resource_name_prefix (max 16), scenario name (max 15), or use a release umbraco_version."
-    }
-  }
-
   # Force HTTPS; disable basic-auth deploy paths; disable session affinity so load
   # tests round-robin across plan instances.
   https_only                                     = true

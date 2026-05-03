@@ -18,36 +18,6 @@ A pipeline run is parameterised by a list of **test cases**. Each case picks:
 
 Cases on the same tier in one run share an App Service Plan; cases on different tiers each get their own. Tests within a run run sequentially (one App Service hot at a time) so each measurement gets the full plan capacity.
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                              Azure Resource Group                                 │
-├──────────────────────────────────────────────────────────────────────────────────┤
-│  ┌────────────────┐     ┌────────────────┐     ┌────────────────┐                │
-│  │ App Service    │     │ App Service    │     │ App Service    │                │
-│  │ (case 1)       │     │ (case 2)       │     │ (case N)       │ …              │
-│  └────────┬───────┘     └────────┬───────┘     └────────┬───────┘                │
-│           │                      │                      │                        │
-│  ┌────────▼───────┐     ┌────────▼───────┐     ┌────────▼───────┐                │
-│  │ SQL Database   │     │ SQL Database   │     │ SQL Database   │                │
-│  └────────────────┘     └────────────────┘     └────────────────┘                │
-│                                                                                   │
-│  ┌───────────────────────────────────────────────────────────────────────────┐   │
-│  │  App Service Plans — one per *distinct tier* used by the run's cases     │   │
-│  │  (e.g. Starter plan + Pro plan if cases span both)                       │   │
-│  └───────────────────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────────────┘
-                                   ▲
-                                   │ run name + NDJSON tagged with tier + scenario
-                                   ▼
-              ┌──────────────────────────────────────────────────────┐
-              │  Long-lived "history" RG (umbraco-loadtest-history-rg)│
-              │  - Shared Azure Load Test resource (run history)      │
-              │  - Storage account for NDJSON metrics + raw artifacts │
-              └──────────────────────────────────────────────────────┘
-```
-
 ## Prerequisites
 
 - Azure subscription with appropriate permissions
@@ -70,7 +40,6 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 │   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, ALT, storage
 │   ├── prepare-test-cases.ps1          # Validator: validates testCases, flattens scenario appsettings,
 │   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
-│   ├── prepare-test-cases.tests.ps1    # Pester suite for the validator
 │   ├── verify-deployments.ps1          # Smoke-check each deployed site (skipLoadTests=true path)
 │   ├── stop-all-app-services.ps1       # End-of-run sweep: stop all App Services in the case set
 │   └── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
@@ -400,7 +369,6 @@ locust -f locustfile.py --host https://<app-service-url>
 ```bash
 cd Terraform && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
 Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
-Invoke-Pester -Path ./scripts/prepare-test-cases.tests.ps1
 ```
 
 ## Azure resource tagging
@@ -422,19 +390,3 @@ Cost reports in Azure Portal can group/filter by any of these — `managed_by` s
 
 Pre-existing untagged history infra (created before this change) won't be retroactively tagged. Either re-tag manually (`az group update -n umbraco-loadtest-history-rg --set tags.project=umbraco-loadtest tags.managed_by=bootstrap-script`) or recreate the RG.
 
-## Security posture
-
-This is **test-only infrastructure**. Resources auto-delete after the validation window. That said, the deployed App Services are public during the test:
-
-- `https_only = true` on every App Service (forces TLS).
-- FTPS basic auth + WebDeploy basic auth disabled.
-- `client_affinity_enabled = false` — load tests round-robin across plan instances.
-- Umbraco unattended-install admin password is randomised per pipeline run (retrievable via `az webapp config appsettings list -n <appservice> -g <rg>` if needed for debugging).
-- SQL admin password randomised per run, satisfies Azure's "3 of 4 categories" requirement.
-- Service principal credentials flow through Terraform's `local-exec` `environment` block — not visible in process arg listings.
-
-What's **not** locked down (deliberate, called out for awareness):
-
-- App Services accept public-internet traffic (ALT engines + arbitrary discovery). For sensitive scenarios, add an `ip_restriction` block on the App Service narrowing to ALT service tags + your team's egress.
-- SQL Server's "Allow Azure services" firewall rule is open (any Azure resource in any subscription can connect with credentials). The seeded database has no real data, but consider VNet integration for production-shaped tests.
-- Anonymous test endpoints (`/umbraco/api/seederstatus/*`, `/umbraco/api/contactform/*` etc.) are exposed during the test window — by design, since load runners need them. Don't run this against an app you care about.

@@ -137,10 +137,6 @@ $attempt = 0
 $seederComplete = $false
 $seederSuccess  = $false
 
-# Bail after this many consecutive unreachable polls (counter resets on any HTTP response).
-$unreachableStreak     = 0
-$UnreachableStreakBail = 12   # ~2 min at 10s cadence
-
 Write-Host ""
 Write-Host "Waiting for data seeder to complete..." -ForegroundColor Yellow
 
@@ -153,7 +149,6 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         $response = Invoke-WebRequest -Uri $seederStatusUrl -UseBasicParsing -TimeoutSec 30 -SkipHttpErrorCheck
         $seederStatusCode = $response.StatusCode
         $responseBody = $response.Content | ConvertFrom-Json
-        $unreachableStreak = 0
 
         # Terminal-OK states: Completed, CompletedWithErrors, Skipped.
         if ($seederStatusCode -eq 200 -and $responseBody.Status -in @("Completed", "CompletedWithErrors", "Skipped")) {
@@ -182,13 +177,7 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         }
     }
     catch {
-        $unreachableStreak++
-        Write-Host "  [$attempt/$maxAttempts] Waiting for seeder endpoint... (unreachable streak: $unreachableStreak)"
-        if ($unreachableStreak -ge $UnreachableStreakBail) {
-            Write-Host ""
-            Write-Host "ERROR: Seeder endpoint not responding for $($UnreachableStreakBail * 10 / 60) consecutive minutes" -ForegroundColor Red
-            $seederComplete = $true
-        }
+        Write-Host "  [$attempt/$maxAttempts] Waiting for seeder endpoint..."
     }
 }
 

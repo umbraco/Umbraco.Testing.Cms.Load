@@ -1,4 +1,0 @@
-# Extra Python packages installed on each ALT engine alongside the test plan.
-# Locust itself is preinstalled by ALT (v2.33.2 on Python 3.9.19) — do not list it.
-# This file is uploaded via the configurationFiles section of the ALT test config.
-# Leave empty unless a scenario imports a package outside the Python stdlib + locust.

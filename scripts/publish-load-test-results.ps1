@@ -30,11 +30,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# When ResultsDir is missing (deploy failed, ALT crashed, warmup-fail short-circuit) we still
-# emit a metadata-only NDJSON row so the case shows up in history with parse_status=no_results_dir.
-$resultsDirExists = Test-Path $ResultsDir
-if (-not $resultsDirExists) {
-    Write-Warning "Results dir '$ResultsDir' not found - emitting metadata-only record."
+if (-not (Test-Path $ResultsDir)) {
+    Write-Warning "Results dir '$ResultsDir' not found - nothing to publish."
+    exit 0
 }
 
 # Carried into every row so cross-run queries don't need joins.
@@ -60,12 +58,10 @@ $metadata = [ordered]@{
 # ALT output filenames vary; try a few patterns and take the first match.
 $candidates = @("*_stats.csv", "stats.csv", "results.csv", "clientResults*.csv")
 $statsFile = $null
-if ($resultsDirExists) {
-    foreach ($pattern in $candidates) {
-        $statsFile = Get-ChildItem -Path $ResultsDir -Recurse -Filter $pattern -File -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($statsFile) { break }
-    }
+foreach ($pattern in $candidates) {
+    $statsFile = Get-ChildItem -Path $ResultsDir -Recurse -Filter $pattern -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($statsFile) { break }
 }
 
 $rows = @()
@@ -82,7 +78,6 @@ if ($statsFile) {
 
         $merged = [ordered]@{}
         foreach ($k in $metadata.Keys) { $merged[$k] = $metadata[$k] }
-        $merged.parse_status     = 'ok'
         $merged.scenario_name    = $name
         $merged.request_type     = $row.Type
         $merged.request_count    = $reqCount
@@ -105,13 +100,9 @@ else {
     Write-Warning "No Locust stats CSV found under '$ResultsDir' - emitting metadata-only record."
 }
 
-# Always emit at least the metadata so the run is searchable. parse_status separates a true zero-load
-# result from a result whose CSV never showed up, or whose results dir never materialized.
+# Always emit at least the metadata so the run is searchable.
 if ($rows.Count -eq 0) {
-    $fallback = [ordered]@{}
-    foreach ($k in $metadata.Keys) { $fallback[$k] = $metadata[$k] }
-    $fallback.parse_status = if (-not $resultsDirExists) { 'no_results_dir' } else { 'no_metrics' }
-    $rows = @([pscustomobject]$fallback)
+    $rows = @([pscustomobject]$metadata)
 }
 
 # Parse with InvariantCulture so the date partition stays consistent on any agent locale.
@@ -121,12 +112,7 @@ $testCaseIdSafe = ($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Tr
 if ([string]::IsNullOrWhiteSpace($testCaseIdSafe)) { $testCaseIdSafe = 'unknown' }
 
 $blobPrefix  = "runs/$datePart/$BuildId/$testCaseIdSafe"
-# Write to ResultsDir if it exists, otherwise to temp (Out-File would fail on a missing parent).
-$summaryFile = if ($resultsDirExists) {
-    Join-Path $ResultsDir "summary.ndjson"
-} else {
-    Join-Path ([System.IO.Path]::GetTempPath()) "summary-$testCaseIdSafe-$BuildId.ndjson"
-}
+$summaryFile = Join-Path $ResultsDir "summary.ndjson"
 
 $rows | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 5 } |
     Out-File -FilePath $summaryFile -Encoding utf8
@@ -143,15 +129,13 @@ az storage blob upload `
     --name "$blobPrefix/summary.ndjson" `
     --overwrite | Out-Null
 
-# Raw artifacts kept for analyses that need fields the summary doesn't surface. Skipped when no results dir.
-if ($resultsDirExists) {
-    az storage blob upload-batch `
-        --account-name $StorageAccountName --account-key $storageKey `
-        --destination $ContainerName `
-        --destination-path "$blobPrefix/raw" `
-        --source $ResultsDir `
-        --pattern "*" `
-        --overwrite | Out-Null
-}
+# Raw artifacts kept for analyses that need fields the summary doesn't surface.
+az storage blob upload-batch `
+    --account-name $StorageAccountName --account-key $storageKey `
+    --destination $ContainerName `
+    --destination-path "$blobPrefix/raw" `
+    --source $ResultsDir `
+    --pattern "*" `
+    --overwrite | Out-Null
 
-Write-Host "Published $($rows.Count) record(s)$(if ($resultsDirExists) { ' + raw artifacts' } else { ' (metadata-only - no results dir)' })."
+Write-Host "Published $($rows.Count) record(s) + raw artifacts."

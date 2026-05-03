@@ -170,9 +170,7 @@ foreach ($case in $cases) {
 
     # Match scenario folder case-strictly so a local 'default' doesn't pass while the folder is 'Default/'.
     if ($scenarioFolders -cnotcontains $case.scenario) {
-        $suggestions = @($scenarioFolders | Where-Object { $_ -ieq $case.scenario })
-        $hint = if ($suggestions.Count -gt 0) { " Did you mean '$($suggestions -join "', '")'? (case-sensitive)" } else { '' }
-        Fail "case ${caseIndex}: scenario folder not found: loadtests/scenarios/$($case.scenario).$hint"
+        Fail "case ${caseIndex}: scenario folder not found: loadtests/scenarios/$($case.scenario)"
     }
     $scenarioDir = Join-Path $scenariosRoot $case.scenario
     $appSettingsFile = Join-Path $scenarioDir 'AdditionalSetup/appsettings.json'
