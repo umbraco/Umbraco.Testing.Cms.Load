@@ -103,7 +103,9 @@ parameters:
       - 240
 
 variables:
-  # Variable group `umbraco-loadtest-history` provides historyStorageAccount.
+  # Variable group `umbraco-loadtest-history` provides all history* variables:
+  # historyResourceGroup, historyLocation, historyLoadTestName,
+  # historyStorageAccount, historyContainer.
   - group: umbraco-loadtest-history
 
   - name: serviceConnection
@@ -112,18 +114,6 @@ variables:
     value: '${{ parameters.prefix }}-rg'
   - name: terraformWorkingDirectory
     value: '$(System.DefaultWorkingDirectory)/Terraform'
-
-  # Long-lived "history" infra - never deleted by the pipeline. Holds the shared ALT
-  # resource and the NDJSON storage account. Override any of these in the variable
-  # group above if multiple teams share the subscription.
-  - name: historyResourceGroup
-    value: 'umbraco-loadtest-history-rg'
-  - name: historyLocation
-    value: 'West Europe'
-  - name: historyLoadTestName
-    value: 'umbraco-loadtest-runs'
-  - name: historyContainer
-    value: 'results'
 
 stages:
   - stage: validateTestCases
