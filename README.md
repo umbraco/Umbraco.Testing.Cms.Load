@@ -61,7 +61,6 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 
 ```
 ├── azure-pipeline.yml           # Main load test pipeline (manual queue)
-├── quality-gates.yml            # PR-triggered lint + tests pipeline
 ├── README.md
 │
 ├── templates/
@@ -396,16 +395,13 @@ locust -f locustfile.py --host https://<app-service-url>
 - Ensure Umbraco template version matches CMS version
 - Pre-release versions require NuGet sources (automatically configured)
 
-## Quality gates
+## Local checks before queueing
 
-A separate `quality-gates.yml` pipeline runs on every PR. It does NOT touch Azure — costs zero. Four jobs:
-
-- `terraformFmt` — `terraform fmt -check -recursive` blocks malformatted HCL.
-- `terraformValidate` — schema check.
-- `powershellLint` — PSScriptAnalyzer at Warning+Error level (excluding `PSAvoidUsingWriteHost`).
-- `pesterTests` — `Invoke-Pester` over `scripts/prepare-test-cases.tests.ps1`.
-
-Run any of these locally before pushing.
+```bash
+cd Terraform && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
+Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+Invoke-Pester -Path ./scripts/prepare-test-cases.tests.ps1
+```
 
 ## Azure resource tagging
 
