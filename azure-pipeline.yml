@@ -364,6 +364,9 @@ stages:
         steps:
           - task: PowerShell@2
             displayName: Print summary
+            env:
+              RESOLVED_TEST_CASES: $(resolvedTestCases)
+              SKIP_LOAD_TESTS: ${{ parameters.skipLoadTests }}
             inputs:
               targetType: 'inline'
               script: |
@@ -381,17 +384,19 @@ stages:
                 Write-Host "  Seeder preset:  ${{ parameters.seederPreset }}"
                 Write-Host ""
                 Write-Host "Test cases:"
-                ${{ each case in parameters.testCases }}:
-                  ${{ each tier in case.tiers }}:
-                    Write-Host "  - ${{ case.umbraco }} (${{ case.dotnet }}) [${{ tier }}/${{ case.scenario }}]"
+                $cases = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
+                foreach ($prop in $cases.PSObject.Properties) {
+                  Write-Host "  - $($prop.Value.label)"
+                }
                 Write-Host ""
-                ${{ if eq(parameters.skipLoadTests, true) }}:
+                if ($env:SKIP_LOAD_TESTS -eq 'True') {
                   Write-Host "Load tests SKIPPED (skipLoadTests=true) - see verifyDeployments job for smoke results."
-                ${{ if eq(parameters.skipLoadTests, false) }}:
+                } else {
                   Write-Host "Results available in:"
                   Write-Host "  - Azure Load Testing portal"
                   Write-Host "  - Pipeline artifacts (loadtest-results-*)"
                   Write-Host "  - History storage NDJSON (rows tagged with infra_tier + scenario)"
+                }
                 Write-Host "=============================================="
 
       - job: checkResourceGroupForCleanup
