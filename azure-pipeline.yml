@@ -109,7 +109,7 @@ variables:
   - group: umbraco-loadtest-history
 
   - name: serviceConnection
-    value: 'terraform-umbraco-load-testing-az-serviceconnection'
+    value: 'terraform-umbraco-load-testing-az-connection'
   - name: azureResourceGroup
     value: '${{ parameters.prefix }}-rg'
   - name: terraformWorkingDirectory
