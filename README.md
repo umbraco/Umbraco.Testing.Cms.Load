@@ -379,7 +379,7 @@ Every provisioned resource carries:
 |---|---|---|
 | `project` | All | `umbraco-loadtest` |
 | `managed_by` | Ephemeral resources | `terraform` |
-| `managed_by` | Long-lived history infra | `bootstrap-script` |
+| `managed_by` | Long-lived history infra | `ensure-script` |
 | `build_id` | Ephemeral resources | `$(Build.BuildId)` from the pipeline (or `local` for hand runs) |
 | `tier` | App Service Plan | The tier name (`Starter` / `Standard` / `Pro`) |
 | `test_case_id` | App Service, SQL Server, SQL DB | The full testCaseId |
@@ -388,5 +388,5 @@ Every provisioned resource carries:
 
 Cost reports in Azure Portal can group/filter by any of these — `managed_by` separates the per-run ephemeral spend from the long-lived history infra.
 
-Pre-existing untagged history infra (created before this change) won't be retroactively tagged. Either re-tag manually (`az group update -n umbraco-loadtest-history-rg --set tags.project=umbraco-loadtest tags.managed_by=bootstrap-script`) or recreate the RG.
+Pre-existing untagged history infra (created before this change) won't be retroactively tagged. Either re-tag manually (`az group update -n umbraco-loadtest-history-rg --set tags.project=umbraco-loadtest tags.managed_by=ensure-script`) or recreate the RG.
 

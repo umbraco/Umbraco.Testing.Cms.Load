@@ -1,7 +1,5 @@
 # Idempotently ensure the long-lived "history" infra exists: RG, ALT, storage, container.
 # First run creates; subsequent runs no-op. Account-key auth avoids RBAC propagation delays.
-# The `managed_by=bootstrap-script` tag value is kept (not renamed to ensure-script) so
-# pre-rename resources stay attributed under the same value in cost reports.
 
 [CmdletBinding()]
 param(
@@ -27,7 +25,7 @@ Override the variable with a globally-unique 3-24 lowercase alphanumeric value, 
 az extension add --name load --upgrade --only-show-errors | Out-Null
 
 # Tags applied to every long-lived resource. managed_by distinguishes long-lived from ephemeral RGs.
-$tags = @("project=umbraco-loadtest", "managed_by=bootstrap-script")
+$tags = @("project=umbraco-loadtest", "managed_by=ensure-script")
 
 Write-Host "=== Ensuring history infrastructure ==="
 Write-Host "  RG:         $HistoryResourceGroup"
