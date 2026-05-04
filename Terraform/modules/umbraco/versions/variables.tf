@@ -56,32 +56,6 @@ variable "admin_password" {
   sensitive   = true
 }
 
-variable "client_id" {
-  type        = string
-  description = "Azure Service Principal client ID"
-  sensitive   = true
-}
-
-variable "client_secret" {
-  type        = string
-  description = "Azure Service Principal client secret (client-secret auth)"
-  default     = ""
-  sensitive   = true
-}
-
-variable "client_oidc_token" {
-  type        = string
-  description = "OIDC federated identity token (WIF auth)"
-  default     = ""
-  sensitive   = true
-}
-
-variable "tenant_id" {
-  type        = string
-  description = "Azure tenant ID"
-  sensitive   = true
-}
-
 variable "sql_sku" {
   type        = string
   description = "SQL Database SKU"

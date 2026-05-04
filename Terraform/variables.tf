@@ -19,34 +19,6 @@ variable "resource_group_name" {
   description = "Name of the Azure resource group"
 }
 
-variable "client_id" {
-  type        = string
-  description = "Azure Service Principal client ID"
-  default     = "empty"
-  sensitive   = true
-}
-
-variable "client_secret" {
-  type        = string
-  description = "Azure Service Principal client secret (client-secret auth)"
-  default     = ""
-  sensitive   = true
-}
-
-variable "client_oidc_token" {
-  type        = string
-  description = "OIDC federated identity token (WIF auth). Empty when using client-secret auth."
-  default     = ""
-  sensitive   = true
-}
-
-variable "tenant_id" {
-  type        = string
-  description = "Azure tenant ID"
-  default     = "empty"
-  sensitive   = true
-}
-
 variable "test_cases" {
   type = map(object({
     dotnet_version       = string

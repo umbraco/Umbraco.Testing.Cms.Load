@@ -33,32 +33,6 @@ variable "test_cases" {
   description = "Map of test cases keyed by '{umbraco}__{tier}__{scenario}'."
 }
 
-variable "client_id" {
-  type        = string
-  description = "Azure Service Principal client ID"
-  sensitive   = true
-}
-
-variable "client_secret" {
-  type        = string
-  description = "Azure Service Principal client secret (client-secret auth)"
-  default     = ""
-  sensitive   = true
-}
-
-variable "client_oidc_token" {
-  type        = string
-  description = "OIDC federated identity token (WIF auth)"
-  default     = ""
-  sensitive   = true
-}
-
-variable "tenant_id" {
-  type        = string
-  description = "Azure tenant ID"
-  sensitive   = true
-}
-
 variable "seeder_preset" {
   type        = string
   description = "Data seeder preset (Small, Medium, Large, Massive)"
