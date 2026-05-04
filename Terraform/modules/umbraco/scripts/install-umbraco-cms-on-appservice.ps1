@@ -61,12 +61,11 @@ try {
 
     Set-Location -LiteralPath $nameToApp
 
-    # Add the test data seeder package; major aligns with the Umbraco major.
-    # Floating version `17.*` + `--prerelease` doesn't reliably resolve prereleases;
-    # use `17.*-*` (explicit "any prerelease in the 17.x range") instead.
-    $majorVersion = [int]($UmbracoVersion -split '\.')[0]
-    Write-Host "Adding Umbraco.Cms.TestDataSeeder package for Umbraco $majorVersion..."
-    dotnet add package Umbraco.Cms.TestDataSeeder --version "$majorVersion.*-*"
+    # Add the test data seeder package. Pinned to a specific prerelease for now —
+    # bump this when a new prerelease/stable ships. Once 17.x has a stable release,
+    # switch to floating `17.*` and drop --prerelease.
+    Write-Host "Adding Umbraco.Cms.TestDataSeeder package..."
+    dotnet add package Umbraco.Cms.TestDataSeeder --version "17.0.0-beta.1"
     if ($LASTEXITCODE -ne 0) {
         Write-Error "dotnet add package Umbraco.Cms.TestDataSeeder failed (exit $LASTEXITCODE)."
         exit 1
