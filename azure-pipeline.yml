@@ -63,7 +63,7 @@ parameters:
       - 600
 
   - name: engineInstances
-    displayName: ALT engine instances
+    displayName: Azure Load Testing engine instances
     type: number
     default: 1
     values:
@@ -142,7 +142,7 @@ stages:
     dependsOn: validateTestCases
     jobs:
       - job: ensure
-        displayName: Ensure history RG, ALT, storage
+        displayName: Ensure history RG, Azure Load Testing, storage
         steps:
           - task: AzureCLI@2
             displayName: Ensure history infra
@@ -317,7 +317,7 @@ stages:
         displayName: Run Load Tests
         dependsOn: apply
         condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'False'))
-        # Each case: warm-up (~5 min) + ALT test (configurable up to 600s) + publish.
+        # Each case: warm-up (~5 min) + load test (configurable up to 600s) + publish.
         # Sequential per-case execution; budget for a 21-case full matrix.
         timeoutInMinutes: 720
         variables:

@@ -42,7 +42,7 @@ resource "azurerm_service_plan" "appserviceplan" {
   tags                = merge(local.common_tags, { tier = each.key })
 }
 
-# ALT resource lives in a long-lived RG (see scripts/ensure-history-infra.ps1).
+# Azure Load Testing resource lives in a long-lived RG (see scripts/ensure-history-infra.ps1).
 
 module "versions" {
   for_each = var.test_cases

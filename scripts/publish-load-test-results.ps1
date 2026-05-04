@@ -1,6 +1,6 @@
-# Publish ALT results to history storage:
+# Publish load test results to history storage:
 #   {scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/summary.ndjson  (one row per Locust task)
-#   {scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/raw/...         (full ALT artifact dump)
+#   {scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/raw/...         (full load test artifact dump)
 #
 # Scenario is top-level because it defines what's *comparable*: different scenarios
 # hit different endpoints / seed different data, so their numbers can't be compared.
@@ -59,7 +59,7 @@ $metadata = [ordered]@{
     cold_start       = [bool]::Parse($ColdStart)
 }
 
-# ALT output filenames vary; try a few patterns and take the first match.
+# Locust output filenames vary; try a few patterns and take the first match.
 $candidates = @("*_stats.csv", "stats.csv", "results.csv", "clientResults*.csv")
 $statsFile = $null
 foreach ($pattern in $candidates) {

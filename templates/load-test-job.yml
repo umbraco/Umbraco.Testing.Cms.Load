@@ -1,4 +1,4 @@
-# Per-case load test step group: hydrate -> start -> warm-up -> ALT run -> publish.
+# Per-case load test step group: read terraform outputs -> start -> warm-up -> load test -> publish.
 
 parameters:
   - name: serviceConnection
@@ -34,7 +34,7 @@ parameters:
 
 steps:
   - task: PowerShell@2
-    displayName: 'Hydrate case [${{ parameters.testCaseId }}]'
+    displayName: 'Read terraform outputs [${{ parameters.testCaseId }}]'
     env:
       # Env vars sidestep $(var) quote escaping.
       RESOLVED_TEST_CASES: $(resolvedTestCases)
@@ -54,10 +54,11 @@ steps:
 
         Write-Host "##vso[task.setvariable variable=hostName]$($tfOut.hostname)"
         Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
+        Write-Host "##vso[task.setvariable variable=appServicePlanId]$($tfOut.app_service_plan_id)"
         Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
         Write-Host "##vso[task.setvariable variable=sqlSku]$($tfOut.sql_sku)"
-        Write-Host "##vso[task.setvariable variable=sqlServerName]$($tfOut.sql_server_name)"
-        Write-Host "##vso[task.setvariable variable=sqlServerResourceId]$($tfOut.sql_server_resource_id)"
+        Write-Host "##vso[task.setvariable variable=sqlDatabaseName]$($tfOut.sql_database_name)"
+        Write-Host "##vso[task.setvariable variable=sqlDatabaseId]$($tfOut.sql_database_id)"
         Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
         Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
@@ -123,14 +124,14 @@ steps:
               Start-Sleep -Seconds 5
           }
           if (-not $ready) {
-              # Fail so the load-test step is skipped; ALT against an unready app gives misleading metrics.
+              # Fail so the load-test step is skipped; running against an unready app gives misleading metrics.
               Write-Host "##vso[task.logissue type=error]App did not respond 200 within 5 minutes - skipping load test for this case"
               exit 1
           }
 
-  # ALT config is per-case so runs stay distinguishable in the portal.
+  # Load test config is per-case so runs stay distinguishable in the portal.
   - task: AzureCLI@2
-    displayName: 'Generate ALT config [${{ parameters.testCaseId }}]'
+    displayName: 'Generate load test config [${{ parameters.testCaseId }}]'
     condition: and(succeeded(), ne(variables['hostName'], ''))
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
@@ -142,15 +143,35 @@ steps:
         $resourceGroup = "${{ parameters.resourceGroupName }}"
         $appServiceResourceId = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.Web/sites/$appServiceName"
 
-        # SQL identity comes from terraform outputs hydrated above.
-        $sqlServerResourceId = "$(sqlServerResourceId)"
-        $sqlServerName       = "$(sqlServerName)"
+        # App Service Plan + SQL Database resourceIds, read above.
+        # CpuPercentage/MemoryPercentage live on the Plan (Microsoft.Web/serverfarms),
+        # not on the site (Microsoft.Web/sites) - so we register the plan as its own
+        # appComponent. SQL metrics scope to the database, not the server.
+        $appServicePlanId    = "$(appServicePlanId)"
+        $sqlDatabaseId       = "$(sqlDatabaseId)"
+        $sqlDatabaseName     = "$(sqlDatabaseName)"
+
+        $planComponent = ""
+        if ($appServicePlanId) {
+        $planComponent = @"
+          - resourceId: "$appServicePlanId"
+            resourceName: "$appServiceName-plan"
+            kind: "app"
+            metrics:
+              - name: CpuPercentage
+                namespace: Microsoft.Web/serverfarms
+                aggregation: Average
+              - name: MemoryPercentage
+                namespace: Microsoft.Web/serverfarms
+                aggregation: Average
+        "@
+        }
 
         $sqlComponent = ""
-        if ($sqlServerResourceId) {
+        if ($sqlDatabaseId) {
         $sqlComponent = @"
-          - resourceId: "$sqlServerResourceId"
-            resourceName: "$sqlServerName"
+          - resourceId: "$sqlDatabaseId"
+            resourceName: "$sqlDatabaseName"
             kind: "v12.0"
             metrics:
               - name: dtu_consumption_percent
@@ -174,9 +195,9 @@ steps:
         "@
         }
 
-        # testId scopes the ALT "Compare runs" view: one ALT test per scenario, with
-        # every (version, tier) run nested under it so the portal lets you select
-        # multiple to overlay. ALT testId pattern is ^[a-z0-9_-]{2,50}$.
+        # testId scopes the Azure Load Testing "Compare runs" view: one load test per
+        # scenario, with every (version, tier) run nested under it so the portal lets
+        # you select multiple to overlay. testId pattern is ^[a-z0-9_-]{2,50}$.
         $rawScenario = '${{ parameters.scenario }}'.ToLowerInvariant()
         $scenarioSafe = (($rawScenario -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
         $testId = "umbraco-lt-$scenarioSafe"
@@ -197,7 +218,7 @@ steps:
         engineInstances: ${{ parameters.engineInstances }}
         configurationFiles:
           - loadtests/locust.conf
-        # Append scenario modules here when added so ALT uploads them too.
+        # Append scenario modules here when added so Azure Load Testing uploads them too.
         failureCriteria:
           - avg(response_time_ms) > 2000
           - p95(response_time_ms) > 5000
@@ -219,12 +240,6 @@ steps:
             resourceName: "$appServiceName"
             kind: "app"
             metrics:
-              - name: CpuPercentage
-                namespace: Microsoft.Web/sites
-                aggregation: Average
-              - name: MemoryPercentage
-                namespace: Microsoft.Web/sites
-                aggregation: Average
               - name: HttpResponseTime
                 namespace: Microsoft.Web/sites
                 aggregation: Average
@@ -237,15 +252,17 @@ steps:
               - name: Http4xx
                 namespace: Microsoft.Web/sites
                 aggregation: Total
+        $planComponent
         $sqlComponent
         "@
 
         $configPath = "$(System.DefaultWorkingDirectory)/loadtest-config-$safeKey.yaml"
         $config | Out-File -FilePath $configPath -Encoding utf8
         Write-Host "##vso[task.setvariable variable=loadTestConfigPath]$configPath"
-        Write-Host "Generated ALT config at: $configPath"
-        Write-Host "App Service: $appServiceResourceId"
-        if ($sqlServerResourceId) { Write-Host "SQL Server: $sqlServerResourceId" }
+        Write-Host "Generated load test config at: $configPath"
+        Write-Host "App Service:      $appServiceResourceId"
+        if ($appServicePlanId) { Write-Host "App Service Plan: $appServicePlanId" }
+        if ($sqlDatabaseId)    { Write-Host "SQL Database:     $sqlDatabaseId" }
 
   # continueOnError: an SLO breach here is meaningful data, not a reason to skip the rest.
   # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.

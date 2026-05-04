@@ -37,7 +37,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 │   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
 │
 ├── scripts/
-│   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, ALT, storage
+│   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, Azure Load Testing, storage
 │   ├── prepare-test-cases.ps1          # Validator: validates testCases, flattens scenario appsettings,
 │   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
 │   ├── verify-deployments.ps1          # Smoke-check each deployed site (skipLoadTests=true path)
@@ -47,7 +47,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 ├── loadtests/
 │   ├── locustfile.py            # Test plan — currently a homepage smoke-test scaffold
 │   ├── locust.conf              # Local development config
-│   ├── requirements.txt         # Extra Python packages installed on ALT engines
+│   ├── requirements.txt         # Extra Python packages installed on Azure Load Testing engines
 │   ├── tiers.json               # Tier catalog (Starter / Standard / Pro → SKUs)
 │   └── scenarios/
 │       └── Default/
@@ -87,7 +87,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 | `userAmount` | Default virtual users per case (scenarios may override) | 100 | 50, 100, 150, 200, 250, 300 |
 | `spawnRate` | Default users spawned/sec during ramp-up | 10 | 5, 10, 20, 50 |
 | `testDuration` | Default steady-state duration (seconds) | 300 | 60, 120, 180, 300, 600 |
-| `engineInstances` | ALT engine VMs (scale for high user counts) | 1 | 1, 2, 4 |
+| `engineInstances` | Azure Load Testing engine VMs (scale for high user counts) | 1 | 1, 2, 4 |
 | `coldStart` | Skip warmup (test cache warm-up behaviour) | false | true, false |
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `seederPreset` | Data seeding volume | Medium | Small, Medium, Large, Massive |
@@ -240,7 +240,7 @@ loadProfile:                                                  # optional whole b
   duration:  600    # overrides pipeline.testDuration  when present
 ```
 
-All fields optional. A missing `scenario.yaml` (or an empty `loadProfile` block) means the case uses the queue-time pipeline-level defaults. The override resolution happens once in the validator — every downstream consumer (Terraform, ALT, NDJSON publisher) sees the resolved values, not the override logic.
+All fields optional. A missing `scenario.yaml` (or an empty `loadProfile` block) means the case uses the queue-time pipeline-level defaults. The override resolution happens once in the validator — every downstream consumer (Terraform, Azure Load Testing, NDJSON publisher) sees the resolved values, not the override logic.
 
 ### Adding a new scenario
 
@@ -255,7 +255,7 @@ That's it. No HCL or pipeline edits needed.
 Azure Load Testing controls the load pattern:
 - **Ramp-up**: Users are spawned at the resolved spawn rate
 - **Steady-state**: All virtual users active for the resolved duration
-- **Ramp-down**: Handled by ALT when the test duration expires
+- **Ramp-down**: Handled by Azure Load Testing when the test duration expires
 
 ### Cold Start Testing
 
@@ -265,7 +265,7 @@ Set `coldStart: true` to skip the warmup poll. The load test then hits a freshly
 
 The pipeline writes results to three places:
 
-- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The ALT resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one ALT test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} #{buildId}`.
+- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The Azure Load Testing resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one load test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} #{buildId}`.
 - **Pipeline artifacts**: per-case ZIP under `loadtest-results-{sanitised-testCaseId}` on the build, useful for forensic deep-dives. Expires with the pipeline's build retention policy.
 - **History storage account** (long-lived): per-case NDJSON summary at `{scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/summary.ndjson` plus the raw artifact dump under `raw/`. Scenario is top-level because it defines what's *comparable* — different scenarios hit different endpoints / seed different data, so their numbers can't be compared directly. Within a scenario, prefix-listing maps to the natural pivots: `Default/17/` trends a major, `Default/17/17.0.0/` is all tiers in one build, `Default/17/*/Starter/` sweeps versions on one tier. Each row carries the full run metadata (commit, version, tier, scenario, SKUs, seeder preset, user count), so cross-run queries don't need joins.
 
@@ -286,12 +286,12 @@ The long-lived RG is provisioned idempotently at the start of every pipeline run
 
 ```
 0. validateTestCases            -> Validate testCases, read scenario folders, resolve load profile
-1. ensureHistoryInfra           -> Idempotent: shared ALT + storage
+1. ensureHistoryInfra           -> Idempotent: shared Azure Load Testing + storage
 2. Check Resource Group         -> Does it already exist?
 3. Terraform Setup              -> Init + Validate + Plan
 4. Terraform Apply              -> Provision App Service Plans (one per tier), per-case App Services + SQL DBs
 5. Verify Deployments           -> Smoke-check each site (only when skipLoadTests=true)
-6. Run Load Tests               -> Sequential per-case Locust tests (on ALT infra)
+6. Run Load Tests               -> Sequential per-case Locust tests (on Azure Load Testing infra)
 7. Test Summary                 -> Print run-level + per-case config
 8. Manual Validation            -> Configurable window to keep resources (default 60 min)
 9. Cleanup                      -> Delete resource group if rejected/cancelled/expired

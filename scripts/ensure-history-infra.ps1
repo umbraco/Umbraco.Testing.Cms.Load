@@ -1,4 +1,4 @@
-# Idempotently ensure the long-lived "history" infra exists: RG, ALT, storage, container.
+# Idempotently ensure the long-lived "history" infra exists: RG, Azure Load Testing, storage, container.
 # First run creates; subsequent runs no-op. Account-key auth avoids RBAC propagation delays.
 
 [CmdletBinding()]
