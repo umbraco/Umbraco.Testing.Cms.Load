@@ -174,21 +174,26 @@ steps:
         "@
         }
 
-        # ALT testId is ^[a-z0-9_-]{2,50}$. With prefix "umbraco-lt-" (11 chars), safeKey caps at 39.
+        # testId scopes the ALT "Compare runs" view: one ALT test per scenario, with
+        # every (version, tier) run nested under it so the portal lets you select
+        # multiple to overlay. ALT testId pattern is ^[a-z0-9_-]{2,50}$.
+        $rawScenario = '${{ parameters.scenario }}'.ToLowerInvariant()
+        $scenarioSafe = (($rawScenario -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
+        $testId = "umbraco-lt-$scenarioSafe"
+
+        # safeTestCaseId still identifies this specific case for the build artifact + config file.
         $rawKey = '${{ parameters.testCaseId }}'.ToLowerInvariant()
-        $safeKey = ($rawKey -replace '[^a-z0-9]', '-') -replace '-+', '-'
-        $safeKey = $safeKey.Trim('-')
-        if ($safeKey.Length -gt 39) { $safeKey = $safeKey.Substring(0, 39) }
-        $testId = "umbraco-lt-$safeKey"
+        $safeKey = (($rawKey -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
+        if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
         Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
 
         $config = @"
         version: v0.1
         testId: $testId
-        displayName: Umbraco $(testCaseLabel)
+        displayName: Umbraco load test - ${{ parameters.scenario }}
         testPlan: loadtests/locustfile.py
         testType: Locust
-        description: Locust load test for $(testCaseLabel)
+        description: Holds all version/tier runs for the '${{ parameters.scenario }}' scenario; pick runs in 'Compare' to overlay.
         engineInstances: ${{ parameters.engineInstances }}
         configurationFiles:
           - loadtests/locust.conf
@@ -253,7 +258,8 @@ steps:
       loadTestConfigFile: '$(loadTestConfigPath)'
       resourceGroup: '${{ parameters.historyResourceGroup }}'
       loadTestResource: '${{ parameters.historyLoadTestName }}'
-      loadTestRunName: 'Umbraco ${{ parameters.umbracoVersion }} [${{ parameters.tier }}/${{ parameters.scenario }}] - $(Build.SourceBranchName)@$(Build.SourceVersion) - run $(Build.BuildId)'
+      # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
+      loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} #$(Build.BuildId)'
       loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on ${{ parameters.dotnetVersion }} [${{ parameters.tier }}/${{ parameters.scenario }}], ${{ parameters.seederPreset }} preset, $(userAmount) users for $(testDuration)s'
 
   - task: PublishBuildArtifacts@1

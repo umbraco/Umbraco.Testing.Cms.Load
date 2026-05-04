@@ -1,6 +1,10 @@
 # Publish ALT results to history storage:
-#   runs/{yyyy/MM/dd}/{buildId}/{testCaseIdSafe}/summary.ndjson  (one row per scenario)
-#   runs/{yyyy/MM/dd}/{buildId}/{testCaseIdSafe}/raw/...         (full ALT artifact dump)
+#   {scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/summary.ndjson  (one row per Locust task)
+#   {scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/raw/...         (full ALT artifact dump)
+#
+# Scenario is top-level because it defines what's *comparable*: different scenarios
+# hit different endpoints / seed different data, so their numbers can't be compared.
+# Within a scenario, version and tier are the pivots you actually want to sweep.
 
 [CmdletBinding()]
 param(
@@ -105,13 +109,15 @@ if ($rows.Count -eq 0) {
     $rows = @([pscustomobject]$metadata)
 }
 
-# Parse with InvariantCulture so the date partition stays consistent on any agent locale.
+# Parse with InvariantCulture so the date stays consistent on any agent locale.
 $pipelineStarted = [DateTime]::Parse($RunStartedAt, [System.Globalization.CultureInfo]::InvariantCulture)
-$datePart        = $pipelineStarted.ToString("yyyy/MM/dd", [System.Globalization.CultureInfo]::InvariantCulture)
-$testCaseIdSafe = ($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
-if ([string]::IsNullOrWhiteSpace($testCaseIdSafe)) { $testCaseIdSafe = 'unknown' }
+$datePart        = $pipelineStarted.ToString("yyyy-MM-dd", [System.Globalization.CultureInfo]::InvariantCulture)
 
-$blobPrefix  = "runs/$datePart/$BuildId/$testCaseIdSafe"
+# Major = first dot-segment (e.g. '17' for '17.0.0' and '17.0.0-rc.1').
+$majorVersion = ($UmbracoVersion -split '\.')[0]
+if ([string]::IsNullOrWhiteSpace($majorVersion)) { $majorVersion = 'unknown' }
+
+$blobPrefix = "$Scenario/$majorVersion/$UmbracoVersion/$Tier/${datePart}_$BuildId"
 $summaryFile = Join-Path $ResultsDir "summary.ndjson"
 
 $rows | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 5 } |
