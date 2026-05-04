@@ -364,7 +364,8 @@ stages:
           - apply
           - verifyDeployments
           - runLoadTests
-        condition: succeededOrFailed()
+        # Only print a summary when apply succeeded; nothing useful to summarise on failure.
+        condition: succeeded('apply')
         displayName: Test Summary
         steps:
           - task: PowerShell@2
@@ -406,9 +407,12 @@ stages:
 
       - job: checkResourceGroupForCleanup
         dependsOn:
+          - apply
           - verifyDeployments
           - runLoadTests
           - testSummary
+        # apply in dependsOn ensures the cleanup chain still fires on apply-failure
+        # (apply Failed is a definite state; verify/runLoadTests/testSummary would be Skipped).
         condition: succeededOrFailed()
         displayName: Check resource group for cleanup
         steps:
