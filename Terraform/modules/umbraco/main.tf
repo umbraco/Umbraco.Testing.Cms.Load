@@ -31,15 +31,6 @@ resource "random_password" "admin_password" {
   min_numeric = 1
 }
 
-# Umbraco unattended-install admin password. Retrievable via `az webapp config appsettings list`.
-resource "random_password" "unattended_admin" {
-  length      = 16
-  special     = false
-  min_upper   = 1
-  min_lower   = 1
-  min_numeric = 1
-}
-
 # One plan per tier in use; same-tier cases share it (only one app hot at a time).
 resource "azurerm_service_plan" "appserviceplan" {
   for_each            = local.tiers_in_use
@@ -72,8 +63,6 @@ module "versions" {
   admin_password  = random_password.admin_password.result
   sql_sku         = var.tier_specs[each.value.tier].sql_sku
   sql_max_size_gb = var.tier_specs[each.value.tier].sql_max_size_gb
-
-  unattended_admin_password = random_password.unattended_admin.result
 
   seeder_preset = var.seeder_preset
   common_tags   = local.common_tags

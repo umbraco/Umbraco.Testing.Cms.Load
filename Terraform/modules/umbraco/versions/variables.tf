@@ -56,12 +56,6 @@ variable "admin_password" {
   sensitive   = true
 }
 
-variable "unattended_admin_password" {
-  type        = string
-  description = "Umbraco unattended-install admin password (test-only, randomised per run)"
-  sensitive   = true
-}
-
 variable "client_id" {
   type        = string
   description = "Azure Service Principal client ID"

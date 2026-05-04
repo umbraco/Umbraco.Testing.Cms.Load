@@ -83,10 +83,11 @@ resource "azurerm_windows_web_app" "app_service" {
       "Umbraco.Core.LocalTempStorage"          = "EnvironmentTemp"
       "Umbraco.Examine.LuceneDirectoryFactory" = "Examine.LuceneEngine.Directories.SyncTempEnvDirectoryFactory, Examine"
 
-      "Umbraco__CMS__Unattended__InstallUnattended"      = "true"
-      "Umbraco__CMS__Unattended__UnattendedUserName"     = "Load Test Admin"
-      "Umbraco__CMS__Unattended__UnattendedUserEmail"    = "loadtest@example.invalid"
-      "Umbraco__CMS__Unattended__UnattendedUserPassword" = var.unattended_admin_password
+      "Umbraco__CMS__Unattended__InstallUnattended"   = "true"
+      "Umbraco__CMS__Unattended__UnattendedUserName"  = "Load Test Admin"
+      "Umbraco__CMS__Unattended__UnattendedUserEmail" = "loadtest@example.invalid"
+      # Hardcoded so anyone on the team can log into the backoffice with known creds.
+      "Umbraco__CMS__Unattended__UnattendedUserPassword" = "LoadTest123!"
 
       "SCM_DO_BUILD_DURING_DEPLOYMENT"             = "true"
       "Serilog__MinimumLevel__Override__Microsoft" = "Information"
