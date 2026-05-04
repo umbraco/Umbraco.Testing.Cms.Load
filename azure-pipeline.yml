@@ -291,7 +291,7 @@ stages:
               targetType: 'inline'
               workingDirectory: '$(terraformWorkingDirectory)'
               script: |
-                Remove-Item .terraform terraform.tfstate* -Recurse -Force -ErrorAction SilentlyContinue
+                Remove-Item .terraform, terraform.tfstate* -Recurse -Force -ErrorAction SilentlyContinue
 
       # Smoke check, only when skipLoadTests=true. Load tests do their own warm-up.
       - job: verifyDeployments
