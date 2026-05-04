@@ -66,11 +66,6 @@ try {
     Write-Host "Adding Umbraco.Cms.TestDataSeeder package for Umbraco $majorVersion..."
     dotnet add package Umbraco.Cms.TestDataSeeder --version "$majorVersion.*" --prerelease
 
-    # Add the Clean starter kit so the homepage has real templates + sample content to render.
-    # NuGet picks the latest version compatible with the Umbraco major.
-    Write-Host "Adding Clean starter kit..."
-    dotnet add package clean
-
     # Copy scenario code overlay (everything except appsettings.json) into the project tree.
     $additionalSetupCandidate = Join-Path $terraformCwd "../loadtests/scenarios/$Scenario/AdditionalSetup"
     $resolvedAdditional = $null
