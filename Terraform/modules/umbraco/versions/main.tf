@@ -126,9 +126,11 @@ resource "null_resource" "deploy_umbraco" {
 
   provisioner "local-exec" {
     # SP credentials flow via env vars so they don't appear in process listings.
+    # Either ARM_CLIENT_SECRET (client-secret auth) or ARM_OIDC_TOKEN (WIF) is non-empty.
     environment = {
       ARM_CLIENT_ID     = var.client_id
       ARM_CLIENT_SECRET = var.client_secret
+      ARM_OIDC_TOKEN    = var.client_oidc_token
       ARM_TENANT_ID     = var.tenant_id
     }
     command     = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\""

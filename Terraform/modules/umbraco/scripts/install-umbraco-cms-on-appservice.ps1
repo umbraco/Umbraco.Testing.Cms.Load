@@ -10,12 +10,18 @@ param (
 
 $ErrorActionPreference = "Stop"
 
-# SP credentials come from terraform local-exec env vars; check they're set.
-foreach ($name in @('ARM_CLIENT_ID', 'ARM_CLIENT_SECRET', 'ARM_TENANT_ID')) {
+# SP credentials come from terraform local-exec env vars. ARM_CLIENT_ID + ARM_TENANT_ID
+# are always required; either ARM_CLIENT_SECRET (client-secret auth) or ARM_OIDC_TOKEN
+# (WIF) must be set.
+foreach ($name in @('ARM_CLIENT_ID', 'ARM_TENANT_ID')) {
     if (-not [Environment]::GetEnvironmentVariable($name)) {
         Write-Error "Required env var $name is not set."
         exit 1
     }
+}
+if (-not $env:ARM_CLIENT_SECRET -and -not $env:ARM_OIDC_TOKEN) {
+    Write-Error "Either ARM_CLIENT_SECRET (client-secret auth) or ARM_OIDC_TOKEN (WIF) must be set."
+    exit 1
 }
 
 # Capture cwd before Set-Location so finally{} can restore it.
@@ -111,9 +117,13 @@ try {
     Write-Host "Creating deployment package..."
     Compress-Archive -Path $pathToApp/publish/* -DestinationPath $pathToApp/publish.zip -Force
 
-    # Log in to Azure using service principal credentials.
+    # Log in to Azure. WIF (federated token) takes priority over client-secret auth.
     Write-Host "Authenticating to Azure..."
-    az login --service-principal --username $env:ARM_CLIENT_ID --password $env:ARM_CLIENT_SECRET --tenant $env:ARM_TENANT_ID | Out-Null
+    if ($env:ARM_OIDC_TOKEN) {
+        az login --service-principal --username $env:ARM_CLIENT_ID --tenant $env:ARM_TENANT_ID --federated-token $env:ARM_OIDC_TOKEN | Out-Null
+    } else {
+        az login --service-principal --username $env:ARM_CLIENT_ID --password $env:ARM_CLIENT_SECRET --tenant $env:ARM_TENANT_ID | Out-Null
+    }
 
     # Deploy the Umbraco CMS to the app service.
     Write-Host "Deploying to App Service: $AppServiceName..."

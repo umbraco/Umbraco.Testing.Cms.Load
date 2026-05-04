@@ -245,21 +245,26 @@ stages:
               azureSubscription: '$(serviceConnection)'
               scriptType: bash
               scriptLocation: inlineScript
-              # issecret=true masks the values in pipeline logs.
+              # Under WIF, $idToken is set and $servicePrincipalKey is empty.
+              # Under client-secret auth, the opposite. issecret=true masks all.
               inlineScript: |
                 echo "##vso[task.setvariable variable=ARM_CLIENT_ID;issecret=true]$servicePrincipalId"
-                echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;issecret=true]$servicePrincipalKey"
                 echo "##vso[task.setvariable variable=ARM_TENANT_ID;issecret=true]$tenantId"
+                echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;issecret=true]$servicePrincipalKey"
+                echo "##vso[task.setvariable variable=ARM_OIDC_TOKEN;issecret=true]$idToken"
               addSpnToEnvironment: true
 
           - task: TerraformTaskV4@4
             displayName: Terraform Apply
             # SP credentials flow via TF_VAR_* env vars (not -var=) so they don't appear
             # in the commandOptions string AzDO logs at task start.
+            # Both client_secret and oidc_token are passed; the install script picks
+            # whichever is non-empty (secret for client-secret auth, token for WIF).
             env:
-              TF_VAR_client_id:     $(ARM_CLIENT_ID)
-              TF_VAR_client_secret: $(ARM_CLIENT_SECRET)
-              TF_VAR_tenant_id:     $(ARM_TENANT_ID)
+              TF_VAR_client_id:        $(ARM_CLIENT_ID)
+              TF_VAR_client_secret:    $(ARM_CLIENT_SECRET)
+              TF_VAR_tenant_id:        $(ARM_TENANT_ID)
+              TF_VAR_client_oidc_token: $(ARM_OIDC_TOKEN)
             inputs:
               provider: 'azurerm'
               command: 'apply'

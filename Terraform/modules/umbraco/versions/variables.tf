@@ -70,7 +70,15 @@ variable "client_id" {
 
 variable "client_secret" {
   type        = string
-  description = "Azure Service Principal client secret"
+  description = "Azure Service Principal client secret (client-secret auth)"
+  default     = ""
+  sensitive   = true
+}
+
+variable "client_oidc_token" {
+  type        = string
+  description = "OIDC federated identity token (WIF auth)"
+  default     = ""
   sensitive   = true
 }
 

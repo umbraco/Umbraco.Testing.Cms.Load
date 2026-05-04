@@ -40,7 +40,8 @@ module "umbraco" {
 
   build_id = var.build_id
 
-  client_id     = var.client_id
-  client_secret = var.client_secret
-  tenant_id     = var.tenant_id
+  client_id         = var.client_id
+  client_secret     = var.client_secret
+  client_oidc_token = var.client_oidc_token
+  tenant_id         = var.tenant_id
 }
