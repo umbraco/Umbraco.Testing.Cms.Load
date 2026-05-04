@@ -124,7 +124,7 @@ stages:
         steps:
           - task: PowerShell@2
             name: out
-            displayName: Run prepare-test-cases.ps1
+            displayName: Validate + resolve scenario overrides
             env:
               # Pass via env var; convertToJson() emits chars unsafe for arg quoting.
               TEST_CASES_JSON: ${{ convertToJson(parameters.testCases) }}
