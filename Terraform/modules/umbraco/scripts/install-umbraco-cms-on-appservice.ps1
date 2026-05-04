@@ -62,9 +62,15 @@ try {
     Set-Location -LiteralPath $nameToApp
 
     # Add the test data seeder package; major aligns with the Umbraco major.
+    # Floating version `17.*` + `--prerelease` doesn't reliably resolve prereleases;
+    # use `17.*-*` (explicit "any prerelease in the 17.x range") instead.
     $majorVersion = [int]($UmbracoVersion -split '\.')[0]
     Write-Host "Adding Umbraco.Cms.TestDataSeeder package for Umbraco $majorVersion..."
-    dotnet add package Umbraco.Cms.TestDataSeeder --version "$majorVersion.*" --prerelease
+    dotnet add package Umbraco.Cms.TestDataSeeder --version "$majorVersion.*-*"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "dotnet add package Umbraco.Cms.TestDataSeeder failed (exit $LASTEXITCODE)."
+        exit 1
+    }
 
     # Copy scenario code overlay (everything except appsettings.json) into the project tree.
     $additionalSetupCandidate = Join-Path $terraformCwd "../loadtests/scenarios/$Scenario/AdditionalSetup"
