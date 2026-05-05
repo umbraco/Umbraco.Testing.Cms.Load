@@ -293,7 +293,7 @@ steps:
 
   # Export to long-lived history storage for cross-run comparison.
   # continueOnError: a storage publish failure shouldn't fail the pipeline (the run
-  # data is already in ALT and the build artifact); investigate via the step log.
+  # data is already in Azure Load Testing and the build artifact); investigate via the step log.
   - task: AzureCLI@2
     displayName: 'Publish to history [${{ parameters.testCaseId }}]'
     condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
