@@ -1,15 +1,22 @@
 """
-Workload that mirrors a realistic CMS browsing pattern.
+Workload that exercises a realistic-ish CMS browsing pattern + a small
+write path. Designed for *relative* comparison across Umbraco versions
+and Azure SQL tiers, not as an absolute capacity benchmark.
 
-On test start, fetches the seeder's inventory endpoint, buckets the URLs by
-content type, and stashes the result on the locust environment. Tasks pick
-a random URL from their bucket. Weights skew toward deep reads (Detail
-pages) because that's where SQL pressure surfaces — homepage hits are
-absorbed by output cache and don't differentiate tiers.
+On test start, fetches the seeder's inventory endpoint, buckets the URLs
+by content type, and stashes the result on the locust environment. Tasks
+pick a random URL from their bucket. Weights skew toward deep reads
+(Detail pages) because that's where SQL pressure surfaces — homepage
+hits are absorbed by output cache and don't differentiate tiers.
 
 If the inventory endpoint is unreachable (seeder didn't run, scenario
 overlay disabled it), every task falls back to the homepage so the run
 still produces stats — just without the differentiating signal.
+
+PACING NOTE: wait_time = between(1, 3) is aggressive (~30 req/s per VU).
+Real human browsing is 5–30 s between clicks. So 100 VUs ≈ 500–1500 real
+visitors in load-equivalent — fine for relative tier/version comparison,
+misleading if you read absolute VU counts as concurrent humans.
 """
 
 import logging
@@ -95,3 +102,21 @@ class CmsBrowsingUser(FastHttpUser):
     @task(5)
     def media(self):
         self._hit("media", "Media")
+
+    @task(3)
+    def submit_contact_form(self):
+        # Write path: exercises SQL inserts (Umbraco creates a content node per
+        # submission). Anonymous JSON endpoint, no anti-forgery token required —
+        # the seeder's form-submit endpoint enforces it but submit (JSON) doesn't.
+        # Lengths stay well under the [StringLength] caps on ContactFormRequest.
+        payload = {
+            "name": "LoadTest VU",
+            "email": "loadtest@example.com",
+            "subject": "Locust submission",
+            "message": "Auto-generated submission from the Umbraco load-test locustfile.",
+        }
+        self.client.post(
+            "/umbraco/api/contactform/submit",
+            json=payload,
+            name="ContactFormSubmit",
+        )
