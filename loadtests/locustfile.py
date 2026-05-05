@@ -103,12 +103,14 @@ class CmsBrowsingUser(FastHttpUser):
     def media(self):
         self._hit("media", "Media")
 
-    @task(3)
+    @task(8)
     def submit_contact_form(self):
-        # Write path: exercises SQL inserts (Umbraco creates a content node per
-        # submission). Anonymous JSON endpoint, no anti-forgery token required —
-        # the seeder's form-submit endpoint enforces it but submit (JSON) doesn't.
-        # Lengths stay well under the [StringLength] caps on ContactFormRequest.
+        # Write path: each call → an Umbraco content node creation → ~10-15 SQL
+        # inserts (content + version + culture variations + 4 property values).
+        # Weight 8 of total ~113 ≈ 7% of traffic — within the realistic 5-15%
+        # write share for CMS production traffic. Anonymous JSON endpoint, no
+        # anti-forgery token required (the form-encoded form-submit endpoint
+        # enforces it; the JSON submit endpoint doesn't).
         payload = {
             "name": "LoadTest VU",
             "email": "loadtest@example.com",
