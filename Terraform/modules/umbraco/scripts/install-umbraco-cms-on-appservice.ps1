@@ -65,7 +65,7 @@ try {
     # bump this when a new prerelease/stable ships. Once 17.x has a stable release,
     # switch to floating `17.*` and drop --prerelease.
     Write-Host "Adding Umbraco.Cms.TestDataSeeder package..."
-    dotnet add package Umbraco.Cms.TestDataSeeder --version "17.0.0-beta.1"
+    dotnet add package Umbraco.Cms.TestDataSeeder --version "17.0.0-beta.2"
     if ($LASTEXITCODE -ne 0) {
         Write-Error "dotnet add package Umbraco.Cms.TestDataSeeder failed (exit $LASTEXITCODE)."
         exit 1
