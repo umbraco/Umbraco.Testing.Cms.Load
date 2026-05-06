@@ -13,8 +13,6 @@ parameters:
     type: string
   - name: umbracoVersion
     type: string
-  - name: dotnetVersion
-    type: string
   - name: coldStart
     type: boolean
     default: false
@@ -275,7 +273,7 @@ steps:
       loadTestResource: '${{ parameters.historyLoadTestName }}'
       # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
       loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} #$(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on ${{ parameters.dotnetVersion }} [${{ parameters.tier }}/${{ parameters.scenario }}], $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
+      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
 
   # Pipeline artifact: per-build, expires with build retention. continueOnError so a
   # blob upload hiccup doesn't lose the rest of the run; history publish below is the
@@ -311,7 +309,7 @@ steps:
         -Branch "$(Build.SourceBranchName)"
         -RunStartedAt "$(System.PipelineStartTime)"
         -UmbracoVersion "${{ parameters.umbracoVersion }}"
-        -DotNetVersion "${{ parameters.dotnetVersion }}"
+        -DotNetVersion "$(resolvedDotnetVersion)"
         -AppServiceSku "$(appServiceSku)"
         -SqlSku "$(sqlSku)"
         -SeederPreset "$(resolvedSeederPreset)"

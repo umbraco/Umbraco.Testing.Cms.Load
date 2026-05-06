@@ -78,27 +78,36 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 
 ### Pipeline Parameters
 
-The queue UI is a small set of dropdowns. The headline parameter is **profile**, which encodes "what kind of test do you want to run" — picking a profile sets the tier list, seeder preset, VU count, duration, and engine count in one shot.
+The queue UI splits into three concerns: **what to test**, **which tiers to test it on**, and **how hard to test**. Each lives on its own knob so you can mix freely (e.g. "stress profile against Standard only" or "smoke profile against all three tiers").
 
 **What to test:**
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `profile` | Run profile — encodes tier list, seeder preset, VUs, duration, engines (see table below) | smoke | smoke, compare-tiers, full-comparison, stress |
-| `umbracoVersion` | Umbraco CMS version | 17.0.0 | extend the `values` list as new versions ship |
-| `dotnetVersion` | .NET runtime version | v10.0 | extend the `values` list as new .NET versions ship |
+| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator enforces v17+ and a recognisable `X.Y.Z[-suffix]` shape; the major segment maps to the .NET runtime automatically. | 17.0.0 | free text |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
 
-**Profiles:**
+**Which tiers:**
 
-| Profile | Tiers | Seeder preset | VUs | Spawn rate | Duration | Engines |
-|---|---|---|---|---|---|---|
-| `smoke` | Starter | Small | 50 | 10/s | 60s | 1 |
-| `compare-tiers` | Starter, Standard | Medium | 100 | 10/s | 300s | 1 |
-| `full-comparison` | Starter, Standard, Pro | Medium | 100 | 10/s | 300s | 1 |
-| `stress` | Pro | Large | 300 | 50/s | 600s | 2 |
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `runStarter` | Run the Starter (S1) tier | true |
+| `runStandard` | Run the Standard (S2) tier | false |
+| `runPro` | Run the Pro (S3) tier | false |
 
-Adding or tuning a profile is a two-place edit in `azure-pipeline.yml`: extend the inline `switch` in the "Resolve profile + validate scenario" step (sets the tuple), **and** update the three `${{ if in(parameters.profile, …) }}` blocks in the `runLoadTests` job that decide which tiers the new profile expands into. The compile-time conditionals can't read the runtime resolver output, so both edits are required — miss the second and the pipeline silently runs zero load tests.
+At least one tier must be selected — the validator fails the run if all three are unchecked.
+
+**Load profile (intensity):**
+
+| Profile | Seeder preset | VUs | Spawn rate | Duration | Engines |
+|---|---|---|---|---|---|
+| `smoke` | Small | 50 | 10/s | 60s | 1 |
+| `standard` | Medium | 100 | 10/s | 300s | 1 |
+| `stress` | Large | 300 | 50/s | 600s | 2 |
+
+The profile only encodes load intensity — the same profile can drive any combination of tiers. Tuning a profile is a single-place edit to the inline `switch` in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step.
+
+**.NET runtime is derived, not selected.** The prep step maps the Umbraco major version → required .NET runtime (currently 14→.NET 8, 15/16→.NET 9, 17+→.NET 10). Update the mapping when Umbraco bumps target framework.
 
 **For multi-version comparisons in a single queue** (e.g. 17.0.0 vs 17.0.1 on the same tier): queue the pipeline twice — once per version. The ALT Compare runs view aggregates across pipeline runs anyway (testId is per-scenario, not per-pipeline-run), so two queues end up in the same comparison view.
 

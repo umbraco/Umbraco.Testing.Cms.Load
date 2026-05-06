@@ -8,29 +8,13 @@ pool:
 parameters:
   # === What to test ===
 
-  - name: profile
-    displayName: Run profile (encodes tiers, seeder preset, VU count, duration, engines)
-    type: string
-    default: 'smoke'
-    values:
-      - 'smoke'           # Starter only,                Small,  50 VUs,  60s, 1 engine
-      - 'compare-tiers'   # Starter + Standard,          Medium, 100 VUs, 300s, 1 engine
-      - 'full-comparison' # Starter + Standard + Pro,    Medium, 100 VUs, 300s, 1 engine
-      - 'stress'          # Pro only,                    Large,  300 VUs, 600s, 2 engines
-
+  # Free-text input so prereleases (17.0.0-rc.1, 17.0.0-beta.2 etc.) work without
+  # editing the YAML each time. The validator enforces v17+ and a recognisable
+  # X.Y.Z[-suffix] shape; downstream the major segment maps to the .NET runtime.
   - name: umbracoVersion
-    displayName: Umbraco version
+    displayName: Umbraco version (e.g. 17.0.0, 17.0.1-rc.1, 17.1.0-beta.2)
     type: string
     default: '17.0.0'
-    values:
-      - '17.0.0'
-
-  - name: dotnetVersion
-    displayName: .NET runtime version
-    type: string
-    default: 'v10.0'
-    values:
-      - 'v10.0'
 
   - name: scenario
     displayName: Scenario (must match a folder under loadtests/scenarios/)
@@ -38,6 +22,35 @@ parameters:
     default: 'Default'
     values:
       - 'Default'
+
+  - name: runStarter
+    displayName: Run Starter tier
+    type: boolean
+    default: true
+
+  - name: runStandard
+    displayName: Run Standard tier
+    type: boolean
+    default: false
+
+  - name: runPro
+    displayName: Run Pro tier
+    type: boolean
+    default: false
+
+  # === How hard to test ===
+
+  # Encodes load intensity only (preset, VUs, spawn rate, duration, engines).
+  # Tier selection is independent — the runStarter/runStandard/runPro checkboxes
+  # above pick which tiers each profile gets exercised against.
+  - name: profile
+    displayName: Load profile (intensity)
+    type: string
+    default: 'standard'
+    values:
+      - 'smoke'      # Small,  50 VUs,  60s, 1 engine  -- quick "does it work" probe
+      - 'standard'   # Medium, 100 VUs, 300s, 1 engine -- typical comparison run
+      - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
 
   # === Run configuration ===
 
@@ -104,49 +117,69 @@ stages:
             env:
               PROFILE: ${{ parameters.profile }}
               UMBRACO_VERSION: ${{ parameters.umbracoVersion }}
-              DOTNET_VERSION: ${{ parameters.dotnetVersion }}
               SCENARIO: ${{ parameters.scenario }}
+              RUN_STARTER: ${{ parameters.runStarter }}
+              RUN_STANDARD: ${{ parameters.runStandard }}
+              RUN_PRO: ${{ parameters.runPro }}
             inputs:
               targetType: 'inline'
               script: |
-                # Map the queue-time profile to a (tiers, preset, users, spawn,
-                # duration, engines) tuple. Each profile encodes a coherent test
-                # intent so the queue UX is a single dropdown rather than seven
-                # independent knobs the user has to reason about.
+                # Build the tier list from the three checkboxes. Profile is independent
+                # and only encodes load intensity (preset/users/spawn/duration/engines),
+                # so the same profile can drive any combination of tiers.
+                $tiers = @()
+                if ($env:RUN_STARTER  -eq 'True') { $tiers += 'Starter' }
+                if ($env:RUN_STANDARD -eq 'True') { $tiers += 'Standard' }
+                if ($env:RUN_PRO      -eq 'True') { $tiers += 'Pro' }
+                if ($tiers.Count -eq 0) {
+                    Write-Error "At least one tier must be selected (runStarter / runStandard / runPro)."
+                    exit 1
+                }
+
+                # Map the load profile to a (preset, users, spawn, duration, engines) tuple.
                 switch ($env:PROFILE) {
-                    'smoke' {
-                        $tiers = @('Starter');                          $preset = 'Small'
-                        $users = 50;  $spawn = 10; $duration = 60;      $engines = 1
-                    }
-                    'compare-tiers' {
-                        $tiers = @('Starter', 'Standard');              $preset = 'Medium'
-                        $users = 100; $spawn = 10; $duration = 300;     $engines = 1
-                    }
-                    'full-comparison' {
-                        $tiers = @('Starter', 'Standard', 'Pro');       $preset = 'Medium'
-                        $users = 100; $spawn = 10; $duration = 300;     $engines = 1
-                    }
-                    'stress' {
-                        $tiers = @('Pro');                              $preset = 'Large'
-                        $users = 300; $spawn = 50; $duration = 600;     $engines = 2
-                    }
+                    'smoke'    { $preset = 'Small';  $users = 50;  $spawn = 10; $duration = 60;  $engines = 1 }
+                    'standard' { $preset = 'Medium'; $users = 100; $spawn = 10; $duration = 300; $engines = 1 }
+                    'stress'   { $preset = 'Large';  $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
                     default {
-                        Write-Error "Unknown profile '$env:PROFILE'. Valid: smoke, compare-tiers, full-comparison, stress."
+                        Write-Error "Unknown profile '$env:PROFILE'. Valid: smoke, standard, stress."
                         exit 1
                     }
                 }
 
-                Write-Host "Profile '$env:PROFILE' -> tiers=$($tiers -join ',') preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
+                # Derive the .NET runtime from the Umbraco major version. Keeps the queue
+                # UX simpler (you don't pick .NET separately when it's a function of the
+                # CMS version anyway). Update the table when Umbraco bumps target framework.
+                $umbracoMajorRaw = ($env:UMBRACO_VERSION -split '\.')[0]
+                $umbracoMajor = 0
+                if (-not [int]::TryParse($umbracoMajorRaw, [ref]$umbracoMajor)) {
+                    Write-Error "Cannot parse Umbraco major from '$env:UMBRACO_VERSION' (expected X.Y.Z[-suffix])."
+                    exit 1
+                }
+                $dotnetVersion = switch ($umbracoMajor) {
+                    14      { 'v8.0' }
+                    { $_ -in 15, 16 } { 'v9.0' }
+                    { $_ -ge 17 }     { 'v10.0' }
+                    default {
+                        Write-Error "Umbraco $env:UMBRACO_VERSION is unsupported (this pipeline targets v14+)."
+                        exit 1
+                    }
+                }
+
+                Write-Host "Tiers:           $($tiers -join ', ')"
+                Write-Host "Profile '$env:PROFILE': preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
+                Write-Host "Umbraco $env:UMBRACO_VERSION (major $umbracoMajor) -> .NET $dotnetVersion"
 
                 $testCases = @(@{
                     umbraco  = $env:UMBRACO_VERSION
-                    dotnet   = $env:DOTNET_VERSION
+                    dotnet   = $dotnetVersion
                     scenario = $env:SCENARIO
                     tiers    = $tiers
                 })
                 $env:TEST_CASES_JSON = ($testCases | ConvertTo-Json -Compress -Depth 5)
 
                 # Surface profile-derived config to downstream stages via output vars.
+                Write-Host "##vso[task.setvariable variable=resolvedDotnetVersion;isOutput=true]$dotnetVersion"
                 Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$preset"
                 Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
                 Write-Host "##vso[task.setvariable variable=resolvedUserAmount;isOutput=true]$users"
@@ -189,6 +222,7 @@ stages:
     variables:
       testCasesJson:           $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
       resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
       resolvedUserAmount:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
@@ -350,11 +384,12 @@ stages:
         variables:
           testCaseOutputs: $[ dependencies.apply.outputs['outputVars.testCaseOutputs'] ]
         steps:
-          # Tier expansion based on profile. Each tier runs in the profiles where
-          # its inclusion makes sense (smoke = Starter only; compare-tiers = Starter+Standard;
-          # full-comparison = all three; stress = Pro only). Keep testCaseId format
-          # in sync with the runtime construction in prepare-test-cases.ps1.
-          - ${{ if in(parameters.profile, 'smoke', 'compare-tiers', 'full-comparison') }}:
+          # Tier expansion driven by the runStarter/runStandard/runPro checkboxes.
+          # Profile is independent and only sets load intensity (resolved via the
+          # runtime variables resolvedSeederPreset / resolvedEngineInstances etc.).
+          # Keep testCaseId format in sync with the runtime construction in
+          # prepare-test-cases.ps1.
+          - ${{ if eq(parameters.runStarter, true) }}:
             - template: templates/load-test-job.yml
               parameters:
                 serviceConnection: '$(serviceConnection)'
@@ -363,13 +398,12 @@ stages:
                 tier: 'Starter'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
-                dotnetVersion: '${{ parameters.dotnetVersion }}'
                 coldStart: ${{ parameters.coldStart }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
-          - ${{ if in(parameters.profile, 'compare-tiers', 'full-comparison') }}:
+          - ${{ if eq(parameters.runStandard, true) }}:
             - template: templates/load-test-job.yml
               parameters:
                 serviceConnection: '$(serviceConnection)'
@@ -378,13 +412,12 @@ stages:
                 tier: 'Standard'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
-                dotnetVersion: '${{ parameters.dotnetVersion }}'
                 coldStart: ${{ parameters.coldStart }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
-          - ${{ if in(parameters.profile, 'full-comparison', 'stress') }}:
+          - ${{ if eq(parameters.runPro, true) }}:
             - template: templates/load-test-job.yml
               parameters:
                 serviceConnection: '$(serviceConnection)'
@@ -393,7 +426,6 @@ stages:
                 tier: 'Pro'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
-                dotnetVersion: '${{ parameters.dotnetVersion }}'
                 coldStart: ${{ parameters.coldStart }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
