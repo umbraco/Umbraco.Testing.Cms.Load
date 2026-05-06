@@ -118,7 +118,9 @@ $majorVersion = ($UmbracoVersion -split '\.')[0]
 if ([string]::IsNullOrWhiteSpace($majorVersion)) { $majorVersion = 'unknown' }
 
 $blobPrefix = "$Scenario/$majorVersion/$UmbracoVersion/$Tier/${datePart}_$BuildId"
-$summaryFile = Join-Path $ResultsDir "summary.ndjson"
+# Write the summary OUTSIDE $ResultsDir so the upload-batch below (which uploads
+# everything in $ResultsDir to /raw) doesn't end up duplicating it under raw/.
+$summaryFile = Join-Path (Split-Path -Parent $ResultsDir) "summary.ndjson"
 
 $rows | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 5 } |
     Out-File -FilePath $summaryFile -Encoding utf8

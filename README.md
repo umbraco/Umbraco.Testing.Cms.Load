@@ -25,7 +25,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
   - Service connection to Azure (`terraform-umbraco-load-testing-az-connection`)
   - Override of `historyStorageAccount` in pipeline variables (the default `loadtestchangeme` is an obvious placeholder that fails name-availability check; replace with your own globally-unique 3–24 lowercase alphanumeric value)
 - Terraform >= 1.3.9
-- PowerShell Core (pwsh) 7+ (Pester 5+ ships preinstalled)
+- PowerShell Core (pwsh) 7+
 
 ## Project Structure
 
@@ -45,9 +45,8 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 │   └── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
 │
 ├── loadtests/
-│   ├── locustfile.py            # Test plan — currently a homepage smoke-test scaffold
+│   ├── locustfile.py            # Inventory-driven workload (CMS browsing + contact-form write path)
 │   ├── locust.conf              # Local development config
-│   ├── requirements.txt         # Extra Python packages installed on Azure Load Testing engines
 │   ├── tiers.json               # Tier catalog (Starter / Standard / Pro → SKUs)
 │   └── scenarios/
 │       └── Default/
@@ -99,7 +98,7 @@ The queue UI is a small set of dropdowns. The headline parameter is **profile**,
 | `full-comparison` | Starter, Standard, Pro | Medium | 100 | 10/s | 300s | 1 |
 | `stress` | Pro | Large | 300 | 50/s | 600s | 2 |
 
-Adding or tuning a profile is a five-line edit to the inline switch in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step.
+Adding or tuning a profile is a two-place edit in `azure-pipeline.yml`: extend the inline `switch` in the "Resolve profile + validate scenario" step (sets the tuple), **and** update the three `${{ if in(parameters.profile, …) }}` blocks in the `runLoadTests` job that decide which tiers the new profile expands into. The compile-time conditionals can't read the runtime resolver output, so both edits are required — miss the second and the pipeline silently runs zero load tests.
 
 **For multi-version comparisons in a single queue** (e.g. 17.0.0 vs 17.0.1 on the same tier): queue the pipeline twice — once per version. The ALT Compare runs view aggregates across pipeline runs anyway (testId is per-scenario, not per-pipeline-run), so two queues end up in the same comparison view.
 
@@ -113,7 +112,7 @@ Adding or tuning a profile is a five-line edit to the inline switch in `azure-pi
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 
-The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–10000, `testDuration` 10–7200, etc.).
+The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds).
 
 ## Tiers
 
@@ -370,10 +369,6 @@ locust -f locustfile.py --host https://<app-service-url>
 
 **Preflight fails with "duplicate testCaseId"**
 - You have two cases with the same `(umbraco, tier, scenario)` triple. Either remove the duplicate, or change one of the dimensions (e.g. different scenario folder).
-
-**SQL Server creation timeout**
-- The 7-minute timeout may not be enough in busy regions
-- Solution: Re-run the pipeline or increase timeout in `versions/main.tf`
 
 **Seeder not completing**
 - Large presets can take up to 60 minutes

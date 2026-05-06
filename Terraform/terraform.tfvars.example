@@ -16,14 +16,12 @@ test_cases = {
     scenario             = "Default"
     app_settings_overlay = {}
   }
-  "17.0.0__Pro__RedisCache" = {
-    dotnet_version  = "v10.0"
-    umbraco_version = "17.0.0"
-    tier            = "Pro"
-    scenario        = "RedisCache"
-    app_settings_overlay = {
-      "Umbraco__CMS__DistributedLockingMechanism" = "RedisDistributedLockingMechanism"
-    }
+  "17.0.0__Pro__Default" = {
+    dotnet_version       = "v10.0"
+    umbraco_version      = "17.0.0"
+    tier                 = "Pro"
+    scenario             = "Default"
+    app_settings_overlay = {}
   }
 }
 

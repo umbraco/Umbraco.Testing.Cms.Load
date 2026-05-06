@@ -91,6 +91,50 @@ function Read-ScenarioYaml {
     return $result
 }
 
+# Levenshtein distance; case-sensitive (chars compared by ordinal).
+# Uses a jagged array - the int[,] subscript syntax is parser-flaky across
+# PowerShell versions, jagged is portable.
+function Get-LevenshteinDistance {
+    param([string] $a, [string] $b)
+    if (-not $a) { return $b.Length }
+    if (-not $b) { return $a.Length }
+    $d = New-Object 'int[][]' ($a.Length + 1)
+    for ($i = 0; $i -le $a.Length; $i++) {
+        $d[$i] = New-Object 'int[]' ($b.Length + 1)
+        $d[$i][0] = $i
+    }
+    for ($j = 0; $j -le $b.Length; $j++) { $d[0][$j] = $j }
+    for ($i = 1; $i -le $a.Length; $i++) {
+        for ($j = 1; $j -le $b.Length; $j++) {
+            $cost = if ($a[$i - 1] -eq $b[$j - 1]) { 0 } else { 1 }
+            $d[$i][$j] = [Math]::Min(
+                [Math]::Min($d[$i - 1][$j] + 1, $d[$i][$j - 1] + 1),
+                $d[$i - 1][$j - 1] + $cost
+            )
+        }
+    }
+    return $d[$a.Length][$b.Length]
+}
+
+# Closest existing folder name to a (mistyped) scenario; $null if nothing's plausibly close.
+function Get-ClosestScenarioMatch {
+    param([string] $Needle, [string[]] $Haystack)
+    if (-not $Haystack -or $Haystack.Count -eq 0) { return $null }
+    $best = $null
+    $bestDist = [int]::MaxValue
+    foreach ($candidate in $Haystack) {
+        $dist = Get-LevenshteinDistance $Needle $candidate
+        if ($dist -lt $bestDist) {
+            $bestDist = $dist
+            $best = $candidate
+        }
+    }
+    # Suggest only when the distance looks like a typo, not a wholly different name.
+    $threshold = [Math]::Max(2, [int]($Needle.Length / 2))
+    if ($bestDist -le $threshold) { return $best }
+    return $null
+}
+
 # --- Inputs ---
 
 if ([string]::IsNullOrWhiteSpace($TestCasesJson)) {
@@ -172,7 +216,9 @@ foreach ($case in $cases) {
 
     # Match scenario folder case-strictly so a local 'default' doesn't pass while the folder is 'Default/'.
     if ($scenarioFolders -cnotcontains $case.scenario) {
-        Fail "case ${caseIndex}: scenario folder not found: loadtests/scenarios/$($case.scenario)"
+        $suggestion = Get-ClosestScenarioMatch -Needle $case.scenario -Haystack $scenarioFolders
+        $hint = if ($suggestion) { " (did you mean '$suggestion'?)" } else { '' }
+        Fail "case ${caseIndex}: scenario folder not found: loadtests/scenarios/$($case.scenario)$hint"
     }
     $scenarioDir = Join-Path $scenariosRoot $case.scenario
     $appSettingsFile = Join-Path $scenarioDir 'AdditionalSetup/appsettings.json'

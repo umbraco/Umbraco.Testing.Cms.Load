@@ -30,11 +30,6 @@ resource "azurerm_mssql_server" "sql_server" {
   administrator_login_password = var.admin_password
   minimum_tls_version          = "1.2"
   tags                         = local.case_tags
-
-  # Server creation can sometimes fail and run for 60 minutes.
-  timeouts {
-    create = "7m"
-  }
 }
 
 # Allow all Azure services to access the SQL server.

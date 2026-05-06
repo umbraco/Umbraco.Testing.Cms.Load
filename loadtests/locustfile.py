@@ -13,10 +13,11 @@ If the inventory endpoint is unreachable (seeder didn't run, scenario
 overlay disabled it), every task falls back to the homepage so the run
 still produces stats — just without the differentiating signal.
 
-PACING NOTE: wait_time = between(1, 3) is aggressive (~30 req/s per VU).
-Real human browsing is 5–30 s between clicks. So 100 VUs ≈ 500–1500 real
-visitors in load-equivalent — fine for relative tier/version comparison,
-misleading if you read absolute VU counts as concurrent humans.
+PACING NOTE: wait_time = between(1, 3) is ~0.5 req/s per VU (each task
+fires one request, then waits 1–3 s). Real human browsing is 5–30 s between
+clicks, so 100 VUs ≈ 500–1500 real visitors in load-equivalent — fine for
+relative tier/version comparison, misleading if you read absolute VU counts
+as concurrent humans.
 """
 
 import logging
