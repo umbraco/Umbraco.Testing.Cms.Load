@@ -6,12 +6,49 @@ pool:
   vmImage: 'ubuntu-latest'
 
 parameters:
-  # One entry per (version, scenario); validation expands tiers[] into N cases. See README.
-  - name: testCases
-    displayName: Test cases
-    type: object
-    default:
-      - { umbraco: '17.0.0', dotnet: 'v10.0', scenario: 'Default', tiers: ['Starter', 'Standard', 'Pro'] }
+  # === What to test ===
+  # The four params below are decomposed from the original testCases object so the
+  # queue UI is dropdowns + checkboxes instead of a JSON textbox. The validate stage
+  # builds the testCases JSON internally before handing it to prepare-test-cases.ps1
+  # (which still works against the original schema).
+
+  - name: umbracoVersion
+    displayName: Umbraco version
+    type: string
+    default: '17.0.0'
+    values:
+      - '17.0.0'
+
+  - name: dotnetVersion
+    displayName: .NET runtime version
+    type: string
+    default: 'v10.0'
+    values:
+      - 'v10.0'
+
+  - name: scenario
+    displayName: Scenario (must match a folder under loadtests/scenarios/)
+    type: string
+    default: 'Default'
+    values:
+      - 'Default'
+
+  - name: runStarter
+    displayName: Run Starter tier
+    type: boolean
+    default: true
+
+  - name: runStandard
+    displayName: Run Standard tier
+    type: boolean
+    default: false
+
+  - name: runPro
+    displayName: Run Pro tier
+    type: boolean
+    default: false
+
+  # === Run configuration ===
 
   - name: azureRegion
     displayName: Azure region
@@ -126,16 +163,40 @@ stages:
             name: out
             displayName: Validate + resolve scenario overrides
             env:
-              # Pass via env var; convertToJson() emits chars unsafe for arg quoting.
-              TEST_CASES_JSON: ${{ convertToJson(parameters.testCases) }}
+              UMBRACO_VERSION: ${{ parameters.umbracoVersion }}
+              DOTNET_VERSION: ${{ parameters.dotnetVersion }}
+              SCENARIO: ${{ parameters.scenario }}
+              RUN_STARTER: ${{ parameters.runStarter }}
+              RUN_STANDARD: ${{ parameters.runStandard }}
+              RUN_PRO: ${{ parameters.runPro }}
             inputs:
-              targetType: 'filePath'
-              filePath: '$(System.DefaultWorkingDirectory)/scripts/prepare-test-cases.ps1'
-              arguments: >
-                -UserAmount ${{ parameters.userAmount }}
-                -SpawnRate ${{ parameters.spawnRate }}
-                -TestDuration ${{ parameters.testDuration }}
-                -WorkspaceRoot "$(System.DefaultWorkingDirectory)"
+              targetType: 'inline'
+              script: |
+                # Build the testCases JSON from the decomposed queue params, then
+                # delegate to prepare-test-cases.ps1 which still validates and
+                # resolves against the original schema.
+                $tiers = @()
+                if ($env:RUN_STARTER  -eq 'True') { $tiers += 'Starter' }
+                if ($env:RUN_STANDARD -eq 'True') { $tiers += 'Standard' }
+                if ($env:RUN_PRO      -eq 'True') { $tiers += 'Pro' }
+                if ($tiers.Count -eq 0) {
+                    Write-Error "At least one tier must be selected (runStarter / runStandard / runPro)."
+                    exit 1
+                }
+
+                $testCases = @(@{
+                    umbraco  = $env:UMBRACO_VERSION
+                    dotnet   = $env:DOTNET_VERSION
+                    scenario = $env:SCENARIO
+                    tiers    = $tiers
+                })
+                $env:TEST_CASES_JSON = ($testCases | ConvertTo-Json -Compress -Depth 5)
+
+                & "$(System.DefaultWorkingDirectory)/scripts/prepare-test-cases.ps1" `
+                    -UserAmount ${{ parameters.userAmount }} `
+                    -SpawnRate ${{ parameters.spawnRate }} `
+                    -TestDuration ${{ parameters.testDuration }} `
+                    -WorkspaceRoot "$(System.DefaultWorkingDirectory)"
 
   - stage: ensureHistoryInfra
     displayName: Ensure history infrastructure
@@ -323,26 +384,59 @@ stages:
         variables:
           testCaseOutputs: $[ dependencies.apply.outputs['outputVars.testCaseOutputs'] ]
         steps:
-          # Compile-time expansion: one template invocation per (case x tier).
+          # Compile-time expansion: one template invocation per selected tier.
           # Keep testCaseId format in sync with the runtime construction in prepare-test-cases.ps1.
-          - ${{ each case in parameters.testCases }}:
-            - ${{ each tier in case.tiers }}:
-              - template: templates/load-test-job.yml
-                parameters:
-                  serviceConnection: '$(serviceConnection)'
-                  resourceGroupName: '$(azureResourceGroup)'
-                  testCaseId: '${{ case.umbraco }}__${{ tier }}__${{ case.scenario }}'
-                  tier: '${{ tier }}'
-                  scenario: '${{ case.scenario }}'
-                  umbracoVersion: '${{ case.umbraco }}'
-                  dotnetVersion: '${{ case.dotnet }}'
-                  engineInstances: ${{ parameters.engineInstances }}
-                  coldStart: ${{ parameters.coldStart }}
-                  historyResourceGroup: '$(historyResourceGroup)'
-                  historyLoadTestName: '$(historyLoadTestName)'
-                  historyStorageAccount: '$(historyStorageAccount)'
-                  historyContainer: '$(historyContainer)'
-                  seederPreset: '${{ parameters.seederPreset }}'
+          - ${{ if eq(parameters.runStarter, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                serviceConnection: '$(serviceConnection)'
+                resourceGroupName: '$(azureResourceGroup)'
+                testCaseId: '${{ parameters.umbracoVersion }}__Starter__${{ parameters.scenario }}'
+                tier: 'Starter'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                dotnetVersion: '${{ parameters.dotnetVersion }}'
+                engineInstances: ${{ parameters.engineInstances }}
+                coldStart: ${{ parameters.coldStart }}
+                historyResourceGroup: '$(historyResourceGroup)'
+                historyLoadTestName: '$(historyLoadTestName)'
+                historyStorageAccount: '$(historyStorageAccount)'
+                historyContainer: '$(historyContainer)'
+                seederPreset: '${{ parameters.seederPreset }}'
+          - ${{ if eq(parameters.runStandard, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                serviceConnection: '$(serviceConnection)'
+                resourceGroupName: '$(azureResourceGroup)'
+                testCaseId: '${{ parameters.umbracoVersion }}__Standard__${{ parameters.scenario }}'
+                tier: 'Standard'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                dotnetVersion: '${{ parameters.dotnetVersion }}'
+                engineInstances: ${{ parameters.engineInstances }}
+                coldStart: ${{ parameters.coldStart }}
+                historyResourceGroup: '$(historyResourceGroup)'
+                historyLoadTestName: '$(historyLoadTestName)'
+                historyStorageAccount: '$(historyStorageAccount)'
+                historyContainer: '$(historyContainer)'
+                seederPreset: '${{ parameters.seederPreset }}'
+          - ${{ if eq(parameters.runPro, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                serviceConnection: '$(serviceConnection)'
+                resourceGroupName: '$(azureResourceGroup)'
+                testCaseId: '${{ parameters.umbracoVersion }}__Pro__${{ parameters.scenario }}'
+                tier: 'Pro'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                dotnetVersion: '${{ parameters.dotnetVersion }}'
+                engineInstances: ${{ parameters.engineInstances }}
+                coldStart: ${{ parameters.coldStart }}
+                historyResourceGroup: '$(historyResourceGroup)'
+                historyLoadTestName: '$(historyLoadTestName)'
+                historyStorageAccount: '$(historyStorageAccount)'
+                historyContainer: '$(historyContainer)'
+                seederPreset: '${{ parameters.seederPreset }}'
 
           # Stop all apps so none run idle during the manual validation window.
           - task: AzureCLI@2

@@ -79,9 +79,27 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 
 ### Pipeline Parameters
 
+The queue UI groups parameters into **what to test** (version, scenario, tier checkboxes) and **run configuration** (load profile, infra knobs). All are dropdowns or checkboxes — no free-form JSON to remember.
+
+**What to test:**
+
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `testCases` | List of test cases (see schema below) | 1 entry × 3 tiers (`v17.0.0` × `Starter`/`Standard`/`Pro`) | object — set at queue time |
+| `umbracoVersion` | Umbraco CMS version | 17.0.0 | extend the `values` list as new versions ship |
+| `dotnetVersion` | .NET runtime version | v10.0 | extend the `values` list as new .NET versions ship |
+| `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
+| `runStarter` | Run the Starter (S1) tier | true | true / false |
+| `runStandard` | Run the Standard (S2) tier | false | true / false |
+| `runPro` | Run the Pro (S3) tier | false | true / false |
+
+The pipeline expands the selected tiers into one test case per `(version, tier, scenario)` triple, applies any per-scenario load-profile overrides, and provisions one App Service + SQL DB per case.
+
+**For multi-version comparisons in a single queue** (e.g. 17.0.0 vs 17.0.1 on the same tier): queue the pipeline twice — once per version. The ALT Compare runs view aggregates across pipeline runs anyway (testId is per-scenario, not per-pipeline-run), so two queues end up in the same comparison view.
+
+**Run configuration:**
+
+| Parameter | Description | Default | Options |
+|-----------|-------------|---------|---------|
 | `azureRegion` | Azure region | West Europe | West Europe, North Europe, East US, West US 2 |
 | `prefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
 | `userAmount` | Default virtual users per case (scenarios may override) | 100 | 50, 100, 150, 200, 250, 300 |
@@ -93,28 +111,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 | `seederPreset` | Data seeding volume | Medium | Small, Medium, Large, Massive |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 
-### testCases schema
-
-Each entry in `parameters.testCases` describes a `(version, scenario)` and the tiers to exercise it against. The validator expands one entry × N tiers into N test cases internally — so a "compare v17 across tiers" run is one entry with three tier names, not three duplicated entries.
-
-```yaml
-- umbraco:  '17.0.0'                          # Umbraco CMS version (required)
-  dotnet:   'v10.0'                           # .NET runtime version (required)
-  scenario: 'Default'                         # folder name under loadtests/scenarios/ (required)
-  tiers:    ['Starter', 'Standard', 'Pro']    # array of tier names (required, ≥1)
-```
-
-Examples:
-
-| What you want | What you write |
-|---|---|
-| 4 versions, all on Standard | 4 entries, each with `tiers: ['Standard']` |
-| v17, compared across all 3 tiers | 1 entry with `tiers: ['Starter', 'Standard', 'Pro']` |
-| Smoke + comparison | mixed entries — 1 entry per (version, scenario), tiers vary |
-
-Queue-time editing: in Azure DevOps, click **Run pipeline** → expand **Test cases** → edit the YAML inline. Add/remove/edit entries as needed.
-
-The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate post-expansion `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned.
+The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile (`userAmount` 1–10000, `testDuration` 10–7200, etc.).
 
 ## Tiers
 
