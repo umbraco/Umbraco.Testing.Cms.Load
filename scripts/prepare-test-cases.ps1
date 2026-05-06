@@ -1,5 +1,7 @@
-# Validate parameters.testCases, expand the tiers axis, flatten scenario appsettings,
-# resolve load profiles, emit two output variables for downstream stages.
+# Validate the testCases JSON (built by the pipeline from the queue-time params or
+# supplied via -TestCasesJson / TEST_CASES_JSON env var), expand the tiers axis,
+# flatten scenario appsettings, resolve load profiles, emit two output variables
+# for downstream stages.
 
 [CmdletBinding()]
 param (
