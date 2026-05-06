@@ -271,6 +271,26 @@ The pipeline writes results to three places:
 
 NDJSON is ingestible directly by Azure Data Explorer, pandas, Postgres `COPY`, etc. — pick whatever query layer fits, the data shape stays the same.
 
+### Comparing two runs
+
+For the everyday "did this tier/version actually move the needle?" question, download the raw `engine1_results.csv` from each run's pipeline artifact (or directly from the ALT portal) and feed both to `scripts/compare-runs.ps1`:
+
+```powershell
+./scripts/compare-runs.ps1 `
+    -BaselinePath  ./starter-17.0.0/engine1_results.csv `
+    -CandidatePath ./standard-17.0.0/engine1_results.csv `
+    -BaselineLabel "Starter 17.0.0" `
+    -CandidateLabel "Standard 17.0.0" `
+    -OutputPath compare.md
+```
+
+The script emits a markdown report with:
+- **Aggregate** count/avg/p50/p95/p99/max for each run + percentage delta
+- **Per-sampler** breakdown (Detail, Page, Category, etc.) ordered by traffic share, with deltas bolded when they cross the significance threshold (default 10%)
+- A "How to read this" footer explaining what the deltas actually mean (p95/p99 are the tier-discriminating metrics; max is single-sample noise; cached paths won't move regardless of tier)
+
+Use the same script for any pair of runs — version-vs-version on a fixed tier, scenario-vs-scenario, before-vs-after a code change.
+
 ### Infrastructure: ephemeral vs long-lived
 
 The pipeline manages two separate resource groups:
