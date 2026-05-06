@@ -15,9 +15,6 @@ parameters:
     type: string
   - name: dotnetVersion
     type: string
-  - name: engineInstances
-    type: number
-    default: 1
   - name: coldStart
     type: boolean
     default: false
@@ -29,8 +26,9 @@ parameters:
     type: string
   - name: historyContainer
     type: string
-  - name: seederPreset
-    type: string
+  # engineInstances and seederPreset come in as runtime variables
+  # (resolvedEngineInstances / resolvedSeederPreset) emitted by the validate
+  # stage's profile resolver. They flow through stage-level variable mappings.
 
 steps:
   - task: PowerShell@2
@@ -215,7 +213,7 @@ steps:
         testPlan: loadtests/locustfile.py
         testType: Locust
         description: Holds all version/tier runs for the '${{ parameters.scenario }}' scenario; pick runs in 'Compare' to overlay.
-        engineInstances: ${{ parameters.engineInstances }}
+        engineInstances: $(resolvedEngineInstances)
         configurationFiles:
           - loadtests/locust.conf
         # Append scenario modules here when added so Azure Load Testing uploads them too.
@@ -277,7 +275,7 @@ steps:
       loadTestResource: '${{ parameters.historyLoadTestName }}'
       # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
       loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} #$(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on ${{ parameters.dotnetVersion }} [${{ parameters.tier }}/${{ parameters.scenario }}], ${{ parameters.seederPreset }} preset, $(userAmount) users for $(testDuration)s'
+      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on ${{ parameters.dotnetVersion }} [${{ parameters.tier }}/${{ parameters.scenario }}], $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
 
   # Pipeline artifact: per-build, expires with build retention. continueOnError so a
   # blob upload hiccup doesn't lose the rest of the run; history publish below is the
@@ -316,7 +314,7 @@ steps:
         -DotNetVersion "${{ parameters.dotnetVersion }}"
         -AppServiceSku "$(appServiceSku)"
         -SqlSku "$(sqlSku)"
-        -SeederPreset "${{ parameters.seederPreset }}"
+        -SeederPreset "$(resolvedSeederPreset)"
         -Tier "${{ parameters.tier }}"
         -Scenario "${{ parameters.scenario }}"
         -UserCount $(userAmount)

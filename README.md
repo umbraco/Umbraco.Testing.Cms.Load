@@ -79,39 +79,41 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 
 ### Pipeline Parameters
 
-The queue UI groups parameters into **what to test** (version, scenario, tier checkboxes) and **run configuration** (load profile, infra knobs). All are dropdowns or checkboxes — no free-form JSON to remember.
+The queue UI is a small set of dropdowns. The headline parameter is **profile**, which encodes "what kind of test do you want to run" — picking a profile sets the tier list, seeder preset, VU count, duration, and engine count in one shot.
 
 **What to test:**
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
+| `profile` | Run profile — encodes tier list, seeder preset, VUs, duration, engines (see table below) | smoke | smoke, compare-tiers, full-comparison, stress |
 | `umbracoVersion` | Umbraco CMS version | 17.0.0 | extend the `values` list as new versions ship |
 | `dotnetVersion` | .NET runtime version | v10.0 | extend the `values` list as new .NET versions ship |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
-| `runStarter` | Run the Starter (S1) tier | true | true / false |
-| `runStandard` | Run the Standard (S2) tier | false | true / false |
-| `runPro` | Run the Pro (S3) tier | false | true / false |
 
-The pipeline expands the selected tiers into one test case per `(version, tier, scenario)` triple, applies any per-scenario load-profile overrides, and provisions one App Service + SQL DB per case.
+**Profiles:**
+
+| Profile | Tiers | Seeder preset | VUs | Spawn rate | Duration | Engines |
+|---|---|---|---|---|---|---|
+| `smoke` | Starter | Small | 50 | 10/s | 60s | 1 |
+| `compare-tiers` | Starter, Standard | Medium | 100 | 10/s | 300s | 1 |
+| `full-comparison` | Starter, Standard, Pro | Medium | 100 | 10/s | 300s | 1 |
+| `stress` | Pro | Large | 300 | 50/s | 600s | 2 |
+
+Adding or tuning a profile is a five-line edit to the inline switch in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step.
 
 **For multi-version comparisons in a single queue** (e.g. 17.0.0 vs 17.0.1 on the same tier): queue the pipeline twice — once per version. The ALT Compare runs view aggregates across pipeline runs anyway (testId is per-scenario, not per-pipeline-run), so two queues end up in the same comparison view.
 
-**Run configuration:**
+**Run configuration (orthogonal knobs):**
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
 | `azureRegion` | Azure region | West Europe | West Europe, North Europe, East US, West US 2 |
 | `prefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
-| `userAmount` | Default virtual users per case (scenarios may override) | 100 | 50, 100, 150, 200, 250, 300 |
-| `spawnRate` | Default users spawned/sec during ramp-up | 10 | 5, 10, 20, 50 |
-| `testDuration` | Default steady-state duration (seconds) | 300 | 60, 120, 180, 300, 600 |
-| `engineInstances` | Azure Load Testing engine VMs (scale for high user counts) | 1 | 1, 2, 4 |
 | `coldStart` | Skip warmup (test cache warm-up behaviour) | false | true, false |
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
-| `seederPreset` | Data seeding volume | Medium | Small, Medium, Large, Massive |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 
-The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile (`userAmount` 1–10000, `testDuration` 10–7200, etc.).
+The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–10000, `testDuration` 10–7200, etc.).
 
 ## Tiers
 

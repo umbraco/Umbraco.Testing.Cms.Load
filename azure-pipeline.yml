@@ -7,10 +7,16 @@ pool:
 
 parameters:
   # === What to test ===
-  # The four params below are decomposed from the original testCases object so the
-  # queue UI is dropdowns + checkboxes instead of a JSON textbox. The validate stage
-  # builds the testCases JSON internally before handing it to prepare-test-cases.ps1
-  # (which still works against the original schema).
+
+  - name: profile
+    displayName: Run profile (encodes tiers, seeder preset, VU count, duration, engines)
+    type: string
+    default: 'smoke'
+    values:
+      - 'smoke'           # Starter only,                Small,  50 VUs,  60s, 1 engine
+      - 'compare-tiers'   # Starter + Standard,          Medium, 100 VUs, 300s, 1 engine
+      - 'full-comparison' # Starter + Standard + Pro,    Medium, 100 VUs, 300s, 1 engine
+      - 'stress'          # Pro only,                    Large,  300 VUs, 600s, 2 engines
 
   - name: umbracoVersion
     displayName: Umbraco version
@@ -33,21 +39,6 @@ parameters:
     values:
       - 'Default'
 
-  - name: runStarter
-    displayName: Run Starter tier
-    type: boolean
-    default: true
-
-  - name: runStandard
-    displayName: Run Standard tier
-    type: boolean
-    default: false
-
-  - name: runPro
-    displayName: Run Pro tier
-    type: boolean
-    default: false
-
   # === Run configuration ===
 
   - name: azureRegion
@@ -66,48 +57,6 @@ parameters:
     type: string
     default: umbraco-loadtest
 
-  - name: userAmount
-    displayName: Virtual users (default - scenarios may override)
-    type: number
-    default: 100
-    values:
-      - 50
-      - 100
-      - 150
-      - 200
-      - 250
-      - 300
-
-  - name: spawnRate
-    displayName: Spawn rate (users/second during ramp-up)
-    type: number
-    default: 10
-    values:
-      - 5
-      - 10
-      - 20
-      - 50
-
-  - name: testDuration
-    displayName: Test duration (seconds, steady-state)
-    type: number
-    default: 300
-    values:
-      - 60
-      - 120
-      - 180
-      - 300
-      - 600
-
-  - name: engineInstances
-    displayName: Azure Load Testing engine instances
-    type: number
-    default: 1
-    values:
-      - 1
-      - 2
-      - 4
-
   - name: coldStart
     displayName: Cold start test (skip warmup)
     type: boolean
@@ -117,16 +66,6 @@ parameters:
     displayName: Skip load tests (infra-only run)
     type: boolean
     default: false
-
-  - name: seederPreset
-    displayName: Data seeder preset
-    type: string
-    default: Medium
-    values:
-      - Small
-      - Medium
-      - Large
-      - Massive
 
   - name: validationTimeoutMinutes
     displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
@@ -161,28 +100,43 @@ stages:
         steps:
           - task: PowerShell@2
             name: out
-            displayName: Validate + resolve scenario overrides
+            displayName: Resolve profile + validate scenario
             env:
+              PROFILE: ${{ parameters.profile }}
               UMBRACO_VERSION: ${{ parameters.umbracoVersion }}
               DOTNET_VERSION: ${{ parameters.dotnetVersion }}
               SCENARIO: ${{ parameters.scenario }}
-              RUN_STARTER: ${{ parameters.runStarter }}
-              RUN_STANDARD: ${{ parameters.runStandard }}
-              RUN_PRO: ${{ parameters.runPro }}
             inputs:
               targetType: 'inline'
               script: |
-                # Build the testCases JSON from the decomposed queue params, then
-                # delegate to prepare-test-cases.ps1 which still validates and
-                # resolves against the original schema.
-                $tiers = @()
-                if ($env:RUN_STARTER  -eq 'True') { $tiers += 'Starter' }
-                if ($env:RUN_STANDARD -eq 'True') { $tiers += 'Standard' }
-                if ($env:RUN_PRO      -eq 'True') { $tiers += 'Pro' }
-                if ($tiers.Count -eq 0) {
-                    Write-Error "At least one tier must be selected (runStarter / runStandard / runPro)."
-                    exit 1
+                # Map the queue-time profile to a (tiers, preset, users, spawn,
+                # duration, engines) tuple. Each profile encodes a coherent test
+                # intent so the queue UX is a single dropdown rather than seven
+                # independent knobs the user has to reason about.
+                switch ($env:PROFILE) {
+                    'smoke' {
+                        $tiers = @('Starter');                          $preset = 'Small'
+                        $users = 50;  $spawn = 10; $duration = 60;      $engines = 1
+                    }
+                    'compare-tiers' {
+                        $tiers = @('Starter', 'Standard');              $preset = 'Medium'
+                        $users = 100; $spawn = 10; $duration = 300;     $engines = 1
+                    }
+                    'full-comparison' {
+                        $tiers = @('Starter', 'Standard', 'Pro');       $preset = 'Medium'
+                        $users = 100; $spawn = 10; $duration = 300;     $engines = 1
+                    }
+                    'stress' {
+                        $tiers = @('Pro');                              $preset = 'Large'
+                        $users = 300; $spawn = 50; $duration = 600;     $engines = 2
+                    }
+                    default {
+                        Write-Error "Unknown profile '$env:PROFILE'. Valid: smoke, compare-tiers, full-comparison, stress."
+                        exit 1
+                    }
                 }
+
+                Write-Host "Profile '$env:PROFILE' -> tiers=$($tiers -join ',') preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
 
                 $testCases = @(@{
                     umbraco  = $env:UMBRACO_VERSION
@@ -192,10 +146,17 @@ stages:
                 })
                 $env:TEST_CASES_JSON = ($testCases | ConvertTo-Json -Compress -Depth 5)
 
+                # Surface profile-derived config to downstream stages via output vars.
+                Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$preset"
+                Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
+                Write-Host "##vso[task.setvariable variable=resolvedUserAmount;isOutput=true]$users"
+                Write-Host "##vso[task.setvariable variable=resolvedSpawnRate;isOutput=true]$spawn"
+                Write-Host "##vso[task.setvariable variable=resolvedTestDuration;isOutput=true]$duration"
+
                 & "$(System.DefaultWorkingDirectory)/scripts/prepare-test-cases.ps1" `
-                    -UserAmount ${{ parameters.userAmount }} `
-                    -SpawnRate ${{ parameters.spawnRate }} `
-                    -TestDuration ${{ parameters.testDuration }} `
+                    -UserAmount $users `
+                    -SpawnRate $spawn `
+                    -TestDuration $duration `
                     -WorkspaceRoot "$(System.DefaultWorkingDirectory)"
 
   - stage: ensureHistoryInfra
@@ -226,8 +187,13 @@ stages:
       - ensureHistoryInfra
     # Cross-stage outputs from the validation stage, scoped to the whole stage.
     variables:
-      testCasesJson:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
-      resolvedTestCases: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      testCasesJson:           $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
+      resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
+      resolvedUserAmount:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
+      resolvedSpawnRate:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSpawnRate'] ]
+      resolvedTestDuration:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestDuration'] ]
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
@@ -278,7 +244,7 @@ stages:
               command: 'plan'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=${{ parameters.seederPreset }} -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
       - job: apply
         displayName: Terraform Apply
@@ -330,7 +296,7 @@ stages:
               command: 'apply'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=${{ parameters.seederPreset }} -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
           - task: PowerShell@2
             name: outputVars
@@ -384,9 +350,11 @@ stages:
         variables:
           testCaseOutputs: $[ dependencies.apply.outputs['outputVars.testCaseOutputs'] ]
         steps:
-          # Compile-time expansion: one template invocation per selected tier.
-          # Keep testCaseId format in sync with the runtime construction in prepare-test-cases.ps1.
-          - ${{ if eq(parameters.runStarter, true) }}:
+          # Tier expansion based on profile. Each tier runs in the profiles where
+          # its inclusion makes sense (smoke = Starter only; compare-tiers = Starter+Standard;
+          # full-comparison = all three; stress = Pro only). Keep testCaseId format
+          # in sync with the runtime construction in prepare-test-cases.ps1.
+          - ${{ if in(parameters.profile, 'smoke', 'compare-tiers', 'full-comparison') }}:
             - template: templates/load-test-job.yml
               parameters:
                 serviceConnection: '$(serviceConnection)'
@@ -396,14 +364,12 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 dotnetVersion: '${{ parameters.dotnetVersion }}'
-                engineInstances: ${{ parameters.engineInstances }}
                 coldStart: ${{ parameters.coldStart }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
-                seederPreset: '${{ parameters.seederPreset }}'
-          - ${{ if eq(parameters.runStandard, true) }}:
+          - ${{ if in(parameters.profile, 'compare-tiers', 'full-comparison') }}:
             - template: templates/load-test-job.yml
               parameters:
                 serviceConnection: '$(serviceConnection)'
@@ -413,14 +379,12 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 dotnetVersion: '${{ parameters.dotnetVersion }}'
-                engineInstances: ${{ parameters.engineInstances }}
                 coldStart: ${{ parameters.coldStart }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
-                seederPreset: '${{ parameters.seederPreset }}'
-          - ${{ if eq(parameters.runPro, true) }}:
+          - ${{ if in(parameters.profile, 'full-comparison', 'stress') }}:
             - template: templates/load-test-job.yml
               parameters:
                 serviceConnection: '$(serviceConnection)'
@@ -430,13 +394,11 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 dotnetVersion: '${{ parameters.dotnetVersion }}'
-                engineInstances: ${{ parameters.engineInstances }}
                 coldStart: ${{ parameters.coldStart }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
-                seederPreset: '${{ parameters.seederPreset }}'
 
           # Stop all apps so none run idle during the manual validation window.
           - task: AzureCLI@2
@@ -475,12 +437,14 @@ stages:
                 Write-Host "=============================================="
                 Write-Host ""
                 Write-Host "Run-level configuration:"
+                Write-Host "  Profile:        ${{ parameters.profile }}"
                 Write-Host "  Region:         ${{ parameters.azureRegion }}"
-                Write-Host "  Default users:  ${{ parameters.userAmount }}"
-                Write-Host "  Spawn rate:     ${{ parameters.spawnRate }} users/sec"
-                Write-Host "  Default duration: ${{ parameters.testDuration }}s"
+                Write-Host "  Default users:  $(resolvedUserAmount)"
+                Write-Host "  Spawn rate:     $(resolvedSpawnRate) users/sec"
+                Write-Host "  Default duration: $(resolvedTestDuration)s"
                 Write-Host "  Cold start:     ${{ parameters.coldStart }}"
-                Write-Host "  Seeder preset:  ${{ parameters.seederPreset }}"
+                Write-Host "  Seeder preset:  $(resolvedSeederPreset)"
+                Write-Host "  Engine instances: $(resolvedEngineInstances)"
                 Write-Host ""
                 Write-Host "Test cases:"
                 $cases = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
