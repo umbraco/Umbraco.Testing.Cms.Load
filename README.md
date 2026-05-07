@@ -263,9 +263,9 @@ ConnectionStrings__Redis__ConnectionString = redis://...
 
 Some Umbraco features can't be flipped via `appsettings.json` alone — they need source-code changes (custom composers, builder-chain extensions, backoffice extensions). Mirroring how Umbraco's acceptance tests handle this, **any file in `AdditionalSetup/` other than `appsettings.json` is treated as a code overlay**: copied into the dotnet project tree before `dotnet build`, preserving relative paths.
 
-(The shipped `DeliveryApi` scenario doesn't actually need this — modern Umbraco enables the Delivery API purely via appsettings — so it ships with appsettings.json only. The example below is illustrative for scenarios that *do* need code.)
+(The shipped `DeliveryApi` scenario is itself an example: it needs *both* an `appsettings.json` overlay to enable the feature *and* a `Program.cs` overlay calling `.AddDeliveryApi()` in the builder chain to register the API's DI services. Without the code overlay, hitting `/umbraco/delivery/api/v2/content` returns 500 with `Unable to resolve service for type 'IRequestSegmentService'`.)
 
-Example — a hypothetical `CustomComposer` scenario that adds an event handler via composer:
+Another example — a hypothetical `CustomComposer` scenario that adds an event handler via composer:
 
 ```
 loadtests/scenarios/CustomComposer/
