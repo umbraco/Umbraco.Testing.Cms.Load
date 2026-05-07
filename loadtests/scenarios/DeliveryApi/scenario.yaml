@@ -1,0 +1,1 @@
+description: "Headless mode: Umbraco Content Delivery API enabled with public access. Locust adds Delivery API tasks to the workload mix when this scenario is active."

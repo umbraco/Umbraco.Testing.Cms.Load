@@ -13,6 +13,13 @@ If the inventory endpoint is unreachable (seeder didn't run, scenario
 overlay disabled it), every task falls back to the homepage so the run
 still produces stats — just without the differentiating signal.
 
+The locustfile also probes the Umbraco Content Delivery API at start.
+If it responds (i.e. the scenario overlay enabled it — see DeliveryApi
+scenario), Delivery API tasks are spliced into the workload so headless
+performance is measured alongside MVC delivery. If the API is off
+(default), no Delivery API tasks fire — keeps non-headless scenarios'
+metrics clean.
+
 PACING NOTE: wait_time = between(1, 3) is ~0.5 req/s per VU (each task
 fires one request, then waits 1–3 s). Real human browsing is 5–30 s between
 clicks, so 100 VUs ≈ 500–1500 real visitors in load-equivalent — fine for
@@ -31,6 +38,9 @@ logger = logging.getLogger(__name__)
 INVENTORY_PATH = "/umbraco/api/seederstatus/inventory"
 INVENTORY_TIMEOUT_SEC = 15
 
+DELIVERY_API_LIST_PATH = "/umbraco/delivery/api/v2/content"
+DELIVERY_API_PROBE_TIMEOUT_SEC = 10
+
 
 @events.test_start.add_listener
 def fetch_inventory(environment, **_):
@@ -45,17 +55,24 @@ def fetch_inventory(environment, **_):
         response = requests.get(url, timeout=INVENTORY_TIMEOUT_SEC)
         response.raise_for_status()
         data = response.json()
-    except requests.RequestException as ex:
+    except (requests.RequestException, ValueError) as ex:
         logger.warning(f"Inventory fetch failed ({ex}); falling back to homepage-only")
         return
 
-    samples = data.get("sampleContentUrls", [])
+    if not isinstance(data, dict):
+        logger.warning(f"Inventory endpoint returned non-object JSON ({type(data).__name__}); falling back to homepage-only")
+        return
+
+    # Defensive filter: each sample should be a dict with 'url' and 'docType' but
+    # we don't trust the API to be perfectly shaped (a single bad item would crash
+    # the listener and skip workload setup for every VU in this engine).
+    samples = [s for s in data.get("sampleContentUrls", []) if isinstance(s, dict) and "url" in s]
     environment.inventory = {
-        "section":  data.get("rootSectionUrls", []),
+        "section":  [u for u in data.get("rootSectionUrls", []) if isinstance(u, str)],
         "category": [s["url"] for s in samples if s.get("docType") == "Category"],
         "page":     [s["url"] for s in samples if s.get("docType") == "Page"],
         "detail":   [s["url"] for s in samples if s.get("docType") == "Detail"],
-        "media":    data.get("sampleMediaUrls", []),
+        "media":    [u for u in data.get("sampleMediaUrls", []) if isinstance(u, str)],
     }
     logger.info(
         f"Inventory loaded: "
@@ -123,3 +140,82 @@ class CmsBrowsingUser(FastHttpUser):
             json=payload,
             name="ContactFormSubmit",
         )
+
+
+# Delivery API tasks — registered on the user class only when the API is reachable
+# (see configure_delivery_api below). Defined as plain functions, not @task methods,
+# so they're invisible to Locust until spliced into CmsBrowsingUser.tasks at runtime.
+def _delivery_list(user):
+    """Paginated list — exercises the index + serialiser hot path."""
+    skip = random.randint(0, 5) * 20
+    user.client.get(
+        f"{DELIVERY_API_LIST_PATH}?skip={skip}&take=20",
+        name="DeliveryApiList",
+    )
+
+
+def _delivery_item(user):
+    """Fetch a single item by id — closest Delivery-API analogue to the Detail task."""
+    items = user.environment.delivery_inventory.get("ids", [])
+    if not items:
+        # Inventory probed empty — fall through to a cheap list call so the task
+        # doesn't no-op (which would shrink the effective workload).
+        user.client.get(
+            f"{DELIVERY_API_LIST_PATH}?take=1",
+            name="DeliveryApiList (fallback)",
+        )
+        return
+    item_id = random.choice(items)
+    user.client.get(
+        f"{DELIVERY_API_LIST_PATH}/item/{item_id}",
+        name="DeliveryApiItem",
+    )
+
+
+@events.test_start.add_listener
+def configure_delivery_api(environment, **_):
+    """Probe the Delivery API; if reachable, splice its tasks into the workload."""
+    environment.delivery_inventory = {"ids": []}
+    if not environment.host:
+        return
+
+    probe_url = environment.host.rstrip("/") + DELIVERY_API_LIST_PATH + "?take=50"
+    try:
+        response = requests.get(probe_url, timeout=DELIVERY_API_PROBE_TIMEOUT_SEC)
+    except requests.RequestException as ex:
+        logger.info(f"Delivery API probe failed ({ex}); Delivery API tasks disabled")
+        return
+
+    if response.status_code != 200:
+        logger.info(
+            f"Delivery API probe returned {response.status_code}; "
+            f"Delivery API tasks disabled (expected for non-DeliveryApi scenarios)"
+        )
+        return
+
+    try:
+        body = response.json()
+    except ValueError:
+        logger.warning("Delivery API probe returned 200 but body was not JSON")
+        return
+
+    if not isinstance(body, dict):
+        logger.warning(f"Delivery API probe returned non-object JSON ({type(body).__name__}); tasks disabled")
+        return
+
+    items = body.get("items", [])
+    ids = [item["id"] for item in items if isinstance(item, dict) and "id" in item]
+    environment.delivery_inventory = {"ids": ids}
+
+    # Mutating CmsBrowsingUser.tasks at test_start is safe: Locust resolves the
+    # tasks attribute per-instance at task-pick time, not at class definition,
+    # and test_start fires before any VU is spawned. Weights: list=10, item=25
+    # — together ~24% of the ~141-weight total, so Delivery API gets a
+    # meaningful share without dominating the MVC mix.
+    extra = [_delivery_list] * 10 + [_delivery_item] * 25
+    CmsBrowsingUser.tasks = list(CmsBrowsingUser.tasks) + extra
+
+    logger.info(
+        f"Delivery API enabled: inventory={len(ids)} items, "
+        f"spliced {len(extra)} weighted tasks into workload"
+    )
