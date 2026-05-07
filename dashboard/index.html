@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Umbraco Load Test Dashboard</title>
+    <!-- Pico.css for classless styling. CDN here keeps the deploy bundle small;
+         vendor locally if offline-friendliness ever matters. -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="style.css">
+    <!-- Chart.js for the line + bar charts, plus the date-fns adapter so the
+         line chart's time-axis can parse ISO 8601 strings directly. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <header class="container">
+        <hgroup>
+            <h1>Umbraco Load Test Dashboard</h1>
+            <p>History storage: <code id="storage-source">loading…</code> &middot; <a href="#" id="refresh-link">Refresh</a></p>
+        </hgroup>
+    </header>
+
+    <main class="container">
+        <div id="error-banner" class="hidden"></div>
+
+        <section id="filters">
+            <div class="grid">
+                <label>
+                    Scenario
+                    <select id="filter-scenario"><option value="">— all —</option></select>
+                </label>
+                <label>
+                    Version
+                    <select id="filter-version"><option value="">— all —</option></select>
+                </label>
+                <label>
+                    Tier
+                    <select id="filter-tier"><option value="">— all —</option></select>
+                </label>
+                <label>
+                    From
+                    <input type="date" id="filter-from">
+                </label>
+                <label>
+                    To
+                    <input type="date" id="filter-to">
+                </label>
+            </div>
+        </section>
+
+        <nav>
+            <ul role="tablist">
+                <li><a href="#trends" data-tab="trends" class="active">Trends</a></li>
+                <li><a href="#compare" data-tab="compare">Compare</a></li>
+                <li><a href="#runs" data-tab="runs">Runs</a></li>
+            </ul>
+        </nav>
+
+        <section id="tab-trends" class="tab">
+            <p class="muted">Per-sampler matrix of latency p95 / p99 / error% across versions and tiers. Cells with 2+ runs show median ±stddev (n=K).</p>
+            <div id="trends-content"></div>
+        </section>
+
+        <section id="tab-compare" class="tab hidden">
+            <div class="grid">
+                <label>
+                    Baseline run
+                    <select id="compare-baseline"></select>
+                </label>
+                <label>
+                    Candidate run
+                    <select id="compare-candidate"></select>
+                </label>
+                <label>
+                    Significant Δ
+                    <input type="number" id="compare-threshold" value="10" min="0" max="100" step="1"> %
+                </label>
+            </div>
+            <div id="compare-content"></div>
+        </section>
+
+        <section id="tab-runs" class="tab hidden">
+            <p class="muted">All runs matching current filters. Click a row to drill in.</p>
+            <div id="runs-content"></div>
+        </section>
+    </main>
+
+    <footer class="container">
+        <small id="footer-status">Loading data…</small>
+    </footer>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

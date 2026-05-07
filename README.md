@@ -64,6 +64,11 @@ Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per 
 ├── pr-validation.yml            # PR-time static checks (terraform/PS/Python/YAML lint, no Azure)
 ├── README.md
 │
+├── dashboard/                   # Static SPA + auth config for the Entra-ID-gated viewer
+│   ├── index.html, app.js, style.css
+│   ├── config.js                # Placeholder values; deploy script rewrites at upload time
+│   └── staticwebapp.config.json # Auth gate routes / Entra-ID identity provider
+│
 ├── templates/
 │   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
 │
@@ -77,7 +82,9 @@ Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per 
 │   ├── compare-runs.ps1                # Markdown delta report between two engine_results.csv files (one-vs-one)
 │   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON (many-vs-many)
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
-│   └── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
+│   ├── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
+│   ├── ensure-dashboard-infra.ps1      # One-time: provision SWA + wire Entra-ID auth secrets
+│   └── deploy-dashboard.ps1            # Build SAS + rewrite config.js + upload dashboard files to SWA
 │
 ├── loadtests/
 │   ├── locustfile.py            # Inventory-driven workload (CMS browsing + contact-form write + Delivery API splice)
@@ -621,6 +628,48 @@ Pipeline parameters for the candidate:
 - **All samplers up + `plan_CpuPercentage_max` near 100%** — App Service saturation. Same diagnostic question, different lever (App Service tier).
 
 The `regression-report` artifact + the per-sampler table from `compare-runs.ps1` together usually tell you whether to **investigate the code** or **revisit the infra sizing**.
+
+## Dashboard
+
+For people who'd rather click than type, `dashboard/` is a static single-page app hosted on an Azure Static Web App with Entra-ID auth. It reads the same NDJSON the scripts read and offers three views:
+
+- **Trends** — per-sampler line chart of p95 / p99 / error rate over time, plus a `(version × tier)` matrix with median ±stddev for cells with multiple runs.
+- **Compare** — pick two specific runs from the dropdown, get side-by-side per-sampler bars + delta tables (client-side and server-side metrics).
+- **Runs** — flat list of all stored runs with their metadata.
+
+Filter bar at the top scopes everything by scenario / version / tier / date range. Filter state lives in the URL hash, so links are shareable.
+
+### One-time setup
+
+1. **Register an Entra-ID app** (Azure Portal → Microsoft Entra ID → App registrations → New). Redirect URI: `https://<swa-hostname>/.auth/login/aad/callback` (you'll know `<swa-hostname>` after step 2 — re-edit then). Note the client ID; create a client secret and copy the value once (it's not shown again).
+2. **Create the SWA + wire auth secrets:**
+   ```powershell
+   ./scripts/ensure-dashboard-infra.ps1 `
+       -HistoryResourceGroup umbraco-loadtest-history-rg `
+       -HistoryLocation "West Europe" `
+       -StaticWebAppName umbraco-loadtest-dashboard `
+       -TenantId "<your-tenant-guid>" `
+       -AadClientId "<from-step-1>" `
+       -AadClientSecret (Read-Host -AsSecureString)
+   ```
+   Output ends with the SWA hostname — go back to the app registration and update the redirect URI to use it if needed.
+3. **Deploy the static files:**
+   ```powershell
+   ./scripts/deploy-dashboard.ps1 `
+       -HistoryResourceGroup umbraco-loadtest-history-rg `
+       -StorageAccountName <your-history-sa> `
+       -ContainerName loadtest-history `
+       -StaticWebAppName umbraco-loadtest-dashboard `
+       -TenantId "<your-tenant-guid>"
+   ```
+   Generates a fresh read+list SAS, configures CORS on the storage account for the SWA's origin, rewrites `config.js` with the live values, uploads via the SWA CLI (`npm install -g @azure/static-web-apps-cli`).
+4. **Open the SWA URL.** Microsoft sign-in, then the dashboard.
+
+Re-run the deploy script whenever you change dashboard files. The SAS is regenerated on each deploy (default 365-day expiry).
+
+### Cost
+
+$0/month. Static Web Apps Free tier covers 100 GB bandwidth + 250 MB storage, neither of which gets close at this volume. Storage egress for blob fetches is fractions of a cent.
 
 ## Roadmap
 
