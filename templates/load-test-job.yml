@@ -333,6 +333,7 @@ steps:
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-load-test-results.ps1'
       arguments: >
         -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
+        -HistoryResourceGroup "${{ parameters.historyResourceGroup }}"
         -StorageAccountName "${{ parameters.historyStorageAccount }}"
         -ContainerName "${{ parameters.historyContainer }}"
         -BuildId "$(Build.BuildId)"

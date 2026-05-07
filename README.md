@@ -31,7 +31,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 
 - Azure subscription with appropriate permissions. The pipeline service principal needs:
   - Standard create/manage rights on the ephemeral and history resource groups (Contributor is enough for resources).
-  - **`Microsoft.Authorization/roleAssignments/write`** (Owner or User Access Administrator) on the history storage account scope — `ensure-history-infra.ps1` grants the SP itself "Storage Blob Data Contributor" so downstream scripts can use `--auth-mode login` instead of account keys.
+  - **`Microsoft.Storage/storageAccounts/listKeys/action`** on the history storage account — Storage Account Contributor (or any role that includes `listKeys/action`) is enough. Downstream scripts (`publish-load-test-results.ps1`, `_history-helpers.ps1`) fetch the account key at runtime and authenticate with `--account-key`. RBAC + `--auth-mode login` would be a stricter alternative but requires `Microsoft.Authorization/roleAssignments/write` for the SP, which is a heavier permissions ask.
 - Azure DevOps organization with:
   - Service connection to Azure (`terraform-umbraco-load-testing-az-connection`)
   - Variable group `umbraco-loadtest-history` with at minimum: `historyResourceGroup`, `historyLocation`, `historyLoadTestName`, `historyStorageAccount` (override the placeholder `loadtestchangeme` with a globally-unique 3-24 lowercase alphanumeric value), `historyContainer`.
@@ -44,15 +44,13 @@ A new team forking this project should:
 
 1. **Pick a globally-unique storage account name** (3-24 lowercase alphanumeric chars). This will host the long-lived run history. Override `historyStorageAccount` in the variable group with this value — the placeholder `loadtestchangeme` is rejected by `ensure-history-infra.ps1`.
 2. **Create the AzDO variable group** `umbraco-loadtest-history` with the five history variables above.
-3. **Configure the service principal** with the permissions listed in Prerequisites. The Owner/UAA role on the *history* RG is essential — without it, `ensure-history-infra.ps1` fails when it tries to grant the SP its own Storage-Blob-Data-Contributor role.
-4. **Queue the pipeline once with `skipLoadTests=true`.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container, role assignment) and verifies the per-case provisioning path without committing to a full load test. ~10-15 minutes.
-5. **(Local-dev users)** `az login` and grant your user the **Storage Blob Data Reader** role on the history storage account — needed to run `show-trends.ps1` / `check-regression.ps1` / `compare-runs.ps1` (history mode) locally:
+3. **Configure the service principal** with the permissions listed in Prerequisites — Contributor on the subscription (or scoped narrower) is sufficient.
+4. **Queue the pipeline once with `skipLoadTests=true`.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container) and verifies the per-case provisioning path without committing to a full load test. ~10-15 minutes.
+5. **(Local-dev users)** `az login` and verify you can list keys for the history storage account — `show-trends.ps1` / `check-regression.ps1` / `compare-runs.ps1` (history mode) run locally need the same `listKeys/action` the pipeline SP uses:
    ```bash
-   az role assignment create \
-       --assignee "you@yourtenant.com" \
-       --role "Storage Blob Data Reader" \
-       --scope "/subscriptions/<sub>/resourceGroups/umbraco-loadtest-history-rg/providers/Microsoft.Storage/storageAccounts/<your-history-storage-account>"
+   az storage account keys list -n <your-history-storage-account> -g umbraco-loadtest-history-rg --query "[0].keyName" -o tsv
    ```
+   If that command works, the analysis tools will work. If it fails with "AuthorizationFailed", grant yourself Storage Account Contributor (or higher) on the SA scope.
 6. **Queue 3-5 baseline runs** with the same configuration to populate history (see "Establishing a baseline" below). Until cells have ≥ 3 prior runs, the pipeline's regression-check stage reports "insufficient baseline" and exits 0 — it's safe to enable from day one.
 
 ### Cost awareness
@@ -374,7 +372,7 @@ For the everyday "did this version/tier actually move the needle?" question, `sc
     -ContainerName loadtest-history
 ```
 
-`-Aggregate latest` (default) compares the most recent run for each cell; `-Aggregate median5` compares the median across the last 5 runs (more stable on noisy tails). Auth is the same `az login` + Storage Blob Data Reader role used by `show-trends.ps1`.
+`-Aggregate latest` (default) compares the most recent run for each cell; `-Aggregate median5` compares the median across the last 5 runs (more stable on noisy tails). Auth: `az login` + permission to list keys on the history storage account (Storage Account Contributor or higher).
 
 The script emits a markdown report with:
 - **Per-sampler** breakdown (Detail, Page, Category, etc.) ordered by traffic share, with deltas bolded when they cross the significance threshold (default 10%)
@@ -399,20 +397,12 @@ CSV mode reads raw request samples and computes true aggregate percentiles, so i
 
 `scripts/compare-runs.ps1` answers "A vs B"; for "show me everything we've run on this scenario", use `scripts/show-trends.ps1`. It reads every `summary.ndjson` under a scenario's history-storage prefix and prints a markdown matrix of (Umbraco version × tier) → p95/p99/error% per sampler. Single-run cells use the run as-is; cells with 2+ runs show the **median plus stddev** so you can see at a glance whether the numbers are stable enough to baseline against.
 
-The script uses Azure CLI login auth (`--auth-mode login`) — `az login` first, and your account needs the **Storage Blob Data Reader** role on the history storage account. One-off grant from any account that can manage role assignments:
-
-```bash
-az role assignment create \
-    --assignee "you@yourtenant.com" \
-    --role "Storage Blob Data Reader" \
-    --scope "/subscriptions/<sub>/resourceGroups/umbraco-loadtest-history-rg/providers/Microsoft.Storage/storageAccounts/<your-history-storage-account>"
-```
-
-Then run the trend script:
+The script authenticates via account-key — `az login` first, then it fetches the storage account key at runtime and uses `--account-key` for blob ops. Your user needs `Microsoft.Storage/storageAccounts/listKeys/action` on the history SA (Storage Account Contributor or higher).
 
 ```powershell
 ./scripts/show-trends.ps1 `
     -Scenario Default -Major 17 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history `
     -OutputPath trends.md
@@ -446,12 +436,13 @@ Baselines decay — after a major Umbraco release, a tier-SKU shift, or a meanin
 ```powershell
 ./scripts/check-regression.ps1 `
     -Scenario Default -Major 17 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history `
     -OutputPath regression-report.md
 ```
 
-(Same auth requirement as `show-trends.ps1` — `az login` + Storage Blob Data Reader on the history storage account.)
+(Same auth requirement as `show-trends.ps1` — `az login` + Storage Account Contributor or higher on the history SA.)
 
 Defaults:
 
@@ -467,7 +458,7 @@ Cells with fewer than `-MinBaselineRuns` prior runs are reported as "insufficien
 
 Pass `-FailOnRegression $false` to render the report without failing (useful for "show me what would break if I turned this on").
 
-The script is intentionally not yet wired into the pipeline as a step — turn it on by adding a post-`runLoadTests` step to `azure-pipeline.yml` once you've established baselines for the cells you care about.
+The script is wired into the pipeline as the `regressionCheck` job after `runLoadTests`. It's permissive by default (cells with < `MinBaselineRuns` prior runs report "insufficient baseline" and exit 0), so it's safe to leave on from day one — the gate activates per-cell as baselines accrue.
 
 ### Infrastructure: ephemeral vs long-lived
 

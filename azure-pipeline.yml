@@ -561,6 +561,7 @@ stages:
                 & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" `
                     -Scenario '${{ parameters.scenario }}' `
                     -Major $major `
+                    -HistoryResourceGroup '$(historyResourceGroup)' `
                     -StorageAccountName '$(historyStorageAccount)' `
                     -ContainerName '$(historyContainer)' `
                     -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md"

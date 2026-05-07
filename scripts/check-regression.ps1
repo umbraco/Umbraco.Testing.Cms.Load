@@ -6,8 +6,10 @@
 # A cell with fewer than -MinBaselineRuns prior runs is reported as "insufficient
 # baseline" and never contributes to a fail — you can't regress against nothing.
 #
-# Usage (caller must `az login` and have Storage Blob Data Reader on the storage account):
+# Usage (caller must `az login` and have Storage Account Contributor or higher
+# on the history SA so `az storage account keys list` works):
 #   ./scripts/check-regression.ps1 -Scenario Default `
+#       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history
 #
 #   # CI-friendly (non-zero exit on regression):
@@ -19,6 +21,7 @@
 [CmdletBinding()]
 param (
     [Parameter(Mandatory = $true)] [string]$Scenario,
+    [Parameter(Mandatory = $true)] [string]$HistoryResourceGroup,
     [Parameter(Mandatory = $true)] [string]$StorageAccountName,
     [Parameter(Mandatory = $true)] [string]$ContainerName,
 
@@ -58,6 +61,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 $cells = Get-HistoryCells `
     -Scenario $Scenario `
+    -HistoryResourceGroup $HistoryResourceGroup `
     -StorageAccountName $StorageAccountName `
     -ContainerName $ContainerName `
     -Major $Major `

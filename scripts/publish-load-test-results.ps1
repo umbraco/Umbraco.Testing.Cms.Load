@@ -9,6 +9,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$ResultsDir,
+    [Parameter(Mandatory = $true)] [string]$HistoryResourceGroup,
     [Parameter(Mandatory = $true)] [string]$StorageAccountName,
     [Parameter(Mandatory = $true)] [string]$ContainerName,
 
@@ -261,12 +262,13 @@ $summaryFile = Join-Path (Split-Path -Parent $ResultsDir) "summary.ndjson"
 $rows | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 5 } |
     Out-File -FilePath $summaryFile -Encoding utf8
 
+$storageKey = az storage account keys list -n $StorageAccountName -g $HistoryResourceGroup --query "[0].value" -o tsv
+
 Write-Host ""
 Write-Host "Uploading to https://$StorageAccountName.blob.core.windows.net/$ContainerName/$blobPrefix/"
 
-# --auth-mode login uses the SP's RBAC role (granted by ensure-history-infra.ps1).
 az storage blob upload `
-    --account-name $StorageAccountName --auth-mode login `
+    --account-name $StorageAccountName --account-key $storageKey `
     --container-name $ContainerName `
     --file $summaryFile `
     --name "$blobPrefix/summary.ndjson" `
@@ -274,7 +276,7 @@ az storage blob upload `
 
 # Raw artifacts kept for analyses that need fields the summary doesn't surface.
 az storage blob upload-batch `
-    --account-name $StorageAccountName --auth-mode login `
+    --account-name $StorageAccountName --account-key $storageKey `
     --destination $ContainerName `
     --destination-path "$blobPrefix/raw" `
     --source $ResultsDir `

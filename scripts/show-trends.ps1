@@ -5,15 +5,17 @@
 # run-count when there are 2+ runs. The stddev makes baseline stability visible
 # (see "Establishing a baseline" in README).
 #
-# Usage (you must `az login` first; your user needs Storage Blob Data Reader on the
-# storage account — see README's "Trending across many runs" for the role grant):
+# Usage (you must `az login` first; your user needs Storage Account Contributor
+# or higher on the history SA so `az storage account keys list` works):
 #   ./scripts/show-trends.ps1 -Scenario Default -Major 17 `
+#       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history
 #   ./scripts/show-trends.ps1 -Scenario Default -Sampler Detail -OutputPath trends.md
 
 [CmdletBinding()]
 param (
     [Parameter(Mandatory = $true)] [string]$Scenario,
+    [Parameter(Mandatory = $true)] [string]$HistoryResourceGroup,
     [Parameter(Mandatory = $true)] [string]$StorageAccountName,
     [Parameter(Mandatory = $true)] [string]$ContainerName,
 
@@ -67,6 +69,7 @@ function Format-Cell($runs) {
 
 $cells = Get-HistoryCells `
     -Scenario $Scenario `
+    -HistoryResourceGroup $HistoryResourceGroup `
     -StorageAccountName $StorageAccountName `
     -ContainerName $ContainerName `
     -Major $Major `

@@ -35,22 +35,29 @@ function Get-HistoryCells {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)] [string]$Scenario,
+        [Parameter(Mandatory = $true)] [string]$HistoryResourceGroup,
         [Parameter(Mandatory = $true)] [string]$StorageAccountName,
         [Parameter(Mandatory = $true)] [string]$ContainerName,
         [string]$Major,
         [string]$Sampler
     )
 
-    # Uses --auth-mode login: the caller must be `az login`'d with at least
-    # "Storage Blob Data Reader" on the storage account. Pipeline runs (under
-    # the service principal) get this role from ensure-history-infra.ps1; local
-    # dev users have to grant themselves once — see README.
+    # Uses account-key auth: the caller needs Storage Account Contributor (or any
+    # role with Microsoft.Storage/storageAccounts/listKeys/action) on the SA so
+    # `az storage account keys list` works. The pipeline SP already has this;
+    # local dev users with Reader+ on the subscription typically do too.
 
     $prefix = Get-HistoryPrefix -Scenario $Scenario -Major $Major
 
+    $storageKey = az storage account keys list -n $StorageAccountName -g $HistoryResourceGroup --query "[0].value" -o tsv
+    if (-not $storageKey) {
+        Write-Error "Could not read storage key for '$StorageAccountName' in '$HistoryResourceGroup'."
+        exit 1
+    }
+
     Write-Host "Listing blobs under $prefix..."
     $listJson = az storage blob list `
-        --account-name $StorageAccountName --auth-mode login `
+        --account-name $StorageAccountName --account-key $storageKey `
         --container-name $ContainerName `
         --prefix $prefix `
         --query "[?ends_with(name, 'summary.ndjson')].name" `
@@ -67,7 +74,7 @@ function Get-HistoryCells {
     foreach ($blob in $blobNames) {
         $tmp = New-TemporaryFile
         az storage blob download `
-            --account-name $StorageAccountName --auth-mode login `
+            --account-name $StorageAccountName --account-key $storageKey `
             --container-name $ContainerName `
             --name $blob `
             --file $tmp.FullName `
