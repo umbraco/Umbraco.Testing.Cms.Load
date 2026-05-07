@@ -69,6 +69,17 @@ $cells = Get-HistoryCells `
 
 if ($cells.Count -eq 0) {
     Write-Warning "No metric rows matched the filter - nothing to check."
+    if ($OutputPath) {
+        # Always write the file so the pipeline's PublishBuildArtifacts step has
+        # something to upload — first-ever runs have no history to compare against.
+        @"
+# Regression check - scenario: $Scenario$(if ($Major) { " (major $Major)" })
+
+No history found for this scenario yet — nothing to compare against. This is
+expected on the first run for a fresh scenario; subsequent runs will populate
+history and the gate will activate per cell as baselines accrue.
+"@ | Out-File -FilePath $OutputPath -Encoding utf8
+    }
     exit 0
 }
 
