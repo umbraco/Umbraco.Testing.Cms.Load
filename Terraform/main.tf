@@ -34,9 +34,10 @@ module "umbraco" {
   resource_group_name     = var.resource_group_name
   resource_group_location = var.resource_group_location
 
-  tier_specs    = local.tier_specs
-  test_cases    = var.test_cases
-  seeder_preset = var.seeder_preset
+  tier_specs       = local.tier_specs
+  test_cases       = var.test_cases
+  seeder_preset    = var.seeder_preset
+  sql_sku_override = var.sql_sku_override
 
   build_id = var.build_id
 }

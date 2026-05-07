@@ -13,7 +13,7 @@ param (
     [string] $WorkspaceRoot = $PWD
 )
 
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = "Stop"
 
 function Fail([string] $message) {
     Write-Host "##vso[task.logissue type=error]prepare-test-cases: $message"
@@ -107,8 +107,8 @@ function Get-LevenshteinDistance {
     for ($i = 1; $i -le $a.Length; $i++) {
         for ($j = 1; $j -le $b.Length; $j++) {
             $cost = if ($a[$i - 1] -eq $b[$j - 1]) { 0 } else { 1 }
-            $d[$i][$j] = [Math]::Min(
-                [Math]::Min($d[$i - 1][$j] + 1, $d[$i][$j - 1] + 1),
+            $d[$i][$j] = [math]::Min(
+                [math]::Min($d[$i - 1][$j] + 1, $d[$i][$j - 1] + 1),
                 $d[$i - 1][$j - 1] + $cost
             )
         }
@@ -130,7 +130,7 @@ function Get-ClosestScenarioMatch {
         }
     }
     # Suggest only when the distance looks like a typo, not a wholly different name.
-    $threshold = [Math]::Max(2, [int]($Needle.Length / 2))
+    $threshold = [math]::Max(2, [int]($Needle.Length / 2))
     if ($bestDist -le $threshold) { return $best }
     return $null
 }
@@ -171,11 +171,10 @@ $scenarioFolders = @(Get-ChildItem -LiteralPath $scenariosRoot -Directory | ForE
 
 # --- Process each case ---
 
-$tfTestCases        = [ordered]@{}
-$resolvedTestCases  = [ordered]@{}
-$seenTestCaseIds    = @{}
-$previousTestCaseId = ''
-$caseIndex          = 0
+$tfTestCases       = [ordered]@{}
+$resolvedTestCases = [ordered]@{}
+$seenTestCaseIds   = @{}
+$caseIndex         = 0
 
 foreach ($case in $cases) {
     $caseIndex++
@@ -282,14 +281,11 @@ foreach ($case in $cases) {
         }
 
         $resolvedTestCases[$testCaseId] = [ordered]@{
-            userAmount         = $effUsers
-            spawnRate          = $effSpawn
-            testDuration       = $effDuration
-            previousTestCaseId = $previousTestCaseId
-            label              = "$($case.umbraco)/${tierName}/$($case.scenario)"
+            userAmount   = $effUsers
+            spawnRate    = $effSpawn
+            testDuration = $effDuration
+            label        = "$($case.umbraco)/${tierName}/$($case.scenario)"
         }
-
-        $previousTestCaseId = $testCaseId
     }
 }
 

@@ -6,6 +6,10 @@ resource_group_name     = "umbraco-loadtest-rg"
 resource_group_location = "West Europe"
 seeder_preset           = "Medium"   # Small / Medium / Large / Massive
 
+# Force every case onto a specific SQL DB SKU. Empty = use each tier's pairing
+# from loadtests/tiers.json. Set to S1/S2/S3 to isolate the app-side contribution.
+sql_sku_override = ""
+
 # Tier values must exist in loadtests/tiers.json. app_settings_overlay normally
 # comes from the validator; hand-write a small one for local plans.
 test_cases = {
@@ -25,7 +29,11 @@ test_cases = {
   }
 }
 
-# Azure credentials normally flow via ARM_CLIENT_ID / ARM_CLIENT_SECRET / ARM_TENANT_ID.
-# client_id     = ""
-# client_secret = ""
-# tenant_id     = ""
+# Azure credentials are read from env vars by the azurerm provider — they are NOT
+# declared as Terraform variables here, so don't try to set them in tfvars. Export
+# in your shell before `terraform plan`:
+#   export ARM_CLIENT_ID="..."
+#   export ARM_CLIENT_SECRET="..."   # client-secret auth
+#   export ARM_TENANT_ID="..."
+#   export ARM_SUBSCRIPTION_ID="..."
+# (Or use Azure CLI auth: `az login` and let the provider pick up the session.)

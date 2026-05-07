@@ -12,3 +12,4 @@
 
 .terraform/
 .idea/
+.build-cache/

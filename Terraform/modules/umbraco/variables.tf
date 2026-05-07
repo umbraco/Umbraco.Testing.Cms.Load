@@ -39,6 +39,12 @@ variable "seeder_preset" {
   default     = "Medium"
 }
 
+variable "sql_sku_override" {
+  type        = string
+  description = "Override SQL DB SKU for every case ('' = use each tier's default from tier_specs)."
+  default     = ""
+}
+
 variable "build_id" {
   type        = string
   description = "Pipeline build ID, surfaced as a resource tag"

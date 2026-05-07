@@ -12,6 +12,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Make native commands (az CLI) honour $ErrorActionPreference so a failed `az group create`
+# fails fast instead of cascading errors through subsequent steps. Requires pwsh 7.3+.
+$PSNativeCommandUseErrorActionPreference = $true
+
 # Catch the placeholder default explicitly; the global check below could miss it if it's available.
 if ($StorageAccountName -eq 'loadtestchangeme') {
     Write-Error @"
@@ -45,10 +49,21 @@ else {
     Write-Host "   created"
 }
 
+# `az X show` exits non-zero when the resource doesn't exist; with
+# $PSNativeCommandUseErrorActionPreference on, that would throw. Wrap each
+# existence check in try/catch so a "not found" falls through to the create branch.
+function Test-AzResource([scriptblock] $Probe) {
+    try {
+        $result = & $Probe 2>$null
+        return [bool]$result
+    } catch {
+        return $false
+    }
+}
+
 # Azure Load Testing resource
 Write-Host "-> Load test resource"
-$altExisting = az load show -n $LoadTestName -g $HistoryResourceGroup 2>$null
-if ($altExisting) {
+if (Test-AzResource { az load show -n $LoadTestName -g $HistoryResourceGroup }) {
     Write-Host "   already exists"
 }
 else {
@@ -58,8 +73,7 @@ else {
 
 # Storage account: check our RG first; only do the global name-availability check when needed.
 Write-Host "-> Storage account"
-$saExisting = az storage account show -n $StorageAccountName -g $HistoryResourceGroup 2>$null
-if ($saExisting) {
+if (Test-AzResource { az storage account show -n $StorageAccountName -g $HistoryResourceGroup }) {
     Write-Host "   already exists"
 }
 else {
@@ -80,7 +94,8 @@ else {
     Write-Host "   created"
 }
 
-# Container
+# Container — uses account-key here because the SA was just created and the
+# RBAC role grant below hasn't propagated yet. Downstream scripts use --auth-mode login.
 Write-Host "-> Container"
 $storageKey = az storage account keys list -n $StorageAccountName -g $HistoryResourceGroup --query "[0].value" -o tsv
 $containerExists = az storage container exists `
@@ -98,6 +113,35 @@ else {
         --account-key $storageKey `
         --public-access off | Out-Null
     Write-Host "   created"
+}
+
+# RBAC for the pipeline SP — grants "Storage Blob Data Contributor" on the storage
+# account so publish-load-test-results.ps1 / _history-helpers.ps1 can use
+# --auth-mode login instead of account keys. Idempotent: re-running detects an
+# existing assignment and skips. Local-dev users (running show-trends /
+# check-regression) need to grant themselves a similar role manually — see README.
+Write-Host "-> RBAC role for pipeline SP"
+$spAppId = az account show --query user.name -o tsv
+$storageAccountId = az storage account show -n $StorageAccountName -g $HistoryResourceGroup --query id -o tsv
+$role = "Storage Blob Data Contributor"
+$existing = az role assignment list --assignee $spAppId --scope $storageAccountId --role $role -o tsv
+if ([string]::IsNullOrWhiteSpace($existing)) {
+    # try/catch handles the concurrent-create race: two ensure-history-infra
+    # runs starting within a few seconds of each other both see "no assignment"
+    # and both try to create — the loser's create call exits non-zero with
+    # "RoleAssignmentExists". Re-check on failure; if the assignment now exists,
+    # the other run created it and we're done.
+    try {
+        az role assignment create --assignee $spAppId --role $role --scope $storageAccountId | Out-Null
+        Write-Host "   '$role' granted to SP $spAppId (propagation can take ~30s)"
+    } catch {
+        $recheck = az role assignment list --assignee $spAppId --scope $storageAccountId --role $role -o tsv
+        if ([string]::IsNullOrWhiteSpace($recheck)) { throw }
+        Write-Host "   '$role' was granted concurrently by another run"
+    }
+}
+else {
+    Write-Host "   '$role' already granted to SP $spAppId"
 }
 
 Write-Host ""

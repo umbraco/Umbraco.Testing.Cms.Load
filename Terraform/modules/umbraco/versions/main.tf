@@ -58,6 +58,16 @@ resource "azurerm_windows_web_app" "app_service" {
   service_plan_id     = var.service_plan_id
   tags                = local.case_tags
 
+  # Catch the 60-char Azure App Service name cap with a clear message instead
+  # of a generic Azure 400 deep in apply. Long Umbraco prerelease tags + long
+  # prefixes can blow this budget; shorten one of (prefix, version, scenario).
+  lifecycle {
+    precondition {
+      condition     = length(local.app_service_name) <= 60
+      error_message = "Computed App Service name '${local.app_service_name}' is ${length(local.app_service_name)} chars (Azure cap is 60). Shorten the prefix, Umbraco version, or scenario name."
+    }
+  }
+
   # Force HTTPS; disable basic-auth deploy paths; disable session affinity so load
   # tests round-robin across plan instances.
   https_only                                     = true
@@ -84,7 +94,10 @@ resource "azurerm_windows_web_app" "app_service" {
       # Hardcoded so anyone on the team can log into the backoffice with known creds.
       "Umbraco__CMS__Unattended__UnattendedUserPassword" = "LoadTest123!"
 
-      "SCM_DO_BUILD_DURING_DEPLOYMENT"             = "true"
+      # Pre-built artifacts are zip-deployed via `az webapp deployment source config-zip`,
+      # so Oryx/Kudu shouldn't try to build again. False shaves a few seconds per deploy
+      # and avoids edge cases where Oryx misidentifies the artifact.
+      "SCM_DO_BUILD_DURING_DEPLOYMENT"             = "false"
       "Serilog__MinimumLevel__Override__Microsoft" = "Information"
 
       "Umbraco.Cms.TestDataSeeder__Options__Enabled"      = "true"

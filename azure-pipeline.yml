@@ -22,6 +22,7 @@ parameters:
     default: 'Default'
     values:
       - 'Default'
+      - 'DeliveryApi'
 
   - name: runStarter
     displayName: Run Starter tier
@@ -80,6 +81,15 @@ parameters:
     type: boolean
     default: false
 
+  # Default behaviour is "fail if the ephemeral RG already exists" so a stuck
+  # leftover from a previous failed run isn't silently overwritten. Set this to
+  # true ONLY when you've verified the existing RG is from a stuck run you want
+  # to discard — the pipeline will force-delete it before provisioning fresh infra.
+  - name: forceCleanup
+    displayName: Force-delete a stuck ephemeral RG (only set true when recovering from a known-failed run)
+    type: boolean
+    default: false
+
   - name: validationTimeoutMinutes
     displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
     type: number
@@ -90,6 +100,22 @@ parameters:
       - 60
       - 120
       - 240
+
+  # Override the SQL SKU on every case so the database can be sized independently
+  # of the tier's nominal pairing — useful for "is SQL actually the bottleneck?"
+  # experiments. Defaults today (per loadtests/tiers.json): Starter→S1, Standard→S2,
+  # Pro→S3, since the App Service SKU is identical across tiers (mirrors Cloud).
+  # 'Auto' = use each tier's built-in pairing.
+  - name: sqlSkuOverride
+    displayName: SQL SKU override (Auto = use the tier's default pairing)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'S0'
+      - 'S1'
+      - 'S2'
+      - 'S3'
 
 variables:
   # Variable group `umbraco-loadtest-history` provides all history* variables:
@@ -121,6 +147,7 @@ stages:
               RUN_STARTER: ${{ parameters.runStarter }}
               RUN_STANDARD: ${{ parameters.runStandard }}
               RUN_PRO: ${{ parameters.runPro }}
+              SQL_SKU_OVERRIDE: ${{ parameters.sqlSkuOverride }}
             inputs:
               targetType: 'inline'
               script: |
@@ -149,7 +176,9 @@ stages:
 
                 # Derive the .NET runtime from the Umbraco major version. Keeps the queue
                 # UX simpler (you don't pick .NET separately when it's a function of the
-                # CMS version anyway). Update the table when Umbraco bumps target framework.
+                # CMS version anyway). The validator already rejects v17- runs, so only
+                # v17+ branches are reachable here. Extend the table when a future Umbraco
+                # version bumps the target framework.
                 $umbracoMajorRaw = ($env:UMBRACO_VERSION -split '\.')[0]
                 $umbracoMajor = 0
                 if (-not [int]::TryParse($umbracoMajorRaw, [ref]$umbracoMajor)) {
@@ -157,18 +186,21 @@ stages:
                     exit 1
                 }
                 $dotnetVersion = switch ($umbracoMajor) {
-                    14      { 'v8.0' }
-                    { $_ -in 15, 16 } { 'v9.0' }
-                    { $_ -ge 17 }     { 'v10.0' }
+                    { $_ -ge 17 } { 'v10.0' }
                     default {
-                        Write-Error "Umbraco $env:UMBRACO_VERSION is unsupported (this pipeline targets v14+)."
+                        Write-Error "Umbraco $env:UMBRACO_VERSION is unsupported (this pipeline targets v17+)."
                         exit 1
                     }
                 }
 
+                # 'Auto' is the queue-time signal for "use the tier's built-in SQL pairing".
+                # Terraform expects an empty string for that case.
+                $sqlSkuOverride = if ($env:SQL_SKU_OVERRIDE -eq 'Auto') { '' } else { $env:SQL_SKU_OVERRIDE }
+
                 Write-Host "Tiers:           $($tiers -join ', ')"
                 Write-Host "Profile '$env:PROFILE': preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
                 Write-Host "Umbraco $env:UMBRACO_VERSION (major $umbracoMajor) -> .NET $dotnetVersion"
+                Write-Host "SQL SKU override: $(if ($sqlSkuOverride) { $sqlSkuOverride } else { 'Auto (per-tier defaults)' })"
 
                 $testCases = @(@{
                     umbraco  = $env:UMBRACO_VERSION
@@ -185,6 +217,7 @@ stages:
                 Write-Host "##vso[task.setvariable variable=resolvedUserAmount;isOutput=true]$users"
                 Write-Host "##vso[task.setvariable variable=resolvedSpawnRate;isOutput=true]$spawn"
                 Write-Host "##vso[task.setvariable variable=resolvedTestDuration;isOutput=true]$duration"
+                Write-Host "##vso[task.setvariable variable=resolvedSqlSkuOverride;isOutput=true]$sqlSkuOverride"
 
                 & "$(System.DefaultWorkingDirectory)/scripts/prepare-test-cases.ps1" `
                     -UserAmount $users `
@@ -228,25 +261,35 @@ stages:
       resolvedUserAmount:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
       resolvedSpawnRate:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSpawnRate'] ]
       resolvedTestDuration:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestDuration'] ]
+      resolvedSqlSkuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSqlSkuOverride'] ]
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
         steps:
           - task: AzureCLI@2
-            displayName: Fail if resource group already exists
+            displayName: Fail (or force-delete) if resource group already exists
             inputs:
               azureSubscription: '$(serviceConnection)'
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 # Fail if the RG already exists - either a stuck previous run or a prefix collision.
+                # forceCleanup=true bypasses the fail by deleting the stuck RG first; only meant
+                # for recovering from a known-failed run that left infra behind.
                 $exists = az group exists -n $(azureResourceGroup)
                 if ($exists -eq 'true') {
-                  Write-Host "##vso[task.logissue type=error]Resource group '$(azureResourceGroup)' already exists."
-                  Write-Host "##vso[task.logissue type=error]  Delete it manually (az group delete -n $(azureResourceGroup) --yes) or use a different prefix."
-                  exit 1
+                  if ('${{ parameters.forceCleanup }}' -eq 'True') {
+                    Write-Host "Resource group '$(azureResourceGroup)' exists; forceCleanup=true, deleting before provisioning..."
+                    az group delete -n $(azureResourceGroup) --yes
+                    Write-Host "Resource group deleted - safe to proceed."
+                  } else {
+                    Write-Host "##vso[task.logissue type=error]Resource group '$(azureResourceGroup)' already exists."
+                    Write-Host "##vso[task.logissue type=error]  Re-queue with forceCleanup=true to delete it, or use a different prefix."
+                    exit 1
+                  }
+                } else {
+                  Write-Host "Resource group '$(azureResourceGroup)' does not exist - safe to proceed."
                 }
-                Write-Host "Resource group '$(azureResourceGroup)' does not exist - safe to proceed."
 
       - job: setup
         dependsOn: checkResourceGroup
@@ -278,7 +321,7 @@ stages:
               command: 'plan'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
       - job: apply
         displayName: Terraform Apply
@@ -330,7 +373,7 @@ stages:
               command: 'apply'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
           - task: PowerShell@2
             name: outputVars
@@ -477,6 +520,7 @@ stages:
                 Write-Host "  Cold start:     ${{ parameters.coldStart }}"
                 Write-Host "  Seeder preset:  $(resolvedSeederPreset)"
                 Write-Host "  Engine instances: $(resolvedEngineInstances)"
+                Write-Host "  SQL SKU override: ${{ parameters.sqlSkuOverride }}"
                 Write-Host ""
                 Write-Host "Test cases:"
                 $cases = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
@@ -494,14 +538,52 @@ stages:
                 }
                 Write-Host "=============================================="
 
+      # Compare the just-published run against the baseline-median in history
+      # storage. Fails the pipeline only when a cell exceeds a threshold AND has
+      # >= 3 prior runs to compare against — early in a scenario's life, every
+      # cell reports "insufficient baseline" and the script exits 0. Once
+      # baselines accrue per (version, tier, sampler), this becomes a real gate.
+      - job: regressionCheck
+        dependsOn:
+          - apply
+          - runLoadTests
+        condition: and(succeeded('runLoadTests'), eq('${{ parameters.skipLoadTests }}', 'False'))
+        displayName: Regression check
+        steps:
+          - task: AzureCLI@2
+            displayName: Compare run against baseline
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $major = ('${{ parameters.umbracoVersion }}' -split '\.')[0]
+                & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" `
+                    -Scenario '${{ parameters.scenario }}' `
+                    -Major $major `
+                    -StorageAccountName '$(historyStorageAccount)' `
+                    -ContainerName '$(historyContainer)' `
+                    -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md"
+          - task: PublishBuildArtifacts@1
+            displayName: Publish regression report
+            condition: succeededOrFailed()
+            continueOnError: true
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/regression-report.md'
+              ArtifactName: 'regression-report'
+              publishLocation: 'Container'
+
       - job: checkResourceGroupForCleanup
         dependsOn:
           - apply
           - verifyDeployments
           - runLoadTests
           - testSummary
+          - regressionCheck
         # apply in dependsOn ensures the cleanup chain still fires on apply-failure
-        # (apply Failed is a definite state; verify/runLoadTests/testSummary would be Skipped).
+        # (apply Failed is a definite state; the others would be Skipped). regressionCheck
+        # added to the chain so cleanup waits for the gate to finish; cleanup uses
+        # succeededOrFailed() so a regression-fail still triggers RG teardown.
         condition: succeededOrFailed()
         displayName: Check resource group for cleanup
         steps:

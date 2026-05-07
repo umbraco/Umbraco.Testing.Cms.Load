@@ -1,6 +1,12 @@
 # Smoke-verify deployed App Services on a skipLoadTests=true run.
 # For each case: start, poll homepage for 200, check seeder status, stop.
 # Exits non-zero if any case fails.
+#
+# Best-effort across cases: a failed `az webapp start/stop` doesn't abort the
+# loop (we want to verify every case, not just up to the first flake). That's
+# why we deliberately do NOT set $PSNativeCommandUseErrorActionPreference here
+# — native exit codes for `az` calls are non-fatal. If start fails, the homepage
+# poll times out and the case is marked failed; the loop continues.
 
 [CmdletBinding()]
 param (

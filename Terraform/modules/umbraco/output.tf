@@ -10,7 +10,9 @@ output "test_case_outputs" {
       tier                   = var.test_cases[k].tier
       scenario               = m.test_case_values.scenario
       app_service_sku        = var.tier_specs[var.test_cases[k].tier].app_sku
-      sql_sku                = var.tier_specs[var.test_cases[k].tier].sql_sku
+      # Reflect the override here so downstream metadata (NDJSON, ALT run description)
+      # records the SKU actually provisioned, not the tier's nominal pairing.
+      sql_sku                = var.sql_sku_override != "" ? var.sql_sku_override : var.tier_specs[var.test_cases[k].tier].sql_sku
       sql_server_name        = m.test_case_values.sql_server_name
       sql_server_resource_id = m.test_case_values.sql_server_resource_id
       sql_database_name      = m.test_case_values.sql_database_name

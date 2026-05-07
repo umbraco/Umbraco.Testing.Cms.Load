@@ -46,3 +46,17 @@ variable "seeder_preset" {
     error_message = "seeder_preset must be one of: Small, Medium, Large, Massive"
   }
 }
+
+# Override the SQL SKU for every case in the run. Empty string = use the tier's
+# built-in pairing from tiers.json. Lets you size SQL independently of the App
+# Service tier — useful when comparison data shows the app tier scales but the
+# database is the bottleneck.
+variable "sql_sku_override" {
+  type        = string
+  description = "Override SQL DB SKU for every case ('' = use each tier's default)."
+  default     = ""
+  validation {
+    condition     = var.sql_sku_override == "" || contains(["S0", "S1", "S2", "S3"], var.sql_sku_override)
+    error_message = "sql_sku_override must be empty (auto) or one of: S0, S1, S2, S3"
+  }
+}

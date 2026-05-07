@@ -59,9 +59,12 @@ module "versions" {
   scenario             = each.value.scenario
   app_settings_overlay = each.value.app_settings_overlay
 
-  admin_login     = local.sql_admin_login
-  admin_password  = random_password.admin_password.result
-  sql_sku         = var.tier_specs[each.value.tier].sql_sku
+  admin_login    = local.sql_admin_login
+  admin_password = random_password.admin_password.result
+  # sql_sku_override lets the run size SQL independently of the App Service tier
+  # (e.g. Standard app + S2 SQL) to isolate which side is the bottleneck.
+  # Empty override falls back to each tier's built-in pairing from tiers.json.
+  sql_sku         = var.sql_sku_override != "" ? var.sql_sku_override : var.tier_specs[each.value.tier].sql_sku
   sql_max_size_gb = var.tier_specs[each.value.tier].sql_max_size_gb
 
   seeder_preset = var.seeder_preset

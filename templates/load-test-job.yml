@@ -60,26 +60,25 @@ steps:
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
         Write-Host "##vso[task.setvariable variable=testCaseLabel]$($myCase.label)"
 
-        # Resolve the preceding case's app service for the stop-chain.
-        $previousTestCaseId = $myCase.previousTestCaseId
-        $prevAppService = ''
-        if ($previousTestCaseId -and $outputs.$previousTestCaseId) {
-          $prevAppService = $outputs.$previousTestCaseId.app_service_name
-        }
-        Write-Host "##vso[task.setvariable variable=previousAppServiceName]$prevAppService"
+        Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s"
 
-        Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s prev=$prevAppService"
-
-  # Sequential start/stop chain: only one app is hot at a time per plan.
+  # Stop every other case's App Service before starting this one. Defensive
+  # sweep instead of a chain-of-pairs: same-tier siblings share an App Service
+  # Plan, so a stale-running sibling would contaminate this case's CPU/RAM
+  # measurement. Idempotent on already-stopped apps.
   - task: AzureCLI@2
-    displayName: 'Stop previous App Service'
-    condition: and(succeeded(), ne(variables['previousAppServiceName'], ''))
+    displayName: 'Stop other App Services [${{ parameters.testCaseId }}]'
+    condition: and(succeeded(), ne(variables['hostName'], ''))
+    env:
+      TEST_CASE_OUTPUTS: $(testCaseOutputs)
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
       scriptType: 'pscore'
-      scriptLocation: 'inlineScript'
-      inlineScript: |
-        az webapp stop -n $(previousAppServiceName) -g ${{ parameters.resourceGroupName }}
+      scriptLocation: 'scriptPath'
+      scriptPath: '$(System.DefaultWorkingDirectory)/scripts/stop-all-app-services.ps1'
+      arguments: >
+        -ResourceGroupName "${{ parameters.resourceGroupName }}"
+        -ExceptAppService "$(appServiceName)"
 
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
@@ -255,10 +254,30 @@ steps:
         $configPath = "$(System.DefaultWorkingDirectory)/loadtest-config-$safeKey.yaml"
         $config | Out-File -FilePath $configPath -Encoding utf8
         Write-Host "##vso[task.setvariable variable=loadTestConfigPath]$configPath"
+
+        # Surface resource IDs so the publish step can query Azure Monitor for
+        # server-side metrics over the test window.
+        Write-Host "##vso[task.setvariable variable=appServiceResourceId]$appServiceResourceId"
+
         Write-Host "Generated load test config at: $configPath"
         Write-Host "App Service:      $appServiceResourceId"
         if ($appServicePlanId) { Write-Host "App Service Plan: $appServicePlanId" }
         if ($sqlDatabaseId)    { Write-Host "SQL Database:     $sqlDatabaseId" }
+
+  # Capture the load-test window in UTC ISO 8601 so the publish step can query
+  # Azure Monitor for server-side metrics (CPU, DTU, memory) over the same time
+  # range. The window is slightly wider than the actual steady-state — it includes
+  # ALT engine provisioning and post-test artifact download — but those phases are
+  # near-zero load on the SUT, so averages aren't meaningfully skewed.
+  - task: PowerShell@2
+    displayName: 'Capture load test start time [${{ parameters.testCaseId }}]'
+    condition: and(succeeded(), ne(variables['hostName'], ''))
+    inputs:
+      targetType: 'inline'
+      script: |
+        $start = (Get-Date).ToUniversalTime().ToString("o")
+        Write-Host "##vso[task.setvariable variable=loadTestStartTime]$start"
+        Write-Host "Load test window starts at: $start"
 
   # continueOnError: an SLO breach here is meaningful data, not a reason to skip the rest.
   # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.
@@ -272,8 +291,21 @@ steps:
       resourceGroup: '${{ parameters.historyResourceGroup }}'
       loadTestResource: '${{ parameters.historyLoadTestName }}'
       # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
-      loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} #$(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
+      # SQL SKU is in the name explicitly — when sqlSkuOverride is set, the run name has to
+      # differentiate (e.g. 'Standard S2' default vs 'Standard S3' override) or you can't tell
+      # override runs apart from default-pairing runs in the portal Compare view.
+      loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(sqlSku) #$(Build.BuildId)'
+      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], app=$(appServiceSku) sql=$(sqlSku), $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
+
+  - task: PowerShell@2
+    displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
+    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
+    inputs:
+      targetType: 'inline'
+      script: |
+        $end = (Get-Date).ToUniversalTime().ToString("o")
+        Write-Host "##vso[task.setvariable variable=loadTestEndTime]$end"
+        Write-Host "Load test window ends at: $end"
 
   # Pipeline artifact: per-build, expires with build retention. continueOnError so a
   # blob upload hiccup doesn't lose the rest of the run; history publish below is the
@@ -301,7 +333,6 @@ steps:
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-load-test-results.ps1'
       arguments: >
         -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
-        -HistoryResourceGroup "${{ parameters.historyResourceGroup }}"
         -StorageAccountName "${{ parameters.historyStorageAccount }}"
         -ContainerName "${{ parameters.historyContainer }}"
         -BuildId "$(Build.BuildId)"
@@ -320,3 +351,8 @@ steps:
         -DurationSeconds $(testDuration)
         -ColdStart "${{ parameters.coldStart }}"
         -TestCaseId "${{ parameters.testCaseId }}"
+        -LoadTestStartTime "$(loadTestStartTime)"
+        -LoadTestEndTime "$(loadTestEndTime)"
+        -AppServiceResourceId "$(appServiceResourceId)"
+        -AppServicePlanResourceId "$(appServicePlanId)"
+        -SqlDatabaseResourceId "$(sqlDatabaseId)"
