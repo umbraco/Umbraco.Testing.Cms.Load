@@ -671,6 +671,35 @@ Re-run the deploy script whenever you change dashboard files. The SAS is regener
 
 $0/month. Static Web Apps Free tier covers 100 GB bandwidth + 250 MB storage, neither of which gets close at this volume. Storage egress for blob fetches is fractions of a cent.
 
+### Maintenance
+
+**Prereqs both scripts assume**: `az` CLI logged in (`az login`), `swa` CLI installed (`npm install -g @azure/static-web-apps-cli`), pwsh 7.3+ (the scripts use `$PSNativeCommandUseErrorActionPreference`, which doesn't exist on Windows PowerShell 5.1).
+
+**SAS rotation** — the deploy-time SAS lasts 365 days. If nobody has deployed in a year, the dashboard 403s on blob fetches. Recovery: re-run `deploy-dashboard.ps1` (fresh SAS, fresh 365-day window). To pre-empt expiry, just redeploy any time you change dashboard files; the SAS is regenerated on every run.
+
+**AAD client secret rotation** — Entra-ID secrets expire on whatever schedule you set in the portal (Microsoft default: 6 / 12 / 24 months). At expiry, sign-in silently fails. Rotation:
+
+1. Portal → app registration → **Certificates & secrets** → **New client secret** → copy the value.
+2. Re-run `ensure-dashboard-infra.ps1` with the new `-AadClientSecret`. The script overwrites the SWA app setting in place; no other state changes.
+
+**Teardown** — remove the dashboard without affecting load-test history:
+
+```powershell
+az staticwebapp delete -n umbraco-loadtest-dashboard -g umbraco-loadtest-history-rg
+az storage cors clear --services b --account-name <history-sa>   # or remove just the dashboard origin
+# Then: portal → app registration → Delete
+```
+
+The history storage account, container, and ALT all stay untouched.
+
+### Troubleshooting
+
+- **Sign-in loops back to login.** Redirect URI on the Entra-ID app doesn't match the SWA hostname. Must be exactly `https://<swa-hostname>/.auth/login/aad/callback`.
+- **CORS error in browser console.** The CORS rule on the storage account doesn't include the SWA's origin (e.g. you redeployed the SWA and got a new hostname). Re-run `deploy-dashboard.ps1` — it reads the SWA's current hostname from Azure and re-adds the rule if missing.
+- **"Failed to load history" banner.** Three causes: SAS expired (redeploy), CORS rule missing (redeploy), or wrong storage account / container name passed to the deploy script (check the deploy invocation against what `ensure-history-infra.ps1` actually created).
+- **Logged in but no data + 403 on blob fetches in DevTools.** SAS expired even though auth still works. Redeploy.
+- **`swa deploy` fails with "deployment token invalid".** SWA was deleted and recreated; the deployment token rotated. The deploy script reads the current token each run, so this should self-heal — if it doesn't, run `az staticwebapp secrets list -n <swa> -g <rg>` manually and check.
+
 ## Roadmap
 
 Status of in-progress and not-yet-started work.
