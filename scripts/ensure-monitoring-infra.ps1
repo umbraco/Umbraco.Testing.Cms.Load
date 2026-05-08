@@ -229,12 +229,64 @@ if ($existing.Count -gt 0) {
     Write-Host "   already assigned"
 }
 else {
-    az role assignment create `
-        --assignee-object-id $IngestPrincipalId `
-        --assignee-principal-type ServicePrincipal `
-        --role $roleId `
-        --scope $dcrId | Out-Null
-    Write-Host "   assigned"
+    # Locally disable the throw-on-nonzero-exit preference so we can inspect
+    # $LASTEXITCODE and print a useful remediation if the caller lacks
+    # Microsoft.Authorization/roleAssignments/write at the DCR scope. The raw
+    # NativeCommandExitException with the AuthorizationFailed payload buried
+    # in the stack trace is unhelpful — the next person to fork this and hit
+    # it would have to reverse-engineer what's needed.
+    $prevPref = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        $createOutput = & az role assignment create `
+            --assignee-object-id $IngestPrincipalId `
+            --assignee-principal-type ServicePrincipal `
+            --role $roleId `
+            --scope $dcrId 2>&1
+        $createExit = $LASTEXITCODE
+    }
+    finally {
+        $PSNativeCommandUseErrorActionPreference = $prevPref
+    }
+
+    if ($createExit -eq 0) {
+        Write-Host "   assigned"
+    }
+    elseif (($createOutput | Out-String) -match "AuthorizationFailed") {
+        Write-Host ""
+        Write-Host "=========================================================================="
+        Write-Host "  Cannot auto-grant Monitoring Metrics Publisher on the DCR."
+        Write-Host "  The principal running this script lacks"
+        Write-Host "  Microsoft.Authorization/roleAssignments/write at the DCR scope."
+        Write-Host ""
+        Write-Host "  One-time fix — pick CLI or portal, then re-queue the pipeline."
+        Write-Host ""
+        Write-Host "  CLI (as a User Access Administrator on the RG):"
+        Write-Host ""
+        # PowerShell line-continuation char as a [char] literal — avoids all the
+        # escape-in-string ambiguity around printing trailing backticks.
+        $bt = [char]96
+        Write-Host "    az role assignment create $bt"
+        Write-Host "      --assignee-object-id $IngestPrincipalId $bt"
+        Write-Host "      --assignee-principal-type ServicePrincipal $bt"
+        Write-Host "      --role 'Monitoring Metrics Publisher' $bt"
+        Write-Host "      --scope $dcrId"
+        Write-Host ""
+        Write-Host "  Portal: open the DCR (RG '$HistoryResourceGroup', resource '$DcrName')"
+        Write-Host "          -> Access control (IAM) -> Add role assignment"
+        Write-Host "    Role:   Monitoring Metrics Publisher"
+        Write-Host "    Member: paste object ID  $IngestPrincipalId"
+        Write-Host ""
+        Write-Host "  The existence check above will see the grant on the next run and skip"
+        Write-Host "  this step entirely."
+        Write-Host "=========================================================================="
+        Write-Host ""
+        throw "Monitoring Metrics Publisher role grant requires a one-time manual setup. See remediation above."
+    }
+    else {
+        # Anything else — quota, transient, network — surface the raw output.
+        throw "az role assignment create failed (exit $createExit): $($createOutput | Out-String)"
+    }
 }
 
 Write-Host ""
