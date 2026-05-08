@@ -90,32 +90,35 @@ else {
 Write-Host "-> Preparing deploy bundle"
 $deployTmp = Join-Path ([IO.Path]::GetTempPath()) "loadtest-dashboard-$(Get-Random)"
 New-Item -ItemType Directory -Path $deployTmp -Force | Out-Null
-Copy-Item -Path "$DashboardDir/*" -Destination $deployTmp -Recurse -Force
+try {
+    Copy-Item -Path "$DashboardDir/*" -Destination $deployTmp -Recurse -Force
 
-$configPath = Join-Path $deployTmp "config.js"
-$config = @"
+    $configPath = Join-Path $deployTmp "config.js"
+    $config = @"
 window.DASHBOARD_CONFIG = {
     storageAccount: "$StorageAccountName",
     container:      "$ContainerName",
     sas:            "?$sas"
 };
 "@
-$config | Out-File -FilePath $configPath -Encoding utf8 -Force
+    $config | Out-File -FilePath $configPath -Encoding utf8 -Force
 
-$swaConfigPath = Join-Path $deployTmp "staticwebapp.config.json"
-if (Test-Path $swaConfigPath) {
-    (Get-Content $swaConfigPath -Raw).Replace("__TENANT_ID__", $TenantId) | Out-File -FilePath $swaConfigPath -Encoding utf8 -Force
+    $swaConfigPath = Join-Path $deployTmp "staticwebapp.config.json"
+    if (Test-Path $swaConfigPath) {
+        (Get-Content $swaConfigPath -Raw).Replace("__TENANT_ID__", $TenantId) | Out-File -FilePath $swaConfigPath -Encoding utf8 -Force
+    }
+
+    Write-Host "   bundle staged at $deployTmp"
+
+    # 5. Upload to SWA via its CLI. (Alternative: az staticwebapp deploy --workspace
+    #    works too but requires the Bicep deployment-token flow.)
+    Write-Host "-> Uploading to Static Web App"
+    $swaToken = az staticwebapp secrets list -n $StaticWebAppName -g $HistoryResourceGroup --query "properties.apiKey" -o tsv
+    swa deploy $deployTmp --deployment-token $swaToken --env production
+
+    Write-Host ""
+    Write-Host "Dashboard deployed: $swaOrigin"
 }
-
-Write-Host "   bundle staged at $deployTmp"
-
-# 5. Upload to SWA via its CLI. (Alternative: az staticwebapp deploy --workspace
-#    works too but requires the Bicep deployment-token flow.)
-Write-Host "-> Uploading to Static Web App"
-$swaToken = az staticwebapp secrets list -n $StaticWebAppName -g $HistoryResourceGroup --query "properties.apiKey" -o tsv
-swa deploy $deployTmp --deployment-token $swaToken --env production
-
-Remove-Item -Recurse -Force $deployTmp -ErrorAction SilentlyContinue
-
-Write-Host ""
-Write-Host "Dashboard deployed: $swaOrigin"
+finally {
+    Remove-Item -Recurse -Force $deployTmp -ErrorAction SilentlyContinue
+}

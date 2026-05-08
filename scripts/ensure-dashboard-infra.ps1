@@ -17,7 +17,6 @@ param(
     [Parameter(Mandatory = $true)] [string]$HistoryResourceGroup,
     [Parameter(Mandatory = $true)] [string]$HistoryLocation,
     [Parameter(Mandatory = $true)] [string]$StaticWebAppName,
-    [Parameter(Mandatory = $true)] [string]$TenantId,
     [Parameter(Mandatory = $true)] [string]$AadClientId,
     [Parameter(Mandatory = $true)] [securestring]$AadClientSecret
 )
@@ -72,14 +71,6 @@ az staticwebapp appsettings set `
     -g $HistoryResourceGroup `
     --setting-names "AAD_CLIENT_ID=$AadClientId" "AAD_CLIENT_SECRET=$plainSecret" | Out-Null
 Write-Host "   set"
-
-# Patch the staticwebapp.config.json's tenant placeholder. We do this on the
-# SOURCE file at deploy time in deploy-dashboard.ps1 too — but storing the
-# tenant alongside the SWA means deploy doesn't need it as a flag.
-az staticwebapp appsettings set `
-    -n $StaticWebAppName `
-    -g $HistoryResourceGroup `
-    --setting-names "AAD_TENANT_ID=$TenantId" | Out-Null
 
 Write-Host ""
 Write-Host "Dashboard SWA ready: https://$swaHostname"

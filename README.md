@@ -631,13 +631,14 @@ The `regression-report` artifact + the per-sampler table from `compare-runs.ps1`
 
 ## Dashboard
 
-For people who'd rather click than type, `dashboard/` is a static single-page app hosted on an Azure Static Web App with Entra-ID auth. It reads the same NDJSON the scripts read and offers three views:
+For people who'd rather click than type, `dashboard/` is a static single-page app hosted on an Azure Static Web App with Entra-ID auth. It reads the same NDJSON the scripts read and offers four views:
 
-- **Trends** — per-sampler line chart of p95 / p99 / error rate over time, plus a `(version × tier)` matrix with median ±stddev for cells with multiple runs.
-- **Compare** — pick two specific runs from the dropdown, get side-by-side per-sampler bars + delta tables (client-side and server-side metrics).
-- **Runs** — flat list of all stored runs with their metadata.
+- **Trends** — one line chart per sampler over time, with one series per `(version × tier)`. Toggle the metric for p95 / p99 / error rate or server-side resource use (Plan CPU max %, SQL DTU max %). Each chart has a foldout matrix with median ±stddev across runs in the cell.
+- **Tiers** — pick scenario + version, get the latest run on each tier side-by-side: grouped bar chart, per-sampler Δ table vs a chosen baseline tier, plus a server-side block. Answers "what do I get for upgrading the tier?" without picking individual runs.
+- **Compare** — pick two specific runs from the dropdown, get per-sampler bars + delta tables (client-side and server-side metrics).
+- **Runs** — flat list of all stored runs; click a row to drill into per-sampler stats and server-side metrics for that run.
 
-Filter bar at the top scopes everything by scenario / version / tier / date range. Filter state lives in the URL hash, so links are shareable.
+Filter bar at the top scopes Trends / Compare / Runs by scenario / version / tier / date range (the Tiers tab ignores it deliberately — it's the cross-tier view). Filter state lives in the URL hash, so links are shareable.
 
 ### One-time setup
 
@@ -648,7 +649,6 @@ Filter bar at the top scopes everything by scenario / version / tier / date rang
        -HistoryResourceGroup umbraco-loadtest-history-rg `
        -HistoryLocation "West Europe" `
        -StaticWebAppName umbraco-loadtest-dashboard `
-       -TenantId "<your-tenant-guid>" `
        -AadClientId "<from-step-1>" `
        -AadClientSecret (Read-Host -AsSecureString)
    ```

@@ -52,14 +52,30 @@
         <nav>
             <ul role="tablist">
                 <li><a href="#trends" data-tab="trends" class="active">Trends</a></li>
+                <li><a href="#tiers" data-tab="tiers">Tiers</a></li>
                 <li><a href="#compare" data-tab="compare">Compare</a></li>
                 <li><a href="#runs" data-tab="runs">Runs</a></li>
             </ul>
         </nav>
 
         <section id="tab-trends" class="tab">
-            <p class="muted">Per-sampler matrix of latency p95 / p99 / error% across versions and tiers. Cells with 2+ runs show median ±stddev (n=K).</p>
+            <p class="muted">One line chart per sampler over time, with one series per <code>(version × tier)</code>. Toggle metric for latency or server-side resource use. Each chart has a foldout matrix view with median ±stddev across runs in the cell.</p>
             <div id="trends-content"></div>
+        </section>
+
+        <section id="tab-tiers" class="tab hidden">
+            <p class="muted">Latest run per tier for one scenario × version. Answers "what do I get for upgrading the tier?" in one view. Ignores the global filter bar — pick from below.</p>
+            <div class="grid">
+                <label>
+                    Scenario
+                    <select id="tiers-scenario"></select>
+                </label>
+                <label>
+                    Version
+                    <select id="tiers-version"></select>
+                </label>
+            </div>
+            <div id="tiers-content"></div>
         </section>
 
         <section id="tab-compare" class="tab hidden">
@@ -81,7 +97,7 @@
         </section>
 
         <section id="tab-runs" class="tab hidden">
-            <p class="muted">All runs matching current filters. Click a row to drill in.</p>
+            <p class="muted">All runs matching current filters. Click a row to expand per-sampler + server-side detail.</p>
             <div id="runs-content"></div>
         </section>
     </main>

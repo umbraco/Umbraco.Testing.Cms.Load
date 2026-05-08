@@ -2,8 +2,8 @@
 //
 // On load: lists all summary.ndjson blobs in the history container, downloads
 // them in parallel, parses, groups rows by run_id (each NDJSON file is one run
-// expanded as N per-sampler rows). Renders three tabs: Trends, Compare, Runs.
-// Filter state lives in the URL hash so links are shareable.
+// expanded as N per-sampler rows). Renders four tabs: Trends, Tiers, Compare,
+// Runs. Filter state lives in the URL hash so links are shareable.
 
 (() => {
     "use strict";
@@ -16,6 +16,7 @@
     const SAS = (CFG.sas && CFG.sas[0] === "?") ? CFG.sas : "?" + (CFG.sas ?? "");
 
     const TIER_ORDER = ["Starter", "Standard", "Pro"];
+    const VALID_TABS = ["trends", "tiers", "compare", "runs"];
 
     const $ = (sel) => document.querySelector(sel);
     const fmtPct = (v) => (v == null) ? "—" : (v * 100).toFixed(2) + "%";
@@ -141,19 +142,22 @@
         $("#footer-status").textContent = `Loading ${blobs.length} run(s)…`;
 
         // Parallel fetch with a soft concurrency cap.
+        let skipped = 0;
         const cap = 10;
         const allRows = [];
         for (let i = 0; i < blobs.length; i += cap) {
             const slice = blobs.slice(i, i + cap);
             const results = await Promise.all(slice.map(b => fetchNdjson(b).catch(err => {
                 console.warn("skip", b, err);
+                skipped++;
                 return [];
             })));
             for (const r of results) allRows.push(...r);
         }
         const runs = groupByRun(allRows);
         const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
-        $("#footer-status").textContent = `Loaded ${runs.length} run(s) from ${blobs.length} file(s) in ${elapsed}s.`;
+        const skipMsg = skipped > 0 ? `, ${skipped} skipped` : "";
+        $("#footer-status").textContent = `Loaded ${runs.length} run(s) from ${blobs.length} file(s)${skipMsg} in ${elapsed}s.`;
         return runs;
     }
 
@@ -161,8 +165,9 @@
 
     function readHashState() {
         const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+        const tab = params.get("tab") || "trends";
         return {
-            tab: params.get("tab") || "trends",
+            tab: VALID_TABS.includes(tab) ? tab : "trends",
             scenario: params.get("scenario") || "",
             version: params.get("version") || "",
             tier: params.get("tier") || "",
@@ -172,6 +177,10 @@
             candidate: params.get("candidate") || "",
             threshold: params.get("threshold") || "10",
             metric: params.get("metric") || "p95",
+            tiersScenario: params.get("tiersScenario") || "",
+            tiersVersion: params.get("tiersVersion") || "",
+            tiersBaseline: params.get("tiersBaseline") || "",
+            tiersMetric: params.get("tiersMetric") || "p95",
         };
     }
     function writeHashState(state) {
@@ -214,6 +223,22 @@
         }
     }
 
+    // Sort a `[seriesKey, points][]` collection where seriesKey is "version/tier".
+    // Default Array.sort would put Pro < Standard < Starter alphabetically; we
+    // want TIER_ORDER, with version compared lexicographically as the outer key.
+    function sortSeriesByVerThenTier(entries) {
+        const tierOrder = (t) => {
+            const i = TIER_ORDER.indexOf(t);
+            return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+        };
+        return entries.sort(([ka], [kb]) => {
+            const [va, ta] = ka.split("/");
+            const [vb, tb] = kb.split("/");
+            if (va !== vb) return va.localeCompare(vb);
+            return tierOrder(ta) - tierOrder(tb);
+        });
+    }
+
     // Stable color palette for (version × tier) lines on the trends chart.
     function colorFor(label, idx) {
         // Cycle through a hand-picked palette. Pico's accent colours don't reach
@@ -226,6 +251,40 @@
         return palette[idx % palette.length];
     }
 
+    // Per-sampler latency metrics use run.samplers[].p95_ms etc.; server-side
+    // metrics live on run.server.* and don't have a sampler dimension, so they
+    // render a single chart instead of one-per-sampler.
+    const SERVER_METRICS = {
+        plan_cpu_max: "Plan CPU max %",
+        sql_dtu_max:  "SQL DTU max %",
+    };
+
+    function metricToggleHtml(metric) {
+        const opts = [
+            ["p95", "p95 (ms)"],
+            ["p99", "p99 (ms)"],
+            ["err", "error rate"],
+            ["plan_cpu_max", "Plan CPU max %"],
+            ["sql_dtu_max", "SQL DTU max %"],
+        ];
+        return `<div class="metric-toggle"><strong>Metric:</strong>` +
+            opts.map(([v, label]) =>
+                `<label><input type="radio" name="trend-metric" value="${v}"${metric === v ? " checked" : ""}> ${label}</label>`
+            ).join("") +
+            `</div>`;
+    }
+
+    function attachMetricToggleHandler(container) {
+        container.querySelectorAll('input[name="trend-metric"]').forEach(input => {
+            input.addEventListener("change", () => {
+                const s = readHashState();
+                s.metric = input.value;
+                writeHashState(s);
+                rerender(window._runs);
+            });
+        });
+    }
+
     function renderTrends(runs, state) {
         const container = $("#trends-content");
         destroyChartsByPrefix("trend:");
@@ -234,6 +293,14 @@
             return;
         }
 
+        const rawMetric = state.metric || "p95";
+        if (rawMetric in SERVER_METRICS) {
+            renderServerTrends(container, runs, rawMetric);
+            attachMetricToggleHandler(container);
+            return;
+        }
+        const metric = ["p95", "p99", "err"].includes(rawMetric) ? rawMetric : "p95";
+
         // Bucket by sampler name -> version -> tier -> [runs]
         const samplers = new Set();
         const versions = new Set();
@@ -241,8 +308,8 @@
         const cells = new Map(); // key: sampler|version|tier -> array of {p95, p99, error_rate}
 
         for (const run of runs) {
-            versions.add(run.version);
-            tiers.add(run.tier);
+            if (run.version) versions.add(run.version);
+            if (run.tier) tiers.add(run.tier);
             for (const s of run.samplers) {
                 samplers.add(s.name);
                 const key = `${s.name}|${run.version}|${run.tier}`;
@@ -254,12 +321,13 @@
         const sampList = Array.from(samplers).sort();
         const verList = Array.from(versions).sort();
         const tierList = [...TIER_ORDER.filter(t => tiers.has(t)), ...Array.from(tiers).filter(t => !TIER_ORDER.includes(t))];
-        const metric = state.metric || "p95";
 
         // Per-sampler time-series datasets: one line per (version, tier) cell,
-        // x-axis is the run timestamp.
+        // x-axis is the run timestamp. Need version/tier for series grouping
+        // and started for the time axis — skip runs missing any of them.
         const seriesBySampler = new Map();
         for (const run of runs) {
+            if (!run.version || !run.tier || !run.started) continue;
             for (const s of run.samplers) {
                 const seriesKey = `${run.version}/${run.tier}`;
                 const point = {
@@ -276,14 +344,7 @@
             }
         }
 
-        let html = `
-            <div class="metric-toggle">
-                <strong>Metric:</strong>
-                <label><input type="radio" name="trend-metric" value="p95"${metric === "p95" ? " checked" : ""}> p95 (ms)</label>
-                <label><input type="radio" name="trend-metric" value="p99"${metric === "p99" ? " checked" : ""}> p99 (ms)</label>
-                <label><input type="radio" name="trend-metric" value="err"${metric === "err" ? " checked" : ""}> error rate</label>
-            </div>
-        `;
+        let html = metricToggleHtml(metric);
 
         for (const samp of sampList) {
             const safeId = samp.replace(/[^A-Za-z0-9]/g, "-");
@@ -305,15 +366,7 @@
         }
         container.innerHTML = html;
 
-        // Attach the metric toggle handler — re-renders Trends only.
-        container.querySelectorAll('input[name="trend-metric"]').forEach(input => {
-            input.addEventListener("change", () => {
-                const s = readHashState();
-                s.metric = input.value;
-                writeHashState(s);
-                rerender(window._runs);
-            });
-        });
+        attachMetricToggleHandler(container);
 
         // Now that the canvases exist, instantiate the charts.
         for (const samp of sampList) {
@@ -323,7 +376,7 @@
             const seriesMap = seriesBySampler.get(samp) ?? new Map();
             const datasets = [];
             let i = 0;
-            for (const [seriesKey, points] of Array.from(seriesMap.entries()).sort()) {
+            for (const [seriesKey, points] of sortSeriesByVerThenTier(Array.from(seriesMap.entries()))) {
                 points.sort((a, b) => (a.x ?? "").localeCompare(b.x ?? ""));
                 datasets.push({
                     label: seriesKey,
@@ -337,6 +390,9 @@
                 i++;
             }
             const yLabel = metric === "err" ? "error rate" : metric + " (ms)";
+            const yTicks = metric === "err"
+                ? { callback: (v) => (v * 100).toFixed(2) + "%" }
+                : undefined;
             const chart = new Chart(canvas.getContext("2d"), {
                 type: "line",
                 data: { datasets },
@@ -346,7 +402,7 @@
                     parsing: { xAxisKey: "x", yAxisKey: "y" },
                     scales: {
                         x: { type: "time", time: { tooltipFormat: "yyyy-MM-dd HH:mm" }, title: { display: true, text: "run started" } },
-                        y: { title: { display: true, text: yLabel }, beginAtZero: false },
+                        y: { title: { display: true, text: yLabel }, beginAtZero: false, ticks: yTicks },
                     },
                     plugins: {
                         tooltip: {
@@ -363,9 +419,6 @@
                     },
                 },
             });
-            // Note: Chart.js v4 needs the date adapter for type:"time". If it's
-            // not loaded, fall back to category scale. We try-catch above; if
-            // Chart construction failed for any reason we just leave the canvas blank.
             _chartInstances.set(`trend:${samp}`, chart);
         }
     }
@@ -385,12 +438,299 @@
         return `${fmtMs(p95Med)} ±${fmtNum(p95Std, 0)} / ${fmtMs(p99Med)} ±${fmtNum(p99Std, 0)} <span class="muted">(${fmtPct(errMed)} n=${arr.length})</span>`;
     }
 
+    // Server-side metric trends: one chart, one matrix, no per-sampler split.
+    // Lines are still (version × tier); points are run-level values.
+    function renderServerTrends(container, runs, metric) {
+        const versions = new Set();
+        const tiers = new Set();
+        const cells = new Map();        // version|tier -> [values]
+        const seriesMap = new Map();    // "v/t" -> [points]
+        for (const run of runs) {
+            if (!run.version || !run.tier) continue;
+            versions.add(run.version);
+            tiers.add(run.tier);
+            const v = run.server?.[metric];
+            const cellKey = `${run.version}|${run.tier}`;
+            if (!cells.has(cellKey)) cells.set(cellKey, []);
+            cells.get(cellKey).push(v);
+            // Need a timestamp for the time axis; matrix view tolerates missing
+            // started (just bucketed by cell) but the chart would NaN.
+            if (v == null || !run.started) continue;
+            const seriesKey = `${run.version}/${run.tier}`;
+            if (!seriesMap.has(seriesKey)) seriesMap.set(seriesKey, []);
+            seriesMap.get(seriesKey).push({ x: run.started, y: v, runId: run.run_id, commit: run.commit });
+        }
+        const verList = Array.from(versions).sort();
+        const tierList = [...TIER_ORDER.filter(t => tiers.has(t)), ...Array.from(tiers).filter(t => !TIER_ORDER.includes(t))];
+
+        let html = metricToggleHtml(metric);
+        html += `<h3>${escapeHtml(SERVER_METRICS[metric])}</h3>`;
+        html += `<div class="chart-wrap"><canvas id="trend-chart-server"></canvas></div>`;
+        html += `<details><summary>Matrix view (median ±stddev)</summary>`;
+        html += `<table><thead><tr><th>Version</th>`;
+        for (const t of tierList) html += `<th>${escapeHtml(t)}</th>`;
+        html += `</tr></thead><tbody>`;
+        for (const v of verList) {
+            html += `<tr><td><code>${escapeHtml(v)}</code></td>`;
+            for (const t of tierList) {
+                const arr = (cells.get(`${v}|${t}`) ?? []).filter(x => x != null);
+                html += `<td>${formatServerCell(arr)}</td>`;
+            }
+            html += `</tr>`;
+        }
+        html += `</tbody></table></details>`;
+        container.innerHTML = html;
+
+        const canvas = $("#trend-chart-server");
+        if (!canvas) return;
+        const datasets = [];
+        let i = 0;
+        for (const [seriesKey, points] of Array.from(seriesMap.entries()).sort()) {
+            points.sort((a, b) => (a.x ?? "").localeCompare(b.x ?? ""));
+            datasets.push({
+                label: seriesKey,
+                data: points,
+                borderColor: colorFor(seriesKey, i),
+                backgroundColor: colorFor(seriesKey, i),
+                tension: 0.2,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+            });
+            i++;
+        }
+        const chart = new Chart(canvas.getContext("2d"), {
+            type: "line",
+            data: { datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                parsing: { xAxisKey: "x", yAxisKey: "y" },
+                scales: {
+                    x: { type: "time", time: { tooltipFormat: "yyyy-MM-dd HH:mm" }, title: { display: true, text: "run started" } },
+                    y: { title: { display: true, text: "%" }, beginAtZero: true, suggestedMax: 100 },
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => items.length ? new Date(items[0].parsed.x).toISOString().replace("T", " ").substring(0, 19) : "",
+                            label: (ctx) => {
+                                const p = ctx.raw;
+                                return `${ctx.dataset.label}: ${fmtNum(p.y)}%  (run #${p.runId}${p.commit ? ", " + p.commit.substring(0, 8) : ""})`;
+                            },
+                        },
+                    },
+                    legend: { position: "bottom" },
+                },
+            },
+        });
+        _chartInstances.set("trend:server", chart);
+    }
+
+    function formatServerCell(arr) {
+        if (arr.length === 0) return `<span class="muted">—</span>`;
+        if (arr.length === 1) return `${fmtNum(arr[0])}%`;
+        return `${fmtNum(median(arr))}% ±${fmtNum(stddev(arr))} <span class="muted">(n=${arr.length})</span>`;
+    }
+
+    // Cross-tier snapshot: pick scenario + version, show the latest run per
+    // tier side-by-side. Receives the FULL run list (not the globally filtered
+    // one) because the tier dimension is what we're comparing — a tier filter
+    // applied above would defeat the whole view.
+    function renderTiers(allRuns, state) {
+        const container = $("#tiers-content");
+        const scenarioSel = $("#tiers-scenario");
+        const versionSel = $("#tiers-version");
+        destroyChartsByPrefix("tiers:");
+
+        // Populate the two pickers from the entire history.
+        const scenarios = new Set(), versions = new Set();
+        for (const r of allRuns) {
+            if (r.scenario) scenarios.add(r.scenario);
+            if (r.version) versions.add(r.version);
+        }
+        const buildOpts = (values, current) =>
+            `<option value="">— pick —</option>` +
+            Array.from(values).sort().map(v =>
+                `<option value="${escapeHtml(v)}"${v === current ? " selected" : ""}>${escapeHtml(v)}</option>`
+            ).join("");
+        scenarioSel.innerHTML = buildOpts(scenarios, state.tiersScenario);
+        versionSel.innerHTML = buildOpts(versions, state.tiersVersion);
+
+        if (!state.tiersScenario || !state.tiersVersion) {
+            container.innerHTML = `<p class="muted">Pick a scenario and version above.</p>`;
+            return;
+        }
+
+        const matched = allRuns.filter(r =>
+            r.scenario === state.tiersScenario && r.version === state.tiersVersion
+        );
+        if (matched.length === 0) {
+            container.innerHTML = `<p><em>No runs match <code>${escapeHtml(state.tiersScenario)}</code> / <code>${escapeHtml(state.tiersVersion)}</code>.</em></p>`;
+            return;
+        }
+
+        // Latest run per tier — newest started timestamp wins.
+        const latestByTier = new Map();
+        for (const r of matched) {
+            if (!r.tier) continue;
+            const existing = latestByTier.get(r.tier);
+            if (!existing || (r.started ?? "") > (existing.started ?? "")) {
+                latestByTier.set(r.tier, r);
+            }
+        }
+        const tiersFound = [
+            ...TIER_ORDER.filter(t => latestByTier.has(t)),
+            ...Array.from(latestByTier.keys()).filter(t => !TIER_ORDER.includes(t)).sort(),
+        ];
+        if (tiersFound.length === 0) {
+            container.innerHTML = `<p><em>No tier data for that selection.</em></p>`;
+            return;
+        }
+
+        const baselineTier = latestByTier.has(state.tiersBaseline) ? state.tiersBaseline : tiersFound[0];
+        const metric = ["p95", "p99", "avg"].includes(state.tiersMetric) ? state.tiersMetric : "p95";
+        const metricField = metric === "p95" ? "p95_ms" : metric === "p99" ? "p99_ms" : "avg_ms";
+        // Reuse the user's Compare threshold so the dashboard has a single
+        // "what counts as significant" knob, not two.
+        const threshold = Number(state.threshold) || 10;
+
+        // Sampler universe + per-(sampler, tier) lookup.
+        const samplerNames = new Set();
+        const sampByTier = new Map();
+        for (const [tier, r] of latestByTier) {
+            for (const s of r.samplers) {
+                samplerNames.add(s.name);
+                sampByTier.set(`${s.name}|${tier}`, s);
+            }
+        }
+        const samplerList = Array.from(samplerNames).sort();
+
+        // ---- HTML ------------------------------------------------------------
+
+        let html = `<div class="grid">
+            <label>Baseline tier
+                <select id="tiers-baseline">
+                    ${tiersFound.map(t =>
+                        `<option value="${escapeHtml(t)}"${t === baselineTier ? " selected" : ""}>${escapeHtml(t)}</option>`
+                    ).join("")}
+                </select>
+            </label>
+            <label>Metric
+                <select id="tiers-metric">
+                    <option value="p95"${metric === "p95" ? " selected" : ""}>p95 (ms)</option>
+                    <option value="p99"${metric === "p99" ? " selected" : ""}>p99 (ms)</option>
+                    <option value="avg"${metric === "avg" ? " selected" : ""}>avg (ms)</option>
+                </select>
+            </label>
+        </div>`;
+
+        // Show which run was picked per tier so users know what they're seeing.
+        html += `<p class="muted">Latest runs picked: `;
+        html += tiersFound.map(t => {
+            const r = latestByTier.get(t);
+            const when = (r.started ?? "?").substring(0, 19).replace("T", " ");
+            return `<code>${escapeHtml(t)}</code> #${escapeHtml(r.run_id)} <span class="muted">(${escapeHtml(when)})</span>`;
+        }).join(" · ");
+        html += `</p>`;
+
+        // Per-sampler grouped bar chart.
+        html += `<h3>${escapeHtml(metric)} per sampler</h3>`;
+        html += `<div class="chart-wrap"><canvas id="tiers-chart-bar"></canvas></div>`;
+
+        // Per-sampler delta table.
+        html += `<h3>Per-sampler — Δ vs <code>${escapeHtml(baselineTier)}</code></h3>`;
+        html += `<table><thead><tr><th>Sampler</th>`;
+        for (const t of tiersFound) {
+            html += `<th>${escapeHtml(t)}</th>`;
+            if (t !== baselineTier) html += `<th>Δ</th>`;
+        }
+        html += `</tr></thead><tbody>`;
+        for (const name of samplerList) {
+            const baseSamp = sampByTier.get(`${name}|${baselineTier}`);
+            const baseVal = baseSamp?.[metricField];
+            html += `<tr><td><code>${escapeHtml(name)}</code></td>`;
+            for (const t of tiersFound) {
+                const samp = sampByTier.get(`${name}|${t}`);
+                const v = samp?.[metricField];
+                html += `<td>${fmtMs(v)}</td>`;
+                if (t !== baselineTier) html += `<td>${formatDelta(baseVal, v, threshold)}</td>`;
+            }
+            html += `</tr>`;
+        }
+        html += `</tbody></table>`;
+
+        // Server-side block — one column per tier (no Δ — absolute % is what matters).
+        html += `<h3>Server-side</h3>`;
+        html += `<table><thead><tr><th>Metric</th>`;
+        for (const t of tiersFound) html += `<th>${escapeHtml(t)}</th>`;
+        html += `</tr></thead><tbody>`;
+        const serverFields = [
+            ["Plan CPU max",      "plan_cpu_max"],
+            ["Plan CPU avg",      "plan_cpu_avg"],
+            ["Plan Memory max",   "plan_mem_max"],
+            ["SQL DTU max",       "sql_dtu_max"],
+            ["SQL DTU avg",       "sql_dtu_avg"],
+            ["SQL CPU max",       "sql_cpu_max"],
+            ["SQL Log-write max", "sql_log_max"],
+        ];
+        for (const [label, key] of serverFields) {
+            html += `<tr><td>${escapeHtml(label)}</td>`;
+            for (const t of tiersFound) {
+                const r = latestByTier.get(t);
+                const v = r.server?.[key];
+                html += `<td>${v == null ? `<span class="muted">—</span>` : fmtNum(v) + "%"}</td>`;
+            }
+            html += `</tr>`;
+        }
+        html += `</tbody></table>`;
+
+        container.innerHTML = html;
+
+        // ---- Wire dynamic dropdowns + build the chart -----------------------
+
+        $("#tiers-baseline").addEventListener("change", () => {
+            const s = readHashState();
+            s.tiersBaseline = $("#tiers-baseline").value;
+            writeHashState(s);
+            renderTiers(window._runs, readHashState());
+        });
+        $("#tiers-metric").addEventListener("change", () => {
+            const s = readHashState();
+            s.tiersMetric = $("#tiers-metric").value;
+            writeHashState(s);
+            renderTiers(window._runs, readHashState());
+        });
+
+        const canvas = $("#tiers-chart-bar");
+        if (canvas) {
+            const datasets = tiersFound.map((t, i) => ({
+                label: t,
+                data: samplerList.map(n => sampByTier.get(`${n}|${t}`)?.[metricField] ?? null),
+                backgroundColor: colorFor(t, i),
+            }));
+            const chart = new Chart(canvas.getContext("2d"), {
+                type: "bar",
+                data: { labels: samplerList, datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { stacked: false },
+                        y: { title: { display: true, text: `${metric} (ms)` }, beginAtZero: true },
+                    },
+                    plugins: { legend: { position: "bottom" } },
+                },
+            });
+            _chartInstances.set("tiers:bar", chart);
+        }
+    }
+
     function renderCompare(runs, state) {
         // Populate the run dropdowns from the (filtered) run list.
         const baseline = $("#compare-baseline");
         const candidate = $("#compare-candidate");
         const optHtml = `<option value="">—</option>` + runs.map(r =>
-            `<option value="${r.run_id}">${escapeHtml(r.started ?? "?")} · ${escapeHtml(r.scenario)} / ${escapeHtml(r.version)} / ${escapeHtml(r.tier)} (#${escapeHtml(r.run_id)})</option>`
+            `<option value="${escapeHtml(r.run_id)}">${escapeHtml(r.started ?? "?")} · ${escapeHtml(r.scenario)} / ${escapeHtml(r.version)} / ${escapeHtml(r.tier)} (#${escapeHtml(r.run_id)})</option>`
         ).join("");
         baseline.innerHTML = optHtml;
         candidate.innerHTML = optHtml;
@@ -402,8 +742,10 @@
             content.innerHTML = `<p class="muted">Pick two runs to compare.</p>`;
             return;
         }
-        const a = runs.find(r => r.run_id === state.baseline);
-        const b = runs.find(r => r.run_id === state.candidate);
+        // Normalise run_id: option values are strings (URL hash + DOM), but
+        // r.run_id may arrive as a number from JSON.
+        const a = runs.find(r => String(r.run_id) === state.baseline);
+        const b = runs.find(r => String(r.run_id) === state.candidate);
         if (!a || !b) {
             content.innerHTML = `<p><em>One of the selected runs isn't in the current filter — adjust filters or pick again.</em></p>`;
             return;
@@ -426,8 +768,8 @@
         for (const name of allNames) {
             const sa = aBy[name], sb = bBy[name];
             html += `<tr><td><code>${escapeHtml(name)}</code></td>`;
-            html += `<td>${sa?.request_count ?? "<em>missing</em>"}</td>`;
-            html += `<td>${sb?.request_count ?? "<em>missing</em>"}</td>`;
+            html += `<td>${sa?.request_count ?? `<span class="muted">—</span>`}</td>`;
+            html += `<td>${sb?.request_count ?? `<span class="muted">—</span>`}</td>`;
             html += `<td>${formatDelta(sa?.avg_ms, sb?.avg_ms, threshold)}</td>`;
             html += `<td>${formatDelta(sa?.p95_ms, sb?.p95_ms, threshold)}</td>`;
             html += `<td>${formatDelta(sa?.p99_ms, sb?.p99_ms, threshold)}</td>`;
@@ -446,12 +788,13 @@
             ["SQL CPU max", "sql_cpu_max", "%"],
             ["SQL Log-write max", "sql_log_max", "%"],
         ];
+        const muted = `<span class="muted">—</span>`;
         for (const [label, key, suffix] of serverFields) {
             const va = a.server?.[key], vb = b.server?.[key];
             html += `<tr>
                 <td>${escapeHtml(label)}</td>
-                <td>${va == null ? "—" : fmtNum(va) + suffix}</td>
-                <td>${vb == null ? "—" : fmtNum(vb) + suffix}</td>
+                <td>${va == null ? muted : fmtNum(va) + suffix}</td>
+                <td>${vb == null ? muted : fmtNum(vb) + suffix}</td>
                 <td>${formatDelta(va, vb, threshold)}</td>
             </tr>`;
         }
@@ -460,9 +803,9 @@
         content.innerHTML = html;
 
         // Build the per-sampler bar chart: grouped bars baseline vs candidate
-        // for p50 / p95 / p99 across each sampler. Visualises what the table
-        // shows numerically; spotting "every sampler regressed by ~X%" is a
-        // chart-shaped task more than a row-of-numbers one.
+        // for p95 and p99 across each sampler. Spotting "every sampler
+        // regressed by ~X%" is a chart-shaped task more than a row-of-numbers
+        // one.
         destroyChart("compare:bar");
         const canvas = $("#compare-chart-bar");
         if (canvas) {
@@ -507,23 +850,124 @@
             container.innerHTML = `<p><em>No runs match the current filter.</em></p>`;
             return;
         }
-        let html = `<table><thead><tr>
+        let html = `<table class="runs-table"><thead><tr>
+            <th></th>
             <th>Started</th><th>Scenario</th><th>Version</th><th>Tier</th>
             <th>Run #</th><th>Commit</th><th>Status</th>
         </tr></thead><tbody>`;
         for (const r of runs) {
-            html += `<tr>
-                <td>${escapeHtml(r.started?.replace("T", " ").replace(/\.\d+/, "").substring(0, 19) ?? "?")}</td>
+            const started = r.started?.replace("T", " ").replace(/\.\d+/, "").substring(0, 19) ?? "?";
+            const id = String(r.run_id);
+            html += `<tr class="run-row" data-run-id="${escapeHtml(id)}">
+                <td class="run-toggle" aria-label="expand">▸</td>
+                <td>${escapeHtml(started)}</td>
                 <td>${escapeHtml(r.scenario ?? "")}</td>
                 <td><code>${escapeHtml(r.version ?? "")}</code></td>
                 <td>${escapeHtml(r.tier ?? "")}</td>
-                <td>${escapeHtml(r.run_id)}</td>
+                <td>${escapeHtml(id)}</td>
                 <td><code>${escapeHtml((r.commit ?? "").substring(0, 8))}</code></td>
                 <td>${r.parse_status === "ok" ? "✓" : `<span class="muted">${escapeHtml(r.parse_status ?? "?")}</span>`}</td>
+            </tr>
+            <tr class="run-detail hidden" data-detail-for="${escapeHtml(id)}">
+                <td colspan="8">${renderRunDetail(r)}</td>
             </tr>`;
         }
         html += `</tbody></table>`;
         container.innerHTML = html;
+
+        container.querySelectorAll(".run-row").forEach(row => {
+            row.addEventListener("click", () => {
+                const id = row.dataset.runId;
+                const detail = container.querySelector(`.run-detail[data-detail-for="${CSS.escape(id)}"]`);
+                if (!detail) return;
+                const open = detail.classList.toggle("hidden") === false;
+                row.classList.toggle("expanded", open);
+                row.querySelector(".run-toggle").textContent = open ? "▾" : "▸";
+            });
+        });
+    }
+
+    // Inline drill-down for a single run: metadata + per-sampler table +
+    // server-side metrics. Rendered into the detail row's <td colspan>.
+    function renderRunDetail(r) {
+        const meta = [
+            ["Run ID", r.run_id],
+            ["Started", r.started],
+            ["Branch", r.branch],
+            ["Commit", r.commit],
+            ["Test case", r.test_case_id],
+            ["Seeder preset", r.seeder],
+            ["User count", r.user_count],
+            ["Duration (s)", r.duration_seconds],
+            ["Cold start", r.cold_start],
+            ["App SKU", r.app_sku],
+            ["SQL SKU", r.sql_sku],
+            ["Parse status", r.parse_status],
+        ];
+        let html = `<div class="run-detail-content">`;
+
+        html += `<div><strong>Run metadata</strong><dl>`;
+        for (const [k, v] of meta) {
+            const cell = (v == null || v === "") ? `<span class="muted">—</span>` : `<code>${escapeHtml(String(v))}</code>`;
+            html += `<dt>${escapeHtml(k)}</dt><dd>${cell}</dd>`;
+        }
+        html += `</dl></div>`;
+
+        html += `<div><strong>Per-sampler</strong>`;
+        if (!r.samplers || r.samplers.length === 0) {
+            html += `<p class="muted">No sampler data.</p>`;
+        } else {
+            html += `<table><thead><tr>
+                <th>Sampler</th>
+                <th>Reqs</th><th>Fails</th><th>Err %</th>
+                <th>Avg</th><th>p50</th><th>p90</th><th>p95</th><th>p99</th><th>Max</th>
+            </tr></thead><tbody>`;
+            for (const s of r.samplers) {
+                html += `<tr>
+                    <td><code>${escapeHtml(s.name)}</code></td>
+                    <td>${s.request_count}</td>
+                    <td>${s.failure_count}</td>
+                    <td>${fmtPct(s.error_rate)}</td>
+                    <td>${fmtMs(s.avg_ms)}</td>
+                    <td>${fmtMs(s.p50_ms)}</td>
+                    <td>${fmtMs(s.p90_ms)}</td>
+                    <td>${fmtMs(s.p95_ms)}</td>
+                    <td>${fmtMs(s.p99_ms)}</td>
+                    <td>${fmtMs(s.max_ms)}</td>
+                </tr>`;
+            }
+            html += `</tbody></table>`;
+        }
+        html += `</div>`;
+
+        // Suffix "%" for percentage fields, "" for integer counts (so app_5xx_max
+        // renders as "5", not "5.0%").
+        const serverFields = [
+            ["Plan CPU avg",    r.server?.plan_cpu_avg, "%"],
+            ["Plan CPU max",    r.server?.plan_cpu_max, "%"],
+            ["Plan Memory avg", r.server?.plan_mem_avg, "%"],
+            ["Plan Memory max", r.server?.plan_mem_max, "%"],
+            ["SQL DTU avg",     r.server?.sql_dtu_avg,  "%"],
+            ["SQL DTU max",     r.server?.sql_dtu_max,  "%"],
+            ["SQL CPU avg",     r.server?.sql_cpu_avg,  "%"],
+            ["SQL CPU max",     r.server?.sql_cpu_max,  "%"],
+            ["SQL Log-write avg", r.server?.sql_log_avg, "%"],
+            ["SQL Log-write max", r.server?.sql_log_max, "%"],
+            ["App 5xx max",     r.server?.app_5xx_max,  ""],
+            ["App 4xx max",     r.server?.app_4xx_max,  ""],
+        ];
+        html += `<div><strong>Server-side</strong><dl>`;
+        for (const [k, v, suffix] of serverFields) {
+            let cell;
+            if (v == null) cell = `<span class="muted">—</span>`;
+            else if (suffix === "%") cell = `${fmtNum(v)}%`;
+            else cell = String(Math.round(v));
+            html += `<dt>${escapeHtml(k)}</dt><dd>${cell}</dd>`;
+        }
+        html += `</dl></div>`;
+
+        html += `</div>`;
+        return html;
     }
 
     // ---- Filter dropdown population ------------------------------------------
@@ -565,12 +1009,18 @@
         document.querySelectorAll('nav a[data-tab]').forEach(a => a.classList.remove("active"));
         $(`#tab-${tabId}`).classList.remove("hidden");
         document.querySelector(`nav a[data-tab="${tabId}"]`).classList.add("active");
+        // Charts created inside a hidden tab initialise at 0×0 because
+        // display:none doesn't always fire ResizeObserver. Force a resize
+        // now that the relevant container has real dimensions; charts in
+        // still-hidden tabs no-op.
+        for (const chart of _chartInstances.values()) chart.resize();
     }
 
     function rerender(runs) {
         const state = readHashState();
         const filtered = applyFilters(runs, state);
         renderTrends(filtered, state);
+        renderTiers(runs, state);    // intentionally unfiltered — see renderTiers
         renderCompare(filtered, state);
         renderRuns(filtered, state);
         activateTab(state.tab);
@@ -596,15 +1046,21 @@
             state.baseline = $("#compare-baseline").value;
             state.candidate = $("#compare-candidate").value;
             state.threshold = $("#compare-threshold").value;
+            state.tiersScenario = $("#tiers-scenario").value;
+            state.tiersVersion = $("#tiers-version").value;
             writeHashState(state);
             rerender(runs);
         };
         ["filter-scenario", "filter-version", "filter-tier", "filter-from", "filter-to",
-         "compare-baseline", "compare-candidate", "compare-threshold"].forEach(id => {
+         "compare-baseline", "compare-candidate", "compare-threshold",
+         "tiers-scenario", "tiers-version"].forEach(id => {
             $(`#${id}`).addEventListener("change", updateFromControls);
         });
+        let reloading = false;
         $("#refresh-link").addEventListener("click", async e => {
             e.preventDefault();
+            if (reloading) return;
+            reloading = true;
             $("#footer-status").textContent = "Reloading…";
             try {
                 const fresh = await loadAllRuns();
@@ -613,6 +1069,8 @@
                 rerender(runs);
             } catch (err) {
                 showError(`Reload failed: ${err.message}`);
+            } finally {
+                reloading = false;
             }
         });
     }
@@ -621,19 +1079,24 @@
 
     async function init() {
         $("#storage-source").textContent = `${ACCOUNT}/${CONTAINER}`;
-        if (!ACCOUNT || ACCOUNT === "REPLACE_AT_DEPLOY") {
+        const placeholder = "REPLACE_AT_DEPLOY";
+        if (!ACCOUNT || !CONTAINER || !CFG.sas ||
+            ACCOUNT === placeholder || CONTAINER === placeholder || CFG.sas === placeholder) {
             showError("Dashboard config wasn't replaced at deploy time. config.js still has placeholders.");
             return;
         }
         try {
             const runs = await loadAllRuns();
-            window._runs = runs;  // exposed for the metric-toggle handler in renderTrends
+            // Exposed so handlers rendered into dynamic HTML (Trends metric toggle,
+            // Tiers baseline/metric pickers) can re-render without re-fetching.
+            window._runs = runs;
             populateFilters(runs);
             wireEvents(runs);
             rerender(runs);
         } catch (err) {
             console.error(err);
             showError(`Failed to load history: ${err.message}. Check storage CORS rule and SAS validity.`);
+            $("#footer-status").textContent = "";
         }
     }
 

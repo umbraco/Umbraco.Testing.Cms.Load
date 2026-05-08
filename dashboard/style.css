@@ -33,7 +33,7 @@
     margin-bottom: 0;
 }
 
-nav[role] ul {
+nav ul[role="tablist"] {
     border-bottom: 1px solid var(--pico-muted-border-color);
     padding-bottom: 0;
     margin-bottom: 1rem;
@@ -110,6 +110,75 @@ details summary {
 
 footer small {
     color: var(--pico-muted-color);
+}
+
+.runs-table .run-row {
+    cursor: pointer;
+}
+
+.runs-table .run-row:hover {
+    background: var(--pico-card-background-color);
+}
+
+.runs-table .run-row.expanded {
+    background: var(--pico-card-background-color);
+    font-weight: 600;
+}
+
+.runs-table .run-toggle {
+    width: 1.5rem;
+    color: var(--pico-muted-color);
+    user-select: none;
+}
+
+.run-detail > td {
+    padding: 0;
+    background: var(--pico-card-background-color);
+}
+
+.run-detail-content {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    padding: 1rem;
+    border-left: 3px solid var(--pico-primary);
+}
+
+.run-detail-content > div strong {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: var(--pico-muted-color);
+    text-transform: uppercase;
+    font-size: 0.75em;
+    letter-spacing: 0.05em;
+}
+
+.run-detail-content dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.25rem 1rem;
+    margin: 0;
+    font-size: 0.85em;
+}
+
+.run-detail-content dt {
+    font-weight: normal;
+    color: var(--pico-muted-color);
+}
+
+.run-detail-content dd {
+    margin: 0;
+}
+
+.run-detail-content table {
+    font-size: 0.8rem;
+    margin: 0;
+}
+
+@media (min-width: 1024px) {
+    .run-detail-content {
+        grid-template-columns: minmax(200px, 1fr) 2fr minmax(200px, 1fr);
+    }
 }
 
 #refresh-link {
