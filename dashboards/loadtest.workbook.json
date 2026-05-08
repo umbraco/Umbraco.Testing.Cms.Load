@@ -1,0 +1,425 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# Umbraco Load Test Dashboard\nQueries `LoadTestSummary_CL` populated by `scripts/publish-load-test-results.ps1`. Filter at the top scopes Trends / Compare / Runs; the Tiers section ignores it deliberately (it's the cross-tier view)."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-workspace",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspace",
+            "label": "Workspace",
+            "type": 5,
+            "isRequired": true,
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "includeAll": false,
+              "showDefault": false
+            },
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-timerange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": { "durationMs": 2592000000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 },
+                { "durationMs": 7776000000 },
+                { "durationMs": 31536000000 }
+              ]
+            }
+          },
+          {
+            "id": "param-scenario",
+            "version": "KqlParameterItem/1.0",
+            "name": "Scenario",
+            "label": "Scenario",
+            "type": 2,
+            "isRequired": false,
+            "value": "*",
+            "query": "LoadTestSummary_CL\n| where TimeGenerated > ago(180d)\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-version",
+            "version": "KqlParameterItem/1.0",
+            "name": "Version",
+            "label": "Version",
+            "type": 2,
+            "isRequired": false,
+            "value": "*",
+            "query": "LoadTestSummary_CL\n| where TimeGenerated > ago(180d)\n| distinct umbraco_version\n| where isnotempty(umbraco_version)\n| order by umbraco_version asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-tier",
+            "version": "KqlParameterItem/1.0",
+            "name": "Tier",
+            "label": "Tier",
+            "type": 2,
+            "isRequired": false,
+            "value": "*",
+            "query": "LoadTestSummary_CL\n| where TimeGenerated > ago(180d)\n| distinct infra_tier\n| where isnotempty(infra_tier)\n| order by infra_tier asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "global-filters"
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Trends\nOne line per `(version × tier)` over time. Toggle the metric with the picker below. Each chart has a foldout matrix view with median ±stddev across runs in the cell."
+      },
+      "name": "trends-header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-metric",
+            "version": "KqlParameterItem/1.0",
+            "name": "Metric",
+            "label": "Metric",
+            "type": 2,
+            "isRequired": true,
+            "value": "p95_ms",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
+            "jsonData": "[\n    { \"value\": \"p95_ms\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99_ms\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg_ms\", \"label\": \"avg (ms)\" },\n    { \"value\": \"error_rate\", \"label\": \"error rate\" }\n]"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "trends-params"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend series = strcat(scenario_name, ' · ', umbraco_version, '/', infra_tier)\n| project TimeGenerated, series, value = column_ifexists('{Metric}', real(null))\n| where isnotnull(value)\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "{Metric} per sampler over time",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "timechart"
+      },
+      "name": "trends-chart"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists('{Metric}', real(null))\n| where isnotnull(value)\n| summarize med = round(percentile(value, 50), 1), sd = round(stdev(value), 1), n = count() by scenario_name, umbraco_version, infra_tier\n| extend cell = strcat(med, ' ±', sd, ' (n=', n, ')')\n| project scenario_name, umbraco_version, infra_tier, cell\n| order by scenario_name asc, umbraco_version asc, infra_tier asc",
+        "size": 0,
+        "title": "Matrix view (median ±stddev)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table"
+      },
+      "name": "trends-matrix",
+      "styleSettings": { "showBorder": true }
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Tiers\nLatest run per tier for one `(scenario, version)`. Answers \"what do I get for upgrading the tier?\" Ignores the global filter bar — pick from below."
+      },
+      "name": "tiers-header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-tiers-scenario",
+            "version": "KqlParameterItem/1.0",
+            "name": "TiersScenario",
+            "label": "Scenario",
+            "type": 2,
+            "isRequired": true,
+            "query": "LoadTestSummary_CL\n| where TimeGenerated > ago(180d)\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-tiers-version",
+            "version": "KqlParameterItem/1.0",
+            "name": "TiersVersion",
+            "label": "Version",
+            "type": 2,
+            "isRequired": true,
+            "query": "LoadTestSummary_CL\n| where TimeGenerated > ago(180d)\n| where '{TiersScenario}' == '' or scenario == '{TiersScenario}'\n| distinct umbraco_version\n| where isnotempty(umbraco_version)\n| order by umbraco_version desc",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-tiers-metric",
+            "version": "KqlParameterItem/1.0",
+            "name": "TiersMetric",
+            "label": "Metric",
+            "type": 2,
+            "isRequired": true,
+            "value": "p95_ms",
+            "jsonData": "[\n    { \"value\": \"p95_ms\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99_ms\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg_ms\", \"label\": \"avg (ms)\" }\n]"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "tiers-params"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| extend value = column_ifexists('{TiersMetric}', real(null))\n| project scenario_name, infra_tier, value\n| order by scenario_name asc, infra_tier asc",
+        "size": 0,
+        "title": "{TiersMetric} per sampler, latest run per tier",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "scenario_name",
+          "yAxis": ["value"],
+          "group": "infra_tier",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "tiers-bar"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project scenario_name, infra_tier,\n          p95 = round(p95_ms, 0),\n          p99 = round(p99_ms, 0),\n          ['err %'] = round(error_rate * 100, 2),\n          ['plan cpu max %'] = plan_CpuPercentage_max,\n          ['sql dtu max %']  = sql_dtu_consumption_percent_max\n| order by scenario_name asc, infra_tier asc",
+        "size": 0,
+        "title": "Per-sampler + server-side detail per tier",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "plan cpu max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "sql dtu max %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "err %",          "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } }
+          ]
+        }
+      },
+      "name": "tiers-table"
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Compare\nPick two runs to see per-sampler + server-side deltas. Drops outside the global filter — the dropdowns query the full history."
+      },
+      "name": "compare-header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-compare-baseline",
+            "version": "KqlParameterItem/1.0",
+            "name": "Baseline",
+            "label": "Baseline run",
+            "type": 2,
+            "isRequired": true,
+            "query": "LoadTestSummary_CL\n| where TimeGenerated > ago(180d)\n| summarize arg_max(TimeGenerated, run_id, scenario, umbraco_version, infra_tier) by run_id\n| project value = run_id, label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier, ' (#', run_id, ')')\n| order by label desc",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-compare-candidate",
+            "version": "KqlParameterItem/1.0",
+            "name": "Candidate",
+            "label": "Candidate run",
+            "type": 2,
+            "isRequired": true,
+            "query": "LoadTestSummary_CL\n| where TimeGenerated > ago(180d)\n| summarize arg_max(TimeGenerated, run_id, scenario, umbraco_version, infra_tier) by run_id\n| project value = run_id, label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier, ' (#', run_id, ')')\n| order by label desc",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-compare-threshold",
+            "version": "KqlParameterItem/1.0",
+            "name": "Threshold",
+            "label": "Significant Δ (%)",
+            "type": 1,
+            "isRequired": true,
+            "value": "10"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "compare-params"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nlet threshold = todouble('{Threshold}') / 100.0;\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), (b - a) / a) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| extend sampler = coalesce(scenario_name, scenario_name1)\n| project sampler,\n          base_count = request_count,  cand_count = request_count1,\n          base_avg   = avg_ms,         cand_avg   = avg_ms1,\n          base_p95   = p95_ms,         cand_p95   = p95_ms1,\n          base_p99   = p99_ms,         cand_p99   = p99_ms1,\n          d_avg = delta(avg_ms, avg_ms1),\n          d_p95 = delta(p95_ms, p95_ms1),\n          d_p99 = delta(p99_ms, p99_ms1)\n| order by sampler asc",
+        "size": 0,
+        "title": "Per-sampler delta",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "d_avg", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green",  "text": "{0:p0}" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
+              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            ] } },
+            { "columnMatch": "d_p95", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green", "text": "{0:p0}" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
+              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            ] } },
+            { "columnMatch": "d_p99", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green", "text": "{0:p0}" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
+              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            ] } }
+          ]
+        }
+      },
+      "name": "compare-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' | summarize arg_max(TimeGenerated, *);\nlet rows = (b:(*), c:(*)) {\n    union\n        (b | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(c | project plan_CpuPercentage_max)),\n        (b | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(c | project plan_MemoryPercentage_max)),\n        (b | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(c | project sql_dtu_consumption_percent_max)),\n        (b | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(c | project sql_cpu_percent_max)),\n        (b | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(c | project sql_log_write_percent_max)),\n        (b | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(c | project app_Http5xx_max))\n};\nrows(baseline, candidate)\n| extend Delta = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), (Candidate - Baseline) / Baseline)",
+        "size": 0,
+        "title": "Server-side delta",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Delta", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green", "text": "{0:p0}" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
+              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            ] } }
+          ]
+        }
+      },
+      "name": "compare-server"
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Runs\nAll runs matching the global filter. Paste a run ID into the field below to see per-sampler detail for that run."
+      },
+      "name": "runs-header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-drill-run",
+            "version": "KqlParameterItem/1.0",
+            "name": "DrillRun",
+            "label": "Drill into run #",
+            "type": 1,
+            "isRequired": false,
+            "value": ""
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "runs-params"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| summarize arg_max(TimeGenerated, *) by run_id\n| project Started=TimeGenerated, Scenario=scenario, Version=umbraco_version, Tier=infra_tier, ['Run #']=run_id, Commit=substring(commit, 0, 8), Status=parse_status\n| order by Started desc",
+        "size": 0,
+        "title": "Runs",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 500
+        }
+      },
+      "name": "runs-table"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Drill-down: paste a run_id into the parameter to see per-sampler detail for that run.\nLoadTestSummary_CL\n| where run_id == '{DrillRun}' and isnotempty(scenario_name)\n| project Sampler=scenario_name,\n          Reqs=request_count, Fails=failure_count,\n          ['Err %']=round(error_rate*100, 2),\n          Avg=round(avg_ms, 0), p50=round(p50_ms, 0), p90=round(p90_ms, 0), p95=round(p95_ms, 0), p99=round(p99_ms, 0), Max=round(max_ms, 0)\n| order by Sampler asc",
+        "size": 0,
+        "title": "Per-sampler detail for selected run",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table"
+      },
+      "name": "runs-detail",
+      "conditionalVisibility": {
+        "parameterName": "DrillRun",
+        "comparison": "isNotEqualTo",
+        "value": ""
+      }
+    }
+  ],
+  "fallbackResourceIds": [],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

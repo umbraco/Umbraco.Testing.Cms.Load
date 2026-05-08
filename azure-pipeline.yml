@@ -130,6 +130,15 @@ variables:
   - name: terraformWorkingDirectory
     value: '$(System.DefaultWorkingDirectory)/Terraform'
 
+  # Long-lived monitoring resources. Defaults are fine for a single team in a
+  # subscription; override in the variable group if multiple teams share one.
+  - name: historyWorkspaceName
+    value: 'umbraco-loadtest-laws'
+  - name: historyDceName
+    value: 'umbraco-loadtest-dce'
+  - name: historyDcrName
+    value: 'umbraco-loadtest-dcr'
+
 stages:
   - stage: validateTestCases
     displayName: Validate test cases
@@ -246,22 +255,80 @@ stages:
                 -StorageAccountName "$(historyStorageAccount)"
                 -ContainerName "$(historyContainer)"
 
+  - stage: ensureMonitoringInfra
+    displayName: Ensure monitoring infrastructure
+    dependsOn: ensureHistoryInfra
+    jobs:
+      - job: ensure
+        displayName: Ensure Log Analytics + custom table + DCR + Workbook
+        steps:
+          - task: AzureCLI@2
+            name: ensureMon
+            displayName: Ensure monitoring infra (workspace, table, DCR, role grant)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              # addSpnToEnvironment exposes the service connection's app ID via
+              # $env:servicePrincipalId; we resolve the SP's *object* ID from
+              # that for the role assignment.
+              addSpnToEnvironment: true
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                $PSNativeCommandUseErrorActionPreference = $true
+
+                if ([string]::IsNullOrWhiteSpace($env:servicePrincipalId)) {
+                    Write-Error "servicePrincipalId env var not set. Verify addSpnToEnvironment: true on this task."
+                    exit 1
+                }
+                $spObjectId = az ad sp show --id $env:servicePrincipalId --query id -o tsv
+                if ([string]::IsNullOrWhiteSpace($spObjectId)) {
+                    Write-Error "Couldn't resolve SP object ID from app ID $env:servicePrincipalId. Tenant may require explicit Directory Readers role on the SP."
+                    exit 1
+                }
+                & "$(System.DefaultWorkingDirectory)/scripts/ensure-monitoring-infra.ps1" `
+                    -HistoryResourceGroup "$(historyResourceGroup)" `
+                    -HistoryLocation "$(historyLocation)" `
+                    -WorkspaceName "$(historyWorkspaceName)" `
+                    -DceName "$(historyDceName)" `
+                    -DcrName "$(historyDcrName)" `
+                    -IngestPrincipalId $spObjectId `
+                    -EmitPipelineVars
+
+          - task: AzureCLI@2
+            displayName: Deploy Workbook (idempotent — re-applies dashboards/loadtest.workbook.json)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/deploy-workbook.ps1'
+              arguments: >
+                -HistoryResourceGroup "$(historyResourceGroup)"
+                -HistoryLocation "$(historyLocation)"
+                -WorkspaceName "$(historyWorkspaceName)"
+
   - stage: terraformDeploy
     displayName: Terraform Setup and Apply
     dependsOn:
       - validateTestCases
       - ensureHistoryInfra
-    # Cross-stage outputs from the validation stage, scoped to the whole stage.
+      - ensureMonitoringInfra
+    # Cross-stage outputs scoped to the whole stage:
+    #   - validateTestCases.prepareTestCases.out.* — validation/profile resolution
+    #   - ensureMonitoringInfra.ensure.ensureMon.*  — Logs Ingestion API target
     variables:
-      testCasesJson:           $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
-      resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
-      resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
-      resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
-      resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
-      resolvedUserAmount:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
-      resolvedSpawnRate:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSpawnRate'] ]
-      resolvedTestDuration:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestDuration'] ]
-      resolvedSqlSkuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSqlSkuOverride'] ]
+      testCasesJson:            $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
+      resolvedTestCases:        $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      resolvedDotnetVersion:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
+      resolvedSeederPreset:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      resolvedEngineInstances:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
+      resolvedUserAmount:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
+      resolvedSpawnRate:        $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSpawnRate'] ]
+      resolvedTestDuration:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestDuration'] ]
+      resolvedSqlSkuOverride:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSqlSkuOverride'] ]
+      monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringStreamName:     $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
@@ -446,6 +513,9 @@ stages:
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
+                logAnalyticsDceUri: '$(monitoringDceUri)'
+                logAnalyticsDcrImmutableId: '$(monitoringDcrImmutableId)'
+                logAnalyticsStreamName: '$(monitoringStreamName)'
           - ${{ if eq(parameters.runStandard, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -460,6 +530,9 @@ stages:
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
+                logAnalyticsDceUri: '$(monitoringDceUri)'
+                logAnalyticsDcrImmutableId: '$(monitoringDcrImmutableId)'
+                logAnalyticsStreamName: '$(monitoringStreamName)'
           - ${{ if eq(parameters.runPro, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -474,6 +547,9 @@ stages:
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
+                logAnalyticsDceUri: '$(monitoringDceUri)'
+                logAnalyticsDcrImmutableId: '$(monitoringDcrImmutableId)'
+                logAnalyticsStreamName: '$(monitoringStreamName)'
 
           # Stop all apps so none run idle during the manual validation window.
           - task: AzureCLI@2
@@ -535,6 +611,7 @@ stages:
                   Write-Host "  - Azure Load Testing portal"
                   Write-Host "  - Pipeline artifacts (loadtest-results-*)"
                   Write-Host "  - History storage NDJSON (rows tagged with infra_tier + scenario)"
+                  Write-Host "  - Log Analytics workspace (LoadTestSummary_CL) -> Umbraco Load Tests Workbook"
                 }
                 Write-Host "=============================================="
 

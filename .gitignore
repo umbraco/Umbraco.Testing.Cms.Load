@@ -8,6 +8,7 @@
 # Re-allow project files that the broad rules above would otherwise ignore.
 !loadtests/tiers.json
 !loadtests/scenarios/**/*.json
+!dashboards/*.workbook.json
 !**/.terraform.lock.hcl
 
 .terraform/

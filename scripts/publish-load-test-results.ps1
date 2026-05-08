@@ -39,7 +39,15 @@ param(
     [string]$LoadTestEndTime,
     [string]$AppServiceResourceId,
     [string]$AppServicePlanResourceId,
-    [string]$SqlDatabaseResourceId
+    [string]$SqlDatabaseResourceId,
+
+    # Optional Logs Ingestion API target. When all three are provided, the
+    # script POSTs each row to a Log Analytics custom table in addition to the
+    # blob upload (the Workbook reads from there). Provisioned by
+    # scripts/ensure-monitoring-infra.ps1 — that script prints these three values.
+    [string]$LogAnalyticsDceUri,
+    [string]$LogAnalyticsDcrImmutableId,
+    [string]$LogAnalyticsStreamName
 )
 
 $ErrorActionPreference = "Stop"
@@ -375,3 +383,32 @@ az storage blob upload-batch `
     --overwrite | Out-Null
 
 Write-Host "Published $($rows.Count) record(s) + raw artifacts."
+
+# Logs Ingestion API: send the same rows to the Log Analytics custom table that
+# backs the Workbook. Same defensive posture as the Azure Monitor metric query
+# above — failure here warns and continues; the blob upload is the source of
+# truth for raw data, this is the queryable mirror.
+if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStreamName) {
+    Write-Host ""
+    Write-Host "Posting $($rows.Count) row(s) to Log Analytics ($LogAnalyticsStreamName)"
+    try {
+        $token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
+        # The DCR expects TimeGenerated on every row; carry the run start time so
+        # all per-sampler rows of one run share a single point on the time axis.
+        $ingestRows = $rows | ForEach-Object {
+            $row = $_ | Select-Object *
+            $row | Add-Member -NotePropertyName TimeGenerated -NotePropertyValue $RunStartedAt -Force
+            $row
+        }
+        # -AsArray forces array shape even for a single row; the Logs Ingestion API
+        # rejects a bare JSON object.
+        $body = ConvertTo-Json -InputObject @($ingestRows) -Depth 5 -Compress -AsArray
+        $url  = "$LogAnalyticsDceUri/dataCollectionRules/$LogAnalyticsDcrImmutableId/streams/${LogAnalyticsStreamName}?api-version=2023-01-01"
+        Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" `
+            -Headers @{ Authorization = "Bearer $token" } | Out-Null
+        Write-Host "   ok"
+    }
+    catch {
+        Write-Warning "Log Analytics ingestion failed: $($_.Exception.Message). Blob upload succeeded; data is recoverable from there."
+    }
+}

@@ -32,6 +32,8 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 - Azure subscription with appropriate permissions. The pipeline service principal needs:
   - Standard create/manage rights on the ephemeral and history resource groups (Contributor is enough for resources).
   - **`Microsoft.Storage/storageAccounts/listKeys/action`** on the history storage account — Storage Account Contributor (or any role that includes `listKeys/action`) is enough. Downstream scripts (`publish-load-test-results.ps1`, `_history-helpers.ps1`) fetch the account key at runtime and authenticate with `--account-key`. RBAC + `--auth-mode login` would be a stricter alternative but requires `Microsoft.Authorization/roleAssignments/write` for the SP, which is a heavier permissions ask.
+  - **`Microsoft.Authorization/roleAssignments/write`** on the history resource group (or specifically on the Data Collection Rule once it exists) — `ensure-monitoring-infra.ps1` grants the same SP "Monitoring Metrics Publisher" on the DCR so it can POST to the Logs Ingestion API. User Access Administrator on the history RG is sufficient.
+  - **Directory read** in Microsoft Entra ID — the pipeline calls `az ad sp show` to resolve its own object ID for the role grant above. Default tenants allow this for any authenticated principal; locked-down tenants may need an explicit `Directory Readers` role assignment on the SP.
 - Azure DevOps organization with:
   - Service connection to Azure (`terraform-umbraco-load-testing-az-connection`)
   - Variable group `umbraco-loadtest-history` with at minimum: `historyResourceGroup`, `historyLocation`, `historyLoadTestName`, `historyStorageAccount` (override the placeholder `loadtestchangeme` with a globally-unique 3-24 lowercase alphanumeric value), `historyContainer`.
@@ -45,7 +47,7 @@ A new team forking this project should:
 1. **Pick a globally-unique storage account name** (3-24 lowercase alphanumeric chars). This will host the long-lived run history. Override `historyStorageAccount` in the variable group with this value — the placeholder `loadtestchangeme` is rejected by `ensure-history-infra.ps1`.
 2. **Create the AzDO variable group** `umbraco-loadtest-history` with the five history variables above.
 3. **Configure the service principal** with the permissions listed in Prerequisites — Contributor on the subscription (or scoped narrower) is sufficient.
-4. **Queue the pipeline once with `skipLoadTests=true`.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container) and verifies the per-case provisioning path without committing to a full load test. ~10-15 minutes.
+4. **Queue the pipeline once with `skipLoadTests=true`.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container) **and the monitoring infra** (Log Analytics workspace, custom table, DCR, Workbook) and verifies the per-case provisioning path without committing to a full load test. ~10-15 minutes. The Workbook URL is printed in the `ensureMonitoringInfra` stage log — pin it to your Azure portal dashboard.
 5. **(Local-dev users)** `az login` and verify you can list keys for the history storage account — `show-trends.ps1` / `check-regression.ps1` / `compare-runs.ps1` (history mode) run locally need the same `listKeys/action` the pipeline SP uses:
    ```bash
    az storage account keys list -n <your-history-storage-account> -g umbraco-loadtest-history-rg --query "[0].keyName" -o tsv
@@ -64,27 +66,25 @@ Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per 
 ├── pr-validation.yml            # PR-time static checks (terraform/PS/Python/YAML lint, no Azure)
 ├── README.md
 │
-├── dashboard/                   # Static SPA + auth config for the Entra-ID-gated viewer
-│   ├── index.html, app.js, style.css
-│   ├── config.js                # Placeholder values; deploy script rewrites at upload time
-│   └── staticwebapp.config.json # Auth gate routes / Entra-ID identity provider
+├── dashboards/
+│   └── loadtest.workbook.json   # Azure Workbook: Trends / Tiers / Compare / Runs over LoadTestSummary_CL
 │
 ├── templates/
 │   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
 │
 ├── scripts/
 │   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, Azure Load Testing, storage
+│   ├── ensure-monitoring-infra.ps1     # Idempotently provisions Log Analytics workspace + custom table + DCR/DCE
 │   ├── prepare-test-cases.ps1          # Validator: validates testCases, flattens scenario appsettings,
 │   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
 │   ├── verify-deployments.ps1          # Smoke-check each deployed site (skipLoadTests=true path)
 │   ├── stop-all-app-services.ps1       # End-of-run sweep: stop all App Services in the case set
-│   ├── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
+│   ├── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage; also POSTs to Logs Ingestion API
 │   ├── compare-runs.ps1                # Markdown delta report between two engine_results.csv files (one-vs-one)
 │   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON (many-vs-many)
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
 │   ├── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
-│   ├── ensure-dashboard-infra.ps1      # One-time: provision SWA + wire Entra-ID auth secrets
-│   └── deploy-dashboard.ps1            # Build SAS + rewrite config.js + upload dashboard files to SWA
+│   └── deploy-workbook.ps1             # Idempotent deploy of dashboards/loadtest.workbook.json to Azure
 │
 ├── loadtests/
 │   ├── locustfile.py            # Inventory-driven workload (CMS browsing + contact-form write + Delivery API splice)
@@ -350,11 +350,12 @@ Set `coldStart: true` to skip the warmup. The load test then hits a freshly-star
 
 ## Results
 
-The pipeline writes results to three places:
+The pipeline writes results to four places:
 
 - **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The Azure Load Testing resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one load test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} #{buildId}`.
 - **Pipeline artifacts**: per-case ZIP under `loadtest-results-{sanitised-testCaseId}` on the build, useful for forensic deep-dives. Expires with the pipeline's build retention policy.
 - **History storage account** (long-lived): per-case NDJSON summary at `{scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/summary.ndjson` plus the raw artifact dump under `raw/`. Scenario is top-level because it defines what's *comparable* — different scenarios hit different endpoints / seed different data, so their numbers can't be compared directly. Within a scenario, prefix-listing maps to the natural pivots: `Default/17/` trends a major, `Default/17/17.0.0/` is all tiers in one build, `Default/17/*/Starter/` sweeps versions on one tier. Each row carries the full run metadata (commit, version, tier, scenario, SKUs, seeder preset, user count), so cross-run queries don't need joins.
+- **Log Analytics workspace** (long-lived): the same NDJSON rows mirrored into the `LoadTestSummary_CL` custom table for KQL querying. The Workbook (see "Dashboard" below) reads from here. Blob storage remains source of truth — Log Analytics is a queryable mirror.
 
 NDJSON is ingestible directly by Azure Data Explorer, pandas, Postgres `COPY`, etc. — pick whatever query layer fits, the data shape stays the same.
 
@@ -474,24 +475,25 @@ The pipeline manages two separate resource groups:
 | Resource group | Lifetime | Contents |
 |---|---|---|
 | `${prefix}-rg` (ephemeral) | Created and destroyed per pipeline run | App Service plans (one per used tier), App Services + SQL servers + databases (one per case) |
-| `umbraco-loadtest-history-rg` (long-lived) | Created once, never deleted by the pipeline | Shared Azure Load Testing resource, storage account for results history |
+| `umbraco-loadtest-history-rg` (long-lived) | Created once, never deleted by the pipeline | Shared Azure Load Testing resource, storage account for results history, Log Analytics workspace + custom table + DCR/DCE for the Workbook, the Workbook itself |
 
-The long-lived RG is provisioned idempotently at the start of every pipeline run by `scripts/ensure-history-infra.ps1` — first run creates it, subsequent runs no-op. Override the names via the `historyResourceGroup`, `historyLoadTestName`, `historyStorageAccount`, `historyContainer` pipeline variables (or pin them in a variable group) if multiple teams share the subscription. **The storage account name must be globally unique and 3-24 lowercase alphanumeric chars.**
+The long-lived RG is provisioned idempotently at the start of every pipeline run by `scripts/ensure-history-infra.ps1` (storage / ALT) and `scripts/ensure-monitoring-infra.ps1` (Log Analytics / DCR / Workbook role grant) — first run creates, subsequent runs no-op. Override the names via the `historyResourceGroup`, `historyLoadTestName`, `historyStorageAccount`, `historyContainer`, `historyWorkspaceName`, `historyDceName`, `historyDcrName` pipeline variables (or pin them in a variable group) if multiple teams share the subscription. **The storage account name must be globally unique and 3-24 lowercase alphanumeric chars.**
 
 ## Pipeline Workflow
 
 ```
 0.  validateTestCases            -> Validate testCases, read scenario folders, resolve load profile
 1.  ensureHistoryInfra           -> Idempotent: shared Azure Load Testing + storage + RBAC role
-2.  Check Resource Group         -> Does it already exist?
-3.  Terraform Setup              -> Init + Validate + Plan
-4.  Terraform Apply              -> Provision App Service Plans (one per tier), per-case App Services + SQL DBs
-5.  Verify Deployments           -> Smoke-check each site (only when skipLoadTests=true)
-6.  Run Load Tests               -> Sequential per-case Locust tests (on Azure Load Testing infra)
-7.  Test Summary                 -> Print run-level + per-case config
-8.  Regression Check             -> Compare published runs vs baseline-median; fail on regression
-9.  Manual Validation            -> Configurable window to keep resources (default 60 min)
-10. Cleanup                      -> Delete resource group if rejected/cancelled/expired
+2.  ensureMonitoringInfra        -> Idempotent: Log Analytics workspace + custom table + DCR/DCE + Workbook
+3.  Check Resource Group         -> Does it already exist?
+4.  Terraform Setup              -> Init + Validate + Plan
+5.  Terraform Apply              -> Provision App Service Plans (one per tier), per-case App Services + SQL DBs
+6.  Verify Deployments           -> Smoke-check each site (only when skipLoadTests=true)
+7.  Run Load Tests               -> Sequential per-case Locust tests (on Azure Load Testing infra)
+8.  Test Summary                 -> Print run-level + per-case config
+9.  Regression Check             -> Compare published runs vs baseline-median; fail on regression
+10. Manual Validation            -> Configurable window to keep resources (default 60 min)
+11. Cleanup                      -> Delete resource group if rejected/cancelled/expired
 ```
 
 ## Data Seeder Presets
@@ -513,7 +515,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 2. Pick the **load profile** (`smoke` / `standard` / `stress`), **Umbraco version** (free text — prereleases ok), and **scenario** (defaults to `Default`).
 3. Tick the **tiers** to run against (`runStarter` / `runStandard` / `runPro` — at least one). Defaults to Starter only.
 4. Adjust the orthogonal knobs (region, prefix, cold start, skip load tests, validation window) only if you need to.
-5. Wait for validation → ensure-history-infra → provisioning → load tests → regression check to complete.
+5. Wait for validation → ensure-history-infra → ensure-monitoring-infra → provisioning → load tests → regression check to complete.
 6. Review results in Azure Load Testing portal, pipeline artifacts, and history storage NDJSON. The `regression-report` artifact has the post-run regression check output.
 7. Approve or reject resource cleanup within the validation window (default 60 min).
 
@@ -631,74 +633,81 @@ The `regression-report` artifact + the per-sampler table from `compare-runs.ps1`
 
 ## Dashboard
 
-For people who'd rather click than type, `dashboard/` is a static single-page app hosted on an Azure Static Web App with Entra-ID auth. It reads the same NDJSON the scripts read and offers four views:
+`dashboards/loadtest.workbook.json` is an Azure Workbook that queries `LoadTestSummary_CL` in Log Analytics and offers four views:
 
-- **Trends** — one line chart per sampler over time, with one series per `(version × tier)`. Toggle the metric for p95 / p99 / error rate or server-side resource use (Plan CPU max %, SQL DTU max %). Each chart has a foldout matrix with median ±stddev across runs in the cell.
-- **Tiers** — pick scenario + version, get the latest run on each tier side-by-side: grouped bar chart, per-sampler Δ table vs a chosen baseline tier, plus a server-side block. Answers "what do I get for upgrading the tier?" without picking individual runs.
-- **Compare** — pick two specific runs from the dropdown, get per-sampler bars + delta tables (client-side and server-side metrics).
-- **Runs** — flat list of all stored runs; click a row to drill into per-sampler stats and server-side metrics for that run.
+- **Trends** — time-series chart of the chosen metric (p95 / p99 / avg / error rate), one line per `(scenario × version × tier)`; matrix table below with median ±stddev per cell.
+- **Tiers** — pick scenario + version, see latest run per tier as a bar chart + table with conditional-formatted Plan CPU / SQL DTU / error % cells. Answers "what do I get for upgrading the tier?"
+- **Compare** — pick two runs + Δ% threshold; per-sampler delta table with red/green conditional formatting; server-side delta block.
+- **Runs** — filtered run list; type a run ID into the drill field to see per-sampler detail.
 
-Filter bar at the top scopes Trends / Compare / Runs by scenario / version / tier / date range (the Tiers tab ignores it deliberately — it's the cross-tier view). Filter state lives in the URL hash, so links are shareable.
+Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Trends / Compare / Runs (Tiers ignores it deliberately — it's the cross-tier view). Workbook URLs encode the filter state, so links are shareable.
 
-### One-time setup
+Auth piggybacks on Azure RBAC: anyone with **Reader** on the Log Analytics workspace (or its parent RG) can view the Workbook. No separate identity to manage.
 
-1. **Register an Entra-ID app** (Azure Portal → Microsoft Entra ID → App registrations → New). Redirect URI: `https://<swa-hostname>/.auth/login/aad/callback` (you'll know `<swa-hostname>` after step 2 — re-edit then). Note the client ID; create a client secret and copy the value once (it's not shown again).
-2. **Create the SWA + wire auth secrets:**
-   ```powershell
-   ./scripts/ensure-dashboard-infra.ps1 `
-       -HistoryResourceGroup umbraco-loadtest-history-rg `
-       -HistoryLocation "West Europe" `
-       -StaticWebAppName umbraco-loadtest-dashboard `
-       -AadClientId "<from-step-1>" `
-       -AadClientSecret (Read-Host -AsSecureString)
-   ```
-   Output ends with the SWA hostname — go back to the app registration and update the redirect URI to use it if needed.
-3. **Deploy the static files:**
-   ```powershell
-   ./scripts/deploy-dashboard.ps1 `
-       -HistoryResourceGroup umbraco-loadtest-history-rg `
-       -StorageAccountName <your-history-sa> `
-       -ContainerName loadtest-history `
-       -StaticWebAppName umbraco-loadtest-dashboard `
-       -TenantId "<your-tenant-guid>"
-   ```
-   Generates a fresh read+list SAS, configures CORS on the storage account for the SWA's origin, rewrites `config.js` with the live values, uploads via the SWA CLI (`npm install -g @azure/static-web-apps-cli`).
-4. **Open the SWA URL.** Microsoft sign-in, then the dashboard.
+### Setup
 
-Re-run the deploy script whenever you change dashboard files. The SAS is regenerated on each deploy (default 365-day expiry).
+Nothing to run manually. The pipeline's `ensureMonitoringInfra` stage runs every time and idempotently provisions:
+
+1. **Log Analytics workspace** (`historyWorkspaceName`, default `umbraco-loadtest-laws`)
+2. **Custom table** `LoadTestSummary_CL` matching the publisher's row schema
+3. **Data Collection Endpoint + Rule** for the Logs Ingestion API
+4. **Monitoring Metrics Publisher** role on the DCR for the pipeline service principal (resolved automatically from the service connection — no manual SP-ID lookup)
+5. **The Workbook itself**, re-applied from `dashboards/loadtest.workbook.json` so changes to the file ship to Azure on the next pipeline run
+
+After the first pipeline run, the printed Workbook URL is in the `ensureMonitoringInfra` stage log (look for "Workbook deployed" — the URL line below it). Pin the Workbook to your Azure portal dashboard for one-click access. First-time data takes ~5–10 minutes to surface in a brand-new custom table.
+
+If you want to override the resource names (e.g. multiple teams sharing one subscription), set `historyWorkspaceName`, `historyDceName`, `historyDcrName` in the `umbraco-loadtest-history` variable group.
+
+### Manual deploy (rare)
+
+You can run either script manually if you need to provision monitoring outside a pipeline run, or push a Workbook tweak without queueing the full pipeline:
+
+```powershell
+./scripts/ensure-monitoring-infra.ps1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
+    -HistoryLocation "West Europe" `
+    -WorkspaceName umbraco-loadtest-laws `
+    -DceName umbraco-loadtest-dce `
+    -DcrName umbraco-loadtest-dcr `
+    -IngestPrincipalId (az ad sp show --id <pipeline-sp-app-id> --query id -o tsv)
+
+./scripts/deploy-workbook.ps1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
+    -HistoryLocation "West Europe" `
+    -WorkspaceName umbraco-loadtest-laws
+```
 
 ### Cost
 
-$0/month. Static Web Apps Free tier covers 100 GB bandwidth + 250 MB storage, neither of which gets close at this volume. Storage egress for blob fetches is fractions of a cent.
+$0/month at this volume. Log Analytics gives 5 GB/month free per billing account (each `summary.ndjson` is a few KB, so you'd need ~100,000+ runs/month to dent the free tier). 31-day retention is included free; longer is ~$0.10/GB/month — also negligible. Workbooks themselves are free.
 
 ### Maintenance
 
-**Prereqs both scripts assume**: `az` CLI logged in (`az login`), `swa` CLI installed (`npm install -g @azure/static-web-apps-cli`), pwsh 7.3+ (the scripts use `$PSNativeCommandUseErrorActionPreference`, which doesn't exist on Windows PowerShell 5.1).
+**Prereqs both scripts assume**: `az` CLI logged in (`az login`), pwsh 7.3+.
 
-**SAS rotation** — the deploy-time SAS lasts 365 days. If nobody has deployed in a year, the dashboard 403s on blob fetches. Recovery: re-run `deploy-dashboard.ps1` (fresh SAS, fresh 365-day window). To pre-empt expiry, just redeploy any time you change dashboard files; the SAS is regenerated on every run.
+**Iterating on the Workbook** — edit `dashboards/loadtest.workbook.json` directly, or edit in the portal's Advanced Editor and paste the result back. Re-run `deploy-workbook.ps1` to push. The deploy uses a stable GUID (`-WorkbookId` parameter) so re-runs update in place.
 
-**AAD client secret rotation** — Entra-ID secrets expire on whatever schedule you set in the portal (Microsoft default: 6 / 12 / 24 months). At expiry, sign-in silently fails. Rotation:
+**Schema changes** — if you add a field in `publish-load-test-results.ps1`, mirror it in the `$columns` array in `ensure-monitoring-infra.ps1` and re-run that script. The DCR PUT is an in-place schema update; existing data is preserved. Fields without a matching column are dropped at ingestion (no failure).
 
-1. Portal → app registration → **Certificates & secrets** → **New client secret** → copy the value.
-2. Re-run `ensure-dashboard-infra.ps1` with the new `-AadClientSecret`. The script overwrites the SWA app setting in place; no other state changes.
+**Access control** — grant `Log Analytics Reader` (or any role that includes read on the workspace) to anyone who needs to view the Workbook. Revoke by removing the role assignment.
 
-**Teardown** — remove the dashboard without affecting load-test history:
+**Teardown** — remove the Workbook + monitoring without affecting load-test history:
 
 ```powershell
-az staticwebapp delete -n umbraco-loadtest-dashboard -g umbraco-loadtest-history-rg
-az storage cors clear --services b --account-name <history-sa>   # or remove just the dashboard origin
-# Then: portal → app registration → Delete
+az resource delete --ids "/subscriptions/<sub>/resourceGroups/umbraco-loadtest-history-rg/providers/Microsoft.Insights/workbooks/<workbookId>"
+az monitor data-collection rule delete -n umbraco-loadtest-dcr -g umbraco-loadtest-history-rg
+az monitor data-collection endpoint delete -n umbraco-loadtest-dce -g umbraco-loadtest-history-rg
+az monitor log-analytics workspace delete -n umbraco-loadtest-laws -g umbraco-loadtest-history-rg --yes
 ```
 
 The history storage account, container, and ALT all stay untouched.
 
 ### Troubleshooting
 
-- **Sign-in loops back to login.** Redirect URI on the Entra-ID app doesn't match the SWA hostname. Must be exactly `https://<swa-hostname>/.auth/login/aad/callback`.
-- **CORS error in browser console.** The CORS rule on the storage account doesn't include the SWA's origin (e.g. you redeployed the SWA and got a new hostname). Re-run `deploy-dashboard.ps1` — it reads the SWA's current hostname from Azure and re-adds the rule if missing.
-- **"Failed to load history" banner.** Three causes: SAS expired (redeploy), CORS rule missing (redeploy), or wrong storage account / container name passed to the deploy script (check the deploy invocation against what `ensure-history-infra.ps1` actually created).
-- **Logged in but no data + 403 on blob fetches in DevTools.** SAS expired even though auth still works. Redeploy.
-- **`swa deploy` fails with "deployment token invalid".** SWA was deleted and recreated; the deployment token rotated. The deploy script reads the current token each run, so this should self-heal — if it doesn't, run `az staticwebapp secrets list -n <swa> -g <rg>` manually and check.
+- **Workbook loads but tables/charts are empty.** Check the Log Analytics workspace directly: `LoadTestSummary_CL | take 50`. If empty, `publish-load-test-results.ps1` isn't reaching the Logs Ingestion API — check pipeline log for the "Posting N row(s) to Log Analytics" line. Most common cause: the SP doesn't have Monitoring Metrics Publisher on the DCR (re-run `ensure-monitoring-infra.ps1` to repair).
+- **First-ever ingest after table creation appears to do nothing.** New custom tables take 5–10 minutes for ingestion to surface. Wait, then re-query.
+- **Permission denied opening the Workbook.** Grant `Log Analytics Reader` (or Contributor on the workspace) to the user.
+- **`deploy-workbook.ps1` fails with "Resource not found" on the workspace.** Run `ensure-monitoring-infra.ps1` first; the deploy script needs the workspace to set its `sourceId`.
 
 ## Roadmap
 
