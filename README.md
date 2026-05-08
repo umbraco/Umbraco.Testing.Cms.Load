@@ -84,7 +84,8 @@ Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per 
 │   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON (many-vs-many)
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
 │   ├── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
-│   └── deploy-workbook.ps1             # Idempotent deploy of dashboards/loadtest.workbook.json to Azure
+│   ├── deploy-workbook.ps1             # Idempotent deploy of dashboards/loadtest.workbook.json to Azure
+│   └── backfill-monitoring.ps1         # One-shot replay of NDJSON blobs into Log Analytics (closes the gap from before monitoring infra existed)
 │
 ├── loadtests/
 │   ├── locustfile.py            # Inventory-driven workload (CMS browsing + contact-form write + Delivery API splice)
@@ -688,6 +689,20 @@ $0/month at this volume. Log Analytics gives 5 GB/month free per billing account
 **Iterating on the Workbook** — edit `dashboards/loadtest.workbook.json` directly, or edit in the portal's Advanced Editor and paste the result back. Re-run `deploy-workbook.ps1` to push. The deploy uses a stable GUID (`-WorkbookId` parameter) so re-runs update in place.
 
 **Schema changes** — if you add a field in `publish-load-test-results.ps1`, mirror it in the `$columns` array in `ensure-monitoring-infra.ps1` and re-run that script. The DCR PUT is an in-place schema update; existing data is preserved. Fields without a matching column are dropped at ingestion (no failure).
+
+**Backfilling old runs** — the Workbook only sees what's been ingested into Log Analytics. Anything in blob storage from before the monitoring infra existed (or any run whose original publish step succeeded the blob upload but failed the Logs Ingestion call) is invisible to the Workbook. Replay it with:
+
+```powershell
+./scripts/backfill-monitoring.ps1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
+    -StorageAccountName <history-sa> `
+    -ContainerName loadtest-history `
+    -WorkspaceName umbraco-loadtest-laws `
+    -DceName umbraco-loadtest-dce `
+    -DcrName umbraco-loadtest-dcr
+```
+
+Idempotent by default — queries existing `run_id`s in the table and skips blobs whose run is already there. `-Force` re-ingests everything (creates duplicates; use only after a teardown).
 
 **Access control** — grant `Log Analytics Reader` (or any role that includes read on the workspace) to anyone who needs to view the Workbook. Revoke by removing the role assignment.
 
