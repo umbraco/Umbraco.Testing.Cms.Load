@@ -97,6 +97,33 @@
     },
 
     {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Latest-run summary card. Top-of-page glance answer to 'is the latest\n// run OK?' Pulls one row per (scenario × version × tier) bounded by the\n// global filter. Status is computed inline: any error >= 1% or any\n// resource max >= 95% reads as critical; >= 85% reads as warning;\n// otherwise OK.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier\n| top 5 by TimeGenerated desc\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Started = TimeGenerated,\n          ['Run #'] = run_id,\n          Scenario = scenario,\n          Version = umbraco_version,\n          Tier = infra_tier,\n          ['Plan CPU max %'] = round(plan_CpuPercentage_max, 1),\n          ['SQL DTU max %']  = round(sql_dtu_consumption_percent_max, 1),\n          ['Err %']          = round(run_error_rate * 100, 2),\n          Status = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK')\n| order by Started desc",
+        "size": 0,
+        "title": "Latest 5 runs — at-a-glance status",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Plan CPU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "SQL DTU max %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "Err %",          "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } } },
+            { "columnMatch": "Status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
+              { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
+              { "operator": "Default", "representation": "success" }
+            ] } }
+          ]
+        }
+      },
+      "name": "latest-run-card"
+    },
+
+    {
       "type": 1,
       "content": {
         "json": "## Trends\nOne line per `(version × tier)` over time. Toggle the metric with the picker below. Each chart has a foldout matrix view with median ±stddev across runs in the cell."
