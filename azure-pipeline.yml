@@ -641,7 +641,10 @@ stages:
                     -HistoryResourceGroup '$(historyResourceGroup)' `
                     -StorageAccountName '$(historyStorageAccount)' `
                     -ContainerName '$(historyContainer)' `
-                    -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md"
+                    -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md" `
+                    -LogAnalyticsDceUri '$(monitoringDceUri)' `
+                    -LogAnalyticsDcrImmutableId '$(monitoringDcrImmutableId)' `
+                    -LogAnalyticsStreamName '$(monitoringStreamName)'
           - task: PublishBuildArtifacts@1
             displayName: Publish regression report
             condition: succeededOrFailed()

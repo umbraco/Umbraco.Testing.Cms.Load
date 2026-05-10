@@ -546,7 +546,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Baseline = round(Baseline, 1), Candidate = round(Candidate, 1), ['Delta %'] = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and parse_status != 'regression_check' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and parse_status != 'regression_check' | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Baseline = round(Baseline, 1), Candidate = round(Candidate, 1), ['Delta %'] = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
         "size": 0,
         "title": "Server-side delta",
         "queryType": 0,
@@ -596,7 +596,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| summarize arg_max(TimeGenerated, *) by run_id\n| project Started=TimeGenerated, Scenario=scenario, Version=umbraco_version, Tier=infra_tier, ['Run #']=run_id, Commit=substring(commit, 0, 8), Status=parse_status\n| order by Started desc",
+        "query": "// Group by (run_id × scenario × version × tier) so a pipeline run that\n// covered multiple cases shows one row per case. parse_status filter\n// excludes the regression_check rows from the load-test summary, then we\n// leftouter-join them back to surface the regression verdict per case.\nlet runs = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status in ('ok', 'no_metrics')\n    | summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier;\nlet regression = LoadTestSummary_CL\n    | where parse_status == 'regression_check'\n    | summarize arg_max(TimeGenerated, regression_status, regressed_count) by run_id, scenario, umbraco_version, infra_tier;\nruns\n| join kind=leftouter regression on run_id, scenario, umbraco_version, infra_tier\n| project Started=TimeGenerated,\n          Scenario=scenario,\n          Version=umbraco_version,\n          Tier=infra_tier,\n          ['Run #']=run_id,\n          Commit=substring(commit, 0, 8),\n          ['Parse']=parse_status,\n          Regression=coalesce(regression_status, 'pending'),\n          ['Regressed #']=coalesce(regressed_count, 0)\n| order by Started desc",
         "size": 0,
         "title": "Runs",
         "queryType": 0,
@@ -604,7 +604,16 @@
         "crossComponentResources": ["{Workspace}"],
         "visualization": "table",
         "gridSettings": {
-          "rowLimit": 500
+          "rowLimit": 500,
+          "formatters": [
+            { "columnMatch": "Regression", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "regress",      "representation": "critical" },
+              { "operator": "==", "thresholdValue": "insufficient", "representation": "3" },
+              { "operator": "==", "thresholdValue": "pending",      "representation": "info" },
+              { "operator": "Default", "representation": "success" }
+            ] } },
+            { "columnMatch": "Regressed #", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
+          ]
         }
       },
       "name": "runs-table"

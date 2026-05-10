@@ -93,6 +93,13 @@ $columns = @(
     @{ name = "app_Http5xx_max";                        type = "real"     }
     @{ name = "app_Http4xx_avg";                        type = "real"     }
     @{ name = "app_Http4xx_max";                        type = "real"     }
+    # Regression-check status fields. Populated by check-regression.ps1 in the
+    # regressionCheck stage AFTER the load test completes. Rows with these
+    # fields have parse_status='regression_check' as the row-type marker so
+    # the Workbook can filter them in/out of summary queries cleanly.
+    @{ name = "regression_status";                      type = "string"   }
+    @{ name = "regressed_samplers";                     type = "string"   }
+    @{ name = "regressed_count";                        type = "int"      }
 )
 
 $streamName = "Custom-$TableName"

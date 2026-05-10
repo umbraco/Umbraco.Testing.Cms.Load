@@ -47,7 +47,16 @@ param (
 
     # Set to $false to render the report without failing the script even when
     # regressions are found (useful for "show me what would break").
-    [bool]$FailOnRegression = $true
+    [bool]$FailOnRegression = $true,
+
+    # Optional Logs Ingestion API target. When all three are provided, the
+    # script POSTs one status row per (run_id × scenario × version × tier) to
+    # the same custom table that publish-load-test-results.ps1 writes to. The
+    # Workbook joins these rows back to the load-test rows by run_id to surface
+    # regression status alongside the run. Empty (default) skips the post.
+    [string]$LogAnalyticsDceUri,
+    [string]$LogAnalyticsDcrImmutableId,
+    [string]$LogAnalyticsStreamName
 )
 
 $ErrorActionPreference = "Stop"
@@ -211,8 +220,99 @@ if ($regressions.Count -gt 0) {
     Write-Host ""
     Write-Host $report
     Write-Host "##vso[task.logissue type=error]$($regressions.Count) regression(s) detected against baseline."
-    if ($FailOnRegression) { exit 1 }
+    $exitOnRegression = $FailOnRegression
 } else {
     Write-Host ""
     Write-Host "PASS - no regressions ($($stable.Count) stable, $($improvements.Count) improvements, $($insufficient.Count) cells skipped for insufficient baseline)."
+    $exitOnRegression = $false
 }
+
+# Post regression-check status to Log Analytics. One row per (run_id × scenario
+# × version × tier) — aggregated up from the per-sampler cell results so the
+# Workbook can join them to load-test rows by run_id. parse_status =
+# 'regression_check' marks the row type so the Workbook's load-test queries
+# can filter it out cleanly.
+#
+# Same defensive posture as publish-load-test-results.ps1: failure here warns
+# and continues (the gate's pass/fail and the build artifact remain authoritative;
+# this is the queryable mirror).
+if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStreamName) {
+    # Re-walk the cells with both their candidate run row and computed verdict.
+    # $regressions / $improvements / $stable / $insufficient have summary fields
+    # but not the candidate's run_id / scenario, so we look those up here.
+    $regSet  = @{}
+    $insufSet = @{}
+    foreach ($r in $regressions)  { $regSet["$($r.Version)__$($r.Tier)__$($r.Sampler)"] = $true }
+    foreach ($r in $insufficient) { $insufSet["$($r.Version)__$($r.Tier)__$($r.Sampler)"] = $true }
+
+    $statusByGroup = @{}   # key: run_id|scenario|version|tier
+    foreach ($cellKey in $cells.Keys) {
+        $sorted    = $cells[$cellKey] |
+            Sort-Object { [datetime]::Parse($_.run_started_at, [System.Globalization.CultureInfo]::InvariantCulture) } -Descending
+        $candidate = $sorted[0]
+        $parts     = $cellKey -split '__'
+        $version   = $parts[0]
+        $tier      = $parts[1]
+        $samp      = $parts[2]
+
+        $isReg   = $regSet.ContainsKey($cellKey)
+        $isInsuf = $insufSet.ContainsKey($cellKey)
+
+        $groupKey = "$($candidate.run_id)|$($candidate.scenario)|$version|$tier"
+        if (-not $statusByGroup.ContainsKey($groupKey)) {
+            $statusByGroup[$groupKey] = [pscustomobject]@{
+                run_id              = $candidate.run_id
+                scenario            = $candidate.scenario
+                umbraco_version     = $version
+                infra_tier          = $tier
+                regressed_samplers  = New-Object System.Collections.Generic.List[string]
+                insufficient_count  = 0
+                checked_count       = 0
+            }
+        }
+        $g = $statusByGroup[$groupKey]
+        $g.checked_count++
+        if ($isReg)   { $g.regressed_samplers.Add($samp) }
+        if ($isInsuf) { $g.insufficient_count++ }
+    }
+
+    if ($statusByGroup.Count -gt 0) {
+        $now = (Get-Date).ToUniversalTime().ToString("o")
+        $rows = foreach ($g in $statusByGroup.Values) {
+            $regressedList = ($g.regressed_samplers -join ',')
+            $verdict =
+                if ($g.regressed_samplers.Count -gt 0) { 'regress' }
+                elseif ($g.insufficient_count -eq $g.checked_count) { 'insufficient' }
+                else { 'pass' }
+            [pscustomobject]@{
+                TimeGenerated      = $now
+                run_id             = [string]$g.run_id
+                scenario           = [string]$g.scenario
+                umbraco_version    = [string]$g.umbraco_version
+                infra_tier         = [string]$g.infra_tier
+                parse_status       = 'regression_check'
+                regression_status  = $verdict
+                regressed_samplers = $regressedList
+                regressed_count    = $g.regressed_samplers.Count
+            }
+        }
+
+        Write-Host ""
+        Write-Host "Posting $($rows.Count) regression-status row(s) to Log Analytics ($LogAnalyticsStreamName)"
+        try {
+            $token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
+            $body  = ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress -AsArray
+            $url   = "$LogAnalyticsDceUri/dataCollectionRules/$LogAnalyticsDcrImmutableId/streams/${LogAnalyticsStreamName}?api-version=2023-01-01"
+            Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" `
+                -Headers @{ Authorization = "Bearer $token" } | Out-Null
+            Write-Host "   ok"
+        }
+        catch {
+            $msg = "Regression-status ingestion failed: $($_.Exception.Message). Build artifact ($OutputPath) remains authoritative."
+            Write-Warning $msg
+            Write-Host "##vso[task.logissue type=warning]$msg"
+        }
+    }
+}
+
+if ($exitOnRegression) { exit 1 }
