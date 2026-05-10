@@ -60,3 +60,31 @@ variable "sql_sku_override" {
     error_message = "sql_sku_override must be empty (auto) or one of: S0, S1, S2, S3"
   }
 }
+
+# Cost guard on the ephemeral RG. Budget is monthly-grain (Azure's smallest);
+# fires when accumulated MTD spend on the RG crosses the threshold percentage.
+# Realistic numbers at our run size: a normal 60-min run is well under $1; a
+# forgotten validation gate that lives 8 hours is ~$5; multiple stuck/runaway
+# RGs in one month would compound. Empty -BudgetAlertEmails skips the budget
+# entirely (default), so it's opt-in until a real email goes here.
+variable "budget_alert_amount" {
+  type        = number
+  description = "Monthly budget cap for the ephemeral RG (USD). Notifies when actual MTD spend exceeds budget_alert_threshold_pct."
+  default     = 50
+}
+
+variable "budget_alert_threshold_pct" {
+  type        = number
+  description = "Percentage of budget_alert_amount that triggers the email notification (0-100)."
+  default     = 80
+  validation {
+    condition     = var.budget_alert_threshold_pct > 0 && var.budget_alert_threshold_pct <= 1000
+    error_message = "budget_alert_threshold_pct must be between 1 and 1000."
+  }
+}
+
+variable "budget_alert_emails" {
+  type        = list(string)
+  description = "Recipients of the budget alert. Empty list disables the budget resource entirely."
+  default     = []
+}

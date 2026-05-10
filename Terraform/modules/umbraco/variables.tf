@@ -50,3 +50,19 @@ variable "build_id" {
   description = "Pipeline build ID, surfaced as a resource tag"
   default     = "local"
 }
+
+# Cost guard. See root variables.tf for rationale.
+variable "budget_alert_amount" {
+  type    = number
+  default = 50
+}
+
+variable "budget_alert_threshold_pct" {
+  type    = number
+  default = 80
+}
+
+variable "budget_alert_emails" {
+  type    = list(string)
+  default = []
+}
