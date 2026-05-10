@@ -59,6 +59,8 @@ A new team forking this project should:
 
 Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per tier and a SQL DB per case. The plan + DB cost continues to accrue from the moment the RG is created until cleanup. With `validationTimeoutMinutes=240` (the maximum) and a multi-tier run, a forgotten run (no approve, no reject — just walk away) can rack up a half-day of premium SKU billing. Default is 60 min; bump to 120/240 only when you actually need that long to inspect resources, and prefer rejecting cleanup explicitly when done. There's no automated budget alert on the ephemeral RG today — adding an `azurerm_consumption_budget_resource_group` to `Terraform/main.tf` with an action group is a reasonable next step for any team treating this as production.
 
+**History storage scales sub-linearly thanks to a lifecycle policy.** `ensure-history-infra.ps1` configures the history storage account to tier blobs from Hot → Cool after 30 days → Archive after 90 days (override via `-LifecycleCoolAfterDays` / `-LifecycleArchiveAfterDays`). Storage cost on Archive is ~10× cheaper than Hot, so a year of raw zips at 100 runs/month stays well under $1/year. Trade-off: blobs in Archive take **hours** to rehydrate when you need them — fine for occasional historical investigations, painful if you actually want to see them in a hurry. If you're frequently re-investigating runs from 2+ months back, push `-LifecycleArchiveAfterDays` further out.
+
 ## Project Structure
 
 ```

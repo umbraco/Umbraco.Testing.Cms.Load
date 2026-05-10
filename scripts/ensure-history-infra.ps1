@@ -7,7 +7,13 @@ param(
     [Parameter(Mandatory = $true)] [string]$HistoryLocation,
     [Parameter(Mandatory = $true)] [string]$LoadTestName,
     [Parameter(Mandatory = $true)] [string]$StorageAccountName,
-    [Parameter(Mandatory = $true)] [string]$ContainerName
+    [Parameter(Mandatory = $true)] [string]$ContainerName,
+    # Lifecycle policy thresholds (days). Hot for the first window, then Cool,
+    # then Archive — Archive saves ~10× on storage but takes hours to rehydrate
+    # if you ever need an old raw zip. Set either threshold to 0 to keep that
+    # tier transition disabled.
+    [int]$LifecycleCoolAfterDays    = 30,
+    [int]$LifecycleArchiveAfterDays = 90
 )
 
 $ErrorActionPreference = "Stop"
@@ -112,6 +118,51 @@ else {
         --account-key $storageKey `
         --public-access off | Out-Null
     Write-Host "   created"
+}
+
+# Storage lifecycle policy. Tiers older blobs to Cool / Archive automatically
+# so storage cost stays sub-linear with run history. Idempotent — the create
+# command replaces the existing policy in place; re-running with the same
+# settings is a no-op effectively. Applies to ALL blobs in the container,
+# including summary.ndjson — those are tiny so the savings are dominated by
+# raw zips, but the per-read cost on Cool tier for ndjson is also negligible
+# given the PS analysis tools' read frequency.
+Write-Host "-> Lifecycle policy"
+$actions = @{ baseBlob = @{} }
+if ($LifecycleCoolAfterDays -gt 0) {
+    $actions.baseBlob.tierToCool = @{ daysAfterModificationGreaterThan = $LifecycleCoolAfterDays }
+}
+if ($LifecycleArchiveAfterDays -gt 0) {
+    $actions.baseBlob.tierToArchive = @{ daysAfterModificationGreaterThan = $LifecycleArchiveAfterDays }
+}
+$lifecyclePolicy = @{
+    rules = @(
+        @{
+            enabled = $true
+            name    = "tier-history-blobs"
+            type    = "Lifecycle"
+            definition = @{
+                actions = $actions
+                filters = @{
+                    blobTypes   = @("blockBlob")
+                    prefixMatch = @("$ContainerName/")
+                }
+            }
+        }
+    )
+} | ConvertTo-Json -Depth 8 -Compress
+
+$policyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-lifecycle-$([Guid]::NewGuid()).json"
+try {
+    $lifecyclePolicy | Out-File -FilePath $policyFile -Encoding utf8 -NoNewline
+    az storage account management-policy create `
+        --account-name $StorageAccountName `
+        -g $HistoryResourceGroup `
+        --policy "@$policyFile" | Out-Null
+    Write-Host "   set (Cool after $LifecycleCoolAfterDays days, Archive after $LifecycleArchiveAfterDays days)"
+}
+finally {
+    Remove-Item $policyFile -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ""
