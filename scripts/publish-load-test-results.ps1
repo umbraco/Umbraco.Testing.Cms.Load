@@ -423,6 +423,12 @@ if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStrea
         Write-Host "   ok"
     }
     catch {
-        Write-Warning "Log Analytics ingestion failed: $($_.Exception.Message). Blob upload succeeded; data is recoverable from there."
+        # Surface to BOTH the task log and the AzDO summary panel so a stretch
+        # of silent partial-publish failures actually gets noticed before the
+        # Workbook starts looking stale. Pipeline still succeeds (continueOnError
+        # on the publish task) — the issue surfaces as a warning, not a fail.
+        $msg = "Log Analytics ingestion failed: $($_.Exception.Message). Blob upload succeeded; data is recoverable via backfill-monitoring.ps1."
+        Write-Warning $msg
+        Write-Host "##vso[task.logissue type=warning]$msg"
     }
 }

@@ -645,6 +645,8 @@ Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) s
 
 Auth piggybacks on Azure RBAC: anyone with **Reader** on the Log Analytics workspace (or its parent RG) can view the Workbook. No separate identity to manage.
 
+> **Single-team scope today.** The Workbook GUID, the `LoadTestSummary_CL` table, and the workspace itself are shared resources with no per-team partitioning. If multiple teams ever fork this and target the same subscription, they'll need to override `historyWorkspaceName` / `historyDceName` / `historyDcrName` (already supported) **and** pass a fork-specific `-WorkbookId` to `deploy-workbook.ps1` to avoid clobbering each other's dashboard customisations. Row-level filters per team aren't implemented — anyone with workspace Reader sees every team's data.
+
 ### Setup
 
 Nothing to run manually. The pipeline's `ensureMonitoringInfra` stage runs every time and idempotently provisions:
