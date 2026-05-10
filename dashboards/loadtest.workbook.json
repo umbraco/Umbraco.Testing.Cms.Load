@@ -338,6 +338,28 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nunion\n    (baseline  | project sampler = scenario_name, run_kind = 'Baseline',  p95 = p95_ms),\n    (candidate | project sampler = scenario_name, run_kind = 'Candidate', p95 = p95_ms)\n| where isnotnull(p95)\n| order by sampler asc, run_kind asc",
+        "size": 0,
+        "title": "p95 per sampler — baseline vs candidate",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "sampler",
+          "yAxis": ["p95"],
+          "group": "run_kind",
+          "createOtherGroup": 0,
+          "showLegend": true,
+          "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
+        }
+      },
+      "name": "compare-bar"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
         "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Delta_pct = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
         "size": 0,
         "title": "Server-side delta",
