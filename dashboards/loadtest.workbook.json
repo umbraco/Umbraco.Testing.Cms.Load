@@ -87,6 +87,16 @@
             "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false },
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-azdo-org-url",
+            "version": "KqlParameterItem/1.0",
+            "name": "AzdoOrgUrl",
+            "label": "AzDO build URL prefix",
+            "description": "Optional. Format: https://dev.azure.com/<org>/<project>/_build/results?buildId= — Run # cells in the Runs tab become hyperlinks to the matching pipeline run when set.",
+            "type": 1,
+            "isRequired": false,
+            "value": ""
           }
         ],
         "style": "pills",
@@ -182,6 +192,23 @@
       },
       "name": "trends-matrix",
       "styleSettings": { "showBorder": true }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Server-side resource pressure on the same time axis as the latency\n// chart above. Read this together with that chart: if latency climbs at\n// the same time CPU/DTU does, you're infra-bound — the latency number\n// reflects the ceiling, not the workload. If they diverge, you're\n// looking at a code-side regression.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by run_id\n| project TimeGenerated,\n          ['Plan CPU max %']    = round(plan_CpuPercentage_max, 1),\n          ['Plan Memory max %'] = round(plan_MemoryPercentage_max, 1),\n          ['SQL DTU max %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['SQL CPU max %']     = round(sql_cpu_percent_max, 1)\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Resource pressure over time — read alongside the latency chart above",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "timechart",
+        "chartSettings": {
+          "ySettings": { "min": 0, "max": 100, "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
+        }
+      },
+      "name": "trends-resources"
     },
 
     {
@@ -596,7 +623,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Group by (run_id × scenario × version × tier) so a pipeline run that\n// covered multiple cases shows one row per case. parse_status filter\n// excludes the regression_check rows from the load-test summary, then we\n// leftouter-join them back to surface the regression verdict per case.\nlet runs = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status in ('ok', 'no_metrics')\n    | summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier;\nlet regression = LoadTestSummary_CL\n    | where parse_status == 'regression_check'\n    | summarize arg_max(TimeGenerated, regression_status, regressed_count) by run_id, scenario, umbraco_version, infra_tier;\nruns\n| join kind=leftouter regression on run_id, scenario, umbraco_version, infra_tier\n| project Started=TimeGenerated,\n          Scenario=scenario,\n          Version=umbraco_version,\n          Tier=infra_tier,\n          ['Run #']=run_id,\n          Commit=substring(commit, 0, 8),\n          ['Parse']=parse_status,\n          Regression=coalesce(regression_status, 'pending'),\n          ['Regressed #']=coalesce(regressed_count, 0)\n| order by Started desc",
+        "query": "// Group by (run_id × scenario × version × tier) so a pipeline run that\n// covered multiple cases shows one row per case. parse_status filter\n// excludes the regression_check rows from the load-test summary, then we\n// leftouter-join them back to surface the regression verdict per case.\nlet runs = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status in ('ok', 'no_metrics')\n    | summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier;\nlet regression = LoadTestSummary_CL\n    | where parse_status == 'regression_check'\n    | summarize arg_max(TimeGenerated, regression_status, regressed_count) by run_id, scenario, umbraco_version, infra_tier;\nruns\n| join kind=leftouter regression on run_id, scenario, umbraco_version, infra_tier\n| extend ['Build URL'] = iif(strlen('{AzdoOrgUrl}') > 0, strcat('{AzdoOrgUrl}', run_id), '')\n| project Started=TimeGenerated,\n          Scenario=scenario,\n          Version=umbraco_version,\n          Tier=infra_tier,\n          ['Run #']=run_id,\n          ['Build URL']=['Build URL'],\n          Commit=substring(commit, 0, 8),\n          ['Parse']=parse_status,\n          Regression=coalesce(regression_status, 'pending'),\n          ['Regressed #']=coalesce(regressed_count, 0)\n| order by Started desc",
         "size": 0,
         "title": "Runs",
         "queryType": 0,
@@ -606,6 +633,7 @@
         "gridSettings": {
           "rowLimit": 500,
           "formatters": [
+            { "columnMatch": "Build URL", "formatter": 7, "formatOptions": { "linkTarget": "Url", "linkLabel": "open in AzDO →", "linkIsContextBlade": false } },
             { "columnMatch": "Regression", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
               { "operator": "==", "thresholdValue": "regress",      "representation": "critical" },
               { "operator": "==", "thresholdValue": "insufficient", "representation": "3" },
