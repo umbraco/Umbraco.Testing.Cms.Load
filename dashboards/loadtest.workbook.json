@@ -212,7 +212,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier\n| project Tier = infra_tier,\n          ['Plan CPU max %']    = round(plan_CpuPercentage_max, 1),\n          ['Plan Memory max %'] = round(plan_MemoryPercentage_max, 1),\n          ['SQL DTU max %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['SQL CPU max %']     = round(sql_cpu_percent_max, 1),\n          ['App 5xx max']       = toint(app_Http5xx_max),\n          Status = case(\n              app_Http5xx_max > 0\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK')\n| order by Tier asc",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Tier = infra_tier,\n          ['Run #']             = run_id,\n          ['Plan CPU max %']    = round(plan_CpuPercentage_max, 1),\n          ['Plan Memory max %'] = round(plan_MemoryPercentage_max, 1),\n          ['SQL DTU max %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['SQL CPU max %']     = round(sql_cpu_percent_max, 1),\n          ['Err %']             = round(run_error_rate * 100, 2),\n          Status = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK')\n| order by Tier asc",
         "size": 0,
         "title": "Capacity verdict — did the infra hit the wall?",
         "queryType": 0,
@@ -221,11 +221,11 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Plan CPU max %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "Plan Memory max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "SQL DTU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "SQL CPU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "App 5xx max",       "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 10 } },
+            { "columnMatch": "Plan CPU max %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "Plan Memory max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "SQL DTU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "SQL CPU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "Err %",             "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } } },
             { "columnMatch": "Status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
               { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
               { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
@@ -259,7 +259,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['p95 (ms)'] = round(p95_ms, 0),\n          ['p99 (ms)'] = round(p99_ms, 0),\n          ['Err %']    = round(error_rate * 100, 1),\n          ['Plan CPU max %'] = round(plan_CpuPercentage_max, 1),\n          ['SQL DTU max %']  = round(sql_dtu_consumption_percent_max, 1)\n| order by Sampler asc, Tier asc",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['Run #']    = run_id,\n          ['p95 (ms)'] = round(p95_ms, 0),\n          ['p99 (ms)'] = round(p99_ms, 0),\n          ['Err %']    = round(error_rate * 100, 1),\n          ['Plan CPU max %'] = round(plan_CpuPercentage_max, 1),\n          ['SQL DTU max %']  = round(sql_dtu_consumption_percent_max, 1)\n| order by Sampler asc, Tier asc",
         "size": 0,
         "title": "Per-sampler + server-side detail per tier",
         "queryType": 0,
@@ -268,9 +268,9 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Plan CPU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "SQL DTU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "Err %",         "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } }
+            { "columnMatch": "Plan CPU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "SQL DTU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } } },
+            { "columnMatch": "Err %",         "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } } }
           ]
         }
       },
@@ -314,6 +314,18 @@
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
           {
+            "id": "param-versions-baseline",
+            "version": "KqlParameterItem/1.0",
+            "name": "VersionsBaseline",
+            "label": "Baseline version",
+            "type": 2,
+            "isRequired": true,
+            "query": "LoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| distinct umbraco_version\n| order by umbraco_version asc",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
             "id": "param-versions-metric",
             "version": "KqlParameterItem/1.0",
             "name": "VersionsMetric",
@@ -347,6 +359,36 @@
         }
       },
       "name": "versions-bar"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Overall version-vs-baseline delta. For each non-baseline version,\n// compute median p95/p99 per sampler, take the average % delta against\n// the baseline version's median, then summarize across samplers as a\n// single per-version row. 'faster_p95' counts how many samplers got\n// better in the candidate; 'slower_p95' the opposite.\nlet baseline = LoadTestSummary_CL\n    | where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version == '{VersionsBaseline}'\n    | where isnotempty(scenario_name) and parse_status == 'ok'\n    | summarize base_p95 = percentile(p95_ms, 50), base_p99 = percentile(p99_ms, 50) by scenario_name;\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version != '{VersionsBaseline}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize cand_p95 = percentile(p95_ms, 50), cand_p99 = percentile(p99_ms, 50), runs = count_distinct(run_id) by scenario_name, umbraco_version\n| join kind=inner baseline on scenario_name\n| extend p95_delta = (cand_p95 - base_p95) / base_p95 * 100,\n         p99_delta = (cand_p99 - base_p99) / base_p99 * 100\n| summarize\n    ['Samplers']     = count(),\n    ['Runs (cand)']  = max(runs),\n    ['Avg Δ p95 %']  = round(avg(p95_delta), 0),\n    ['Avg Δ p99 %']  = round(avg(p99_delta), 0),\n    ['Faster (p95)'] = countif(p95_delta < 0),\n    ['Slower (p95)'] = countif(p95_delta > 0)\n    by Version = umbraco_version\n| order by Version asc",
+        "size": 0,
+        "title": "Overall — each version vs baseline {VersionsBaseline}",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Avg Δ p95 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } },
+            { "columnMatch": "Avg Δ p99 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } },
+            { "columnMatch": "Faster (p95)", "formatter": 8, "formatOptions": { "palette": "green",          "min": 0, "max": 10 } },
+            { "columnMatch": "Slower (p95)", "formatter": 8, "formatOptions": { "palette": "redBright",      "min": 0, "max": 10 } }
+          ]
+        }
+      },
+      "name": "versions-overall"
     },
     {
       "type": 3,
