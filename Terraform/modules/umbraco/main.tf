@@ -41,8 +41,17 @@ resource "azurerm_consumption_budget_resource_group" "ephemeral" {
   # Start of current month, in UTC. formatdate keeps it stable across re-applies
   # within the same month; a re-apply in a new month will roll the start date
   # forward, which is the desired behavior for monthly grain.
+  #
+  # end_date is set explicitly ~10 years out. azurerm provider defaults this
+  # to start_date + 1 year, which silently disables the budget after 12
+  # months from initial apply — easy to miss because Terraform doesn't drift-
+  # detect a "budget that no longer monitors anything". Pushing it ~decade
+  # out makes the time window long enough that re-applies (which always
+  # happen on each pipeline run) will refresh start_date well before
+  # end_date matters.
   time_period {
     start_date = formatdate("YYYY-MM-01'T'00:00:00'Z'", timestamp())
+    end_date   = formatdate("YYYY-MM-01'T'00:00:00'Z'", timeadd(timestamp(), "87600h"))
   }
 
   notification {
