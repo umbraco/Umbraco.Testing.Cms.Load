@@ -181,6 +181,20 @@ function Get-Pct ($Sorted, [double]$Pct) {
 
 $rows = @()
 
+# Azure Load Testing's task downloads its artifacts as results.zip (and
+# report.zip) but doesn't unpack them. The engine*_results.csv we scan for
+# below lives INSIDE results.zip, so without this expansion every run produces
+# a metadata-only row (parse_status="no_metrics") and the Workbook filters it
+# out as missing real metrics.
+$resultsZips = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "results.zip" -File -ErrorAction SilentlyContinue)
+foreach ($zip in $resultsZips) {
+    $dest = Join-Path $zip.Directory.FullName ($zip.BaseName + "-extracted")
+    if (-not (Test-Path $dest)) {
+        Expand-Archive -Path $zip.FullName -DestinationPath $dest -Force
+        Write-Host "Extracted $($zip.Name) to $dest"
+    }
+}
+
 $engineFiles = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "engine*_results.csv" -File -ErrorAction SilentlyContinue)
 if ($engineFiles.Count -gt 0) {
     Write-Host "Parsing $($engineFiles.Count) engine result file(s) (JMeter format):"
