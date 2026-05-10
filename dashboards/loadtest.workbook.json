@@ -212,7 +212,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| extend value = column_ifexists('{TiersMetric}', real(null))\n| project scenario_name, infra_tier, value\n| order by scenario_name asc, infra_tier asc",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| extend value = column_ifexists('{TiersMetric}', real(null))\n| project scenario_name, infra_tier, value\n| evaluate pivot(infra_tier, any(value))\n| order by scenario_name asc",
         "size": 0,
         "title": "{TiersMetric} per sampler, latest run per tier",
         "queryType": 0,
@@ -221,8 +221,6 @@
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "scenario_name",
-          "yAxis": ["value"],
-          "group": "infra_tier",
           "createOtherGroup": 0,
           "showLegend": true
         }
@@ -306,17 +304,15 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists('{VersionsMetric}', real(null))\n| where isnotnull(value)\n| summarize median_metric = round(percentile(value, 50), 0) by scenario_name, umbraco_version\n| order by scenario_name asc, umbraco_version asc",
+        "query": "LoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists('{VersionsMetric}', real(null))\n| where isnotnull(value)\n| summarize median_metric = round(percentile(value, 50), 0) by scenario_name, umbraco_version\n| evaluate pivot(umbraco_version, any(median_metric))\n| order by scenario_name asc",
         "size": 0,
-        "title": "Median {VersionsMetric} per sampler, grouped by version",
+        "title": "Median {VersionsMetric} per sampler, by version",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "scenario_name",
-          "yAxis": ["median_metric"],
-          "group": "umbraco_version",
           "createOtherGroup": 0,
           "showLegend": true,
           "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
@@ -432,7 +428,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nunion\n    (baseline  | project sampler = scenario_name, run_kind = 'Baseline',  p95 = p95_ms),\n    (candidate | project sampler = scenario_name, run_kind = 'Candidate', p95 = p95_ms)\n| where isnotnull(p95)\n| order by sampler asc, run_kind asc",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nunion\n    (baseline  | project sampler = scenario_name, run_kind = 'Baseline',  p95 = p95_ms),\n    (candidate | project sampler = scenario_name, run_kind = 'Candidate', p95 = p95_ms)\n| where isnotnull(p95)\n| evaluate pivot(run_kind, any(p95))\n| order by sampler asc",
         "size": 0,
         "title": "p95 per sampler — baseline vs candidate",
         "queryType": 0,
@@ -441,8 +437,7 @@
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "sampler",
-          "yAxis": ["p95"],
-          "group": "run_kind",
+          "yAxis": ["Baseline", "Candidate"],
           "createOtherGroup": 0,
           "showLegend": true,
           "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
