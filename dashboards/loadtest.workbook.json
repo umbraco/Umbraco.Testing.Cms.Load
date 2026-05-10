@@ -133,7 +133,7 @@
         "version": "KqlItem/1.0",
         "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend series = strcat(scenario_name, ' · ', umbraco_version, '/', infra_tier)\n| project TimeGenerated, series, value = column_ifexists('{Metric}', real(null))\n| where isnotnull(value)\n| order by TimeGenerated asc",
         "size": 0,
-        "title": "{Metric} per sampler over time",
+        "title": "Latency / errors over time, per sampler",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
@@ -145,7 +145,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists('{Metric}', real(null))\n| where isnotnull(value)\n| summarize med = round(percentile(value, 50), 1), sd = round(stdev(value), 1), n = count() by scenario_name, umbraco_version, infra_tier\n| extend cell = strcat(med, ' ±', sd, ' (n=', n, ')')\n| project scenario_name, umbraco_version, infra_tier, cell\n| order by scenario_name asc, umbraco_version asc, infra_tier asc",
+        "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists('{Metric}', real(null))\n| where isnotnull(value)\n| summarize med = round(percentile(value, 50), 0), sd = round(stdev(value), 0), n = count() by scenario_name, umbraco_version, infra_tier\n| project Sampler = scenario_name, Version = umbraco_version, Tier = infra_tier, ['median ±σ (n)'] = strcat(med, ' ±', sd, ' (n=', n, ')')\n| order by Sampler asc, Version asc, Tier asc",
         "size": 0,
         "title": "Matrix view (median ±stddev)",
         "queryType": 0,
@@ -214,7 +214,7 @@
         "version": "KqlItem/1.0",
         "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| extend value = column_ifexists('{TiersMetric}', real(null))\n| project scenario_name, infra_tier, value\n| evaluate pivot(infra_tier, any(value))\n| order by scenario_name asc",
         "size": 0,
-        "title": "{TiersMetric} per sampler, latest run per tier",
+        "title": "Latest run per tier — {TiersMetric} per sampler",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
@@ -231,7 +231,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project scenario_name, infra_tier,\n          p95 = round(p95_ms, 0),\n          p99 = round(p99_ms, 0),\n          ['err %'] = round(error_rate * 100, 2),\n          ['plan cpu max %'] = plan_CpuPercentage_max,\n          ['sql dtu max %']  = sql_dtu_consumption_percent_max\n| order by scenario_name asc, infra_tier asc",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['p95 (ms)'] = round(p95_ms, 0),\n          ['p99 (ms)'] = round(p99_ms, 0),\n          ['Err %']    = round(error_rate * 100, 1),\n          ['Plan CPU max %'] = round(plan_CpuPercentage_max, 1),\n          ['SQL DTU max %']  = round(sql_dtu_consumption_percent_max, 1)\n| order by Sampler asc, Tier asc",
         "size": 0,
         "title": "Per-sampler + server-side detail per tier",
         "queryType": 0,
@@ -240,9 +240,9 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "plan cpu max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "sql dtu max %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
-            { "columnMatch": "err %",          "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } }
+            { "columnMatch": "Plan CPU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "SQL DTU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "Err %",         "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } }
           ]
         }
       },
@@ -306,7 +306,7 @@
         "version": "KqlItem/1.0",
         "query": "LoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists('{VersionsMetric}', real(null))\n| where isnotnull(value)\n| summarize median_metric = round(percentile(value, 50), 0) by scenario_name, umbraco_version\n| evaluate pivot(umbraco_version, any(median_metric))\n| order by scenario_name asc",
         "size": 0,
-        "title": "Median {VersionsMetric} per sampler, by version",
+        "title": "Median {VersionsMetric} per sampler — one bar per version",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
@@ -324,7 +324,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize\n    n         = count(),\n    median_p95 = round(percentile(p95_ms, 50), 0),\n    stddev_p95 = round(stdev(p95_ms), 0),\n    median_p99 = round(percentile(p99_ms, 50), 0),\n    median_err_pct = round(percentile(error_rate, 50) * 100, 2)\n    by scenario_name, umbraco_version\n| order by scenario_name asc, umbraco_version asc",
+        "query": "LoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize\n    Runs = count(),\n    ['median p95 (ms)'] = round(percentile(p95_ms, 50), 0),\n    ['±σ p95'] = round(stdev(p95_ms), 0),\n    ['median p99 (ms)'] = round(percentile(p99_ms, 50), 0),\n    ['median Err %'] = round(percentile(error_rate, 50) * 100, 1)\n    by Sampler = scenario_name, Version = umbraco_version\n| order by Sampler asc, Version asc",
         "size": 0,
         "title": "Per-sampler stats per version",
         "queryType": 0,
@@ -333,8 +333,8 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "n", "formatter": 8, "formatOptions": { "palette": "blue", "min": 1, "max": 10 } },
-            { "columnMatch": "median_err_pct", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } }
+            { "columnMatch": "Runs", "formatter": 8, "formatOptions": { "palette": "blue", "min": 1, "max": 10 } },
+            { "columnMatch": "median Err %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } }
           ]
         }
       },
@@ -395,7 +395,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| extend sampler = coalesce(scenario_name, scenario_name1)\n| project sampler,\n          base_count = request_count,  cand_count = request_count1,\n          base_avg   = avg_ms,         cand_avg   = avg_ms1,\n          base_p95   = p95_ms,         cand_p95   = p95_ms1,\n          base_p99   = p99_ms,         cand_p99   = p99_ms1,\n          delta_avg_pct = delta(avg_ms, avg_ms1),\n          delta_p95_pct = delta(p95_ms, p95_ms1),\n          delta_p99_pct = delta(p99_ms, p99_ms1)\n| order by sampler asc",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| project Sampler = coalesce(scenario_name, scenario_name1),\n          ['Reqs (B)']     = request_count,  ['Reqs (C)']     = request_count1,\n          ['p95 B (ms)']   = round(p95_ms, 0), ['p95 C (ms)']  = round(p95_ms1, 0),\n          ['p99 B (ms)']   = round(p99_ms, 0), ['p99 C (ms)']  = round(p99_ms1, 0),\n          ['Delta avg %'] = delta(avg_ms, avg_ms1),\n          ['Delta p95 %'] = delta(p95_ms, p95_ms1),\n          ['Delta p99 %'] = delta(p99_ms, p99_ms1)\n| order by Sampler asc",
         "size": 0,
         "title": "Per-sampler delta",
         "queryType": 0,
@@ -404,17 +404,17 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "delta_avg_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "Delta avg %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "delta_p95_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "Delta p95 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "delta_p99_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "Delta p99 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
@@ -449,7 +449,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Delta_pct = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Baseline = round(Baseline, 1), Candidate = round(Candidate, 1), ['Delta %'] = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
         "size": 0,
         "title": "Server-side delta",
         "queryType": 0,
@@ -458,7 +458,7 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Delta_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "Delta %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
@@ -516,7 +516,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Drill-down: paste a run_id into the parameter to see per-sampler detail for that run.\nLoadTestSummary_CL\n| where run_id == '{DrillRun}' and isnotempty(scenario_name)\n| project Sampler=scenario_name,\n          Reqs=request_count, Fails=failure_count,\n          ['Err %']=round(error_rate*100, 2),\n          Avg=round(avg_ms, 0), p50=round(p50_ms, 0), p90=round(p90_ms, 0), p95=round(p95_ms, 0), p99=round(p99_ms, 0), Max=round(max_ms, 0)\n| order by Sampler asc",
+        "query": "// Drill-down: paste a run_id into the parameter to see per-sampler detail for that run.\nLoadTestSummary_CL\n| where run_id == '{DrillRun}' and isnotempty(scenario_name)\n| project Sampler=scenario_name,\n          Reqs=request_count, Fails=failure_count,\n          ['Err %']=round(error_rate*100, 1),\n          Avg=round(avg_ms, 0), p50=round(p50_ms, 0), p90=round(p90_ms, 0), p95=round(p95_ms, 0), p99=round(p99_ms, 0), Max=round(max_ms, 0)\n| order by Sampler asc",
         "size": 0,
         "title": "Per-sampler detail for selected run",
         "queryType": 0,
