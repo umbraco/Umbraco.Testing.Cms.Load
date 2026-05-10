@@ -23,7 +23,7 @@
             "typeSettings": {
               "additionalResourceOptions": [],
               "includeAll": false,
-              "showDefault": false
+              "showDefault": true
             },
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
