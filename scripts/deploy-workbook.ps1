@@ -61,7 +61,12 @@ if ([string]::IsNullOrWhiteSpace($workspaceId)) {
 # serializedData is the Workbook content as a *string* embedded in the
 # resource body. ConvertTo-Json will escape it correctly when we serialize
 # the outer body below.
-$workbookContent = Get-Content $WorkbookJsonPath -Raw
+#
+# We substitute __WORKSPACE_ID__ → the actual workspace ARM resource ID so
+# the Workspace parameter ships with a default value baked in. Resource
+# pickers (type 5) need an explicit `value` to auto-fill on first open;
+# `showDefault: true` alone only adds a "Default" option, doesn't select it.
+$workbookContent = (Get-Content $WorkbookJsonPath -Raw).Replace("__WORKSPACE_ID__", $workspaceId)
 
 $body = @{
     kind     = "shared"

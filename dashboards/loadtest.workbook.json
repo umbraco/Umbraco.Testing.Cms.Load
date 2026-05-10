@@ -20,6 +20,7 @@
             "label": "Workspace",
             "type": 5,
             "isRequired": true,
+            "value": "__WORKSPACE_ID__",
             "typeSettings": {
               "additionalResourceOptions": [],
               "includeAll": false,
