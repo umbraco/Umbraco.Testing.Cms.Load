@@ -305,7 +305,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nlet threshold = todouble('{Threshold}') / 100.0;\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), (b - a) / a) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| extend sampler = coalesce(scenario_name, scenario_name1)\n| project sampler,\n          base_count = request_count,  cand_count = request_count1,\n          base_avg   = avg_ms,         cand_avg   = avg_ms1,\n          base_p95   = p95_ms,         cand_p95   = p95_ms1,\n          base_p99   = p99_ms,         cand_p99   = p99_ms1,\n          d_avg = delta(avg_ms, avg_ms1),\n          d_p95 = delta(p95_ms, p95_ms1),\n          d_p99 = delta(p99_ms, p99_ms1)\n| order by sampler asc",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' and isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' and isnotempty(scenario_name);\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| extend sampler = coalesce(scenario_name, scenario_name1)\n| project sampler,\n          base_count = request_count,  cand_count = request_count1,\n          base_avg   = avg_ms,         cand_avg   = avg_ms1,\n          base_p95   = p95_ms,         cand_p95   = p95_ms1,\n          base_p99   = p99_ms,         cand_p99   = p99_ms1,\n          delta_avg_pct = delta(avg_ms, avg_ms1),\n          delta_p95_pct = delta(p95_ms, p95_ms1),\n          delta_p99_pct = delta(p99_ms, p99_ms1)\n| order by sampler asc",
         "size": 0,
         "title": "Per-sampler delta",
         "queryType": 0,
@@ -314,20 +314,20 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "d_avg", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green",  "text": "{0:p0}" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
-              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            { "columnMatch": "delta_avg_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "d_p95", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green", "text": "{0:p0}" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
-              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            { "columnMatch": "delta_p95_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "d_p99", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green", "text": "{0:p0}" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
-              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            { "columnMatch": "delta_p99_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
             ] } }
           ]
         }
@@ -338,7 +338,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Delta = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), (Candidate - Baseline) / Baseline)",
+        "query": "let baseline = LoadTestSummary_CL | where run_id == '{Baseline}' | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL | where run_id == '{Candidate}' | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Delta_pct = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
         "size": 0,
         "title": "Server-side delta",
         "queryType": 0,
@@ -347,10 +347,10 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Delta", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green", "text": "{0:p0}" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright", "text": "{0:p0}" },
-              { "operator": "Default", "representation": "transparent", "text": "{0:p0}" }
+            { "columnMatch": "Delta_pct", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
             ] } }
           ]
         }
