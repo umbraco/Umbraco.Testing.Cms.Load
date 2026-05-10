@@ -8,12 +8,21 @@ param(
     [Parameter(Mandatory = $true)] [string]$LoadTestName,
     [Parameter(Mandatory = $true)] [string]$StorageAccountName,
     [Parameter(Mandatory = $true)] [string]$ContainerName,
-    # Lifecycle policy thresholds (days). Hot for the first window, then Cool,
-    # then Archive — Archive saves ~10× on storage but takes hours to rehydrate
-    # if you ever need an old raw zip. Set either threshold to 0 to keep that
-    # tier transition disabled.
+    # Lifecycle policy thresholds (days). Set either to 0 to disable that
+    # transition.
+    #
+    # Default is Cool@30d, Archive disabled. Reason: the policy filter is
+    # coarse — it applies to ALL blobs in the container, including the
+    # summary.ndjson files the PS analysis tools (show-trends.ps1,
+    # compare-runs.ps1, check-regression.ps1, backfill-monitoring.ps1) read.
+    # Cool tier is instant retrieval at slightly higher per-read cost — fine.
+    # Archive tier takes HOURS to rehydrate, so older summary.ndjson reads
+    # would fail with HTTP 409 until manually rehydrated. Cool-only sidesteps
+    # that. Override -LifecycleArchiveAfterDays only if you've segregated
+    # raw zips to a different prefix (and updated the policy filter to match)
+    # or you're OK with the rehydration delay on year-old data.
     [int]$LifecycleCoolAfterDays    = 30,
-    [int]$LifecycleArchiveAfterDays = 90
+    [int]$LifecycleArchiveAfterDays = 0
 )
 
 $ErrorActionPreference = "Stop"
