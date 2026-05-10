@@ -120,7 +120,7 @@
               "additionalResourceOptions": [],
               "showDefault": false
             },
-            "jsonData": "[\n    { \"value\": \"p95_ms\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99_ms\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg_ms\", \"label\": \"avg (ms)\" },\n    { \"value\": \"error_rate\", \"label\": \"error rate\" }\n]"
+            "jsonData": "[\n    { \"value\": \"p95_ms\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99_ms\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg_ms\", \"label\": \"avg (ms)\" },\n    { \"value\": \"error_rate\", \"label\": \"error rate\" },\n    { \"value\": \"requests_per_sec\", \"label\": \"throughput (RPS)\" },\n    { \"value\": \"plan_CpuPercentage_max\", \"label\": \"Plan CPU max %\" },\n    { \"value\": \"sql_dtu_consumption_percent_max\", \"label\": \"SQL DTU max %\" }\n]"
           }
         ],
         "style": "pills"
@@ -207,6 +207,34 @@
         "style": "pills"
       },
       "name": "tiers-params"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier\n| project Tier = infra_tier,\n          ['Plan CPU max %']    = round(plan_CpuPercentage_max, 1),\n          ['Plan Memory max %'] = round(plan_MemoryPercentage_max, 1),\n          ['SQL DTU max %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['SQL CPU max %']     = round(sql_cpu_percent_max, 1),\n          ['App 5xx max']       = toint(app_Http5xx_max),\n          Status = case(\n              app_Http5xx_max > 0\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK')\n| order by Tier asc",
+        "size": 0,
+        "title": "Capacity verdict — did the infra hit the wall?",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Plan CPU max %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "Plan Memory max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "SQL DTU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "SQL CPU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 } },
+            { "columnMatch": "App 5xx max",       "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 10 } },
+            { "columnMatch": "Status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
+              { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
+              { "operator": "Default", "representation": "success" }
+            ] } }
+          ]
+        }
+      },
+      "name": "tiers-saturation"
     },
     {
       "type": 3,
