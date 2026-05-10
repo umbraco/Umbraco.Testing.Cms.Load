@@ -26,6 +26,11 @@ param(
     [Parameter(Mandatory = $true)] [string]$DcrName,
     [Parameter(Mandatory = $true)] [string]$IngestPrincipalId,
     [string]$TableName = "LoadTestSummary_CL",
+    # Days the custom table retains data. LA includes 31 days free; beyond
+    # that is ~$0.12/GB/month. At our row size + cadence this is fractions
+    # of a cent per year for 365-day retention. Bumping >2y requires Sentinel
+    # or an Auxiliary Logs tier — out of scope here.
+    [int]$RetentionDays = 365,
     [switch]$EmitPipelineVars
 )
 
@@ -96,7 +101,7 @@ Write-Host "=== Ensuring monitoring infrastructure ==="
 Write-Host "  RG:               $HistoryResourceGroup"
 Write-Host "  Location:         $HistoryLocation"
 Write-Host "  Workspace:        $WorkspaceName"
-Write-Host "  Custom table:     $TableName"
+Write-Host "  Custom table:     $TableName (retention $RetentionDays days)"
 Write-Host "  DCE / DCR:        $DceName / $DcrName"
 Write-Host "  Ingest principal: $IngestPrincipalId"
 Write-Host ""
@@ -139,6 +144,7 @@ $workspaceId = az monitor log-analytics workspace show -n $WorkspaceName -g $His
 Write-Host "-> Custom table $TableName"
 $tableBody = @{
     properties = @{
+        retentionInDays = $RetentionDays
         schema = @{
             name    = $TableName
             columns = $columns
