@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# Umbraco Load Test Dashboard\nData source: `LoadTestSummary_CL` in the workspace below, populated by `scripts/publish-load-test-results.ps1` on every pipeline run.\n\n**Vocabulary (entities):**\n- **Run** — one pipeline build. Identified by `Run #` (the AzDO build ID).\n- **Case** — one (scenario × version × tier) slice. A multi-case pipeline run produces several rows per `Run #`.\n- **Scenario** — the workload YAML under `loadtests/scenarios/` (e.g. `BackofficeOnly`).\n- **Sampler** — one Locust task inside a scenario (an individual endpoint or operation). Shown as `Sampler` in tables (underlying column: `scenario_name`).\n- **Tier** — the Azure App Service Plan + SQL DTU pairing the case ran on (e.g. Starter, Standard, Premium).\n\n**Vocabulary (metrics):**\n- **p95 / p99** — 95th / 99th percentile of per-request latency in milliseconds. *5 in 100 / 1 in 100* requests were slower than this.\n- **RPS** — requests per second (throughput sustained by the case).\n- **Err %** — percentage of requests that failed.\n- **Plan CPU max %** — peak Azure App Service Plan CPU during the run.\n- **SQL DTU max %** — peak Azure SQL Database load (DTU = Database Throughput Unit, Azure's bundled CPU+IO measure).\n- **±σ** — one standard deviation across the runs that produced the median (rough spread; latency is skewed so treat as indicative, not symmetric).\n\n**Layout:** the global filter scopes **Trends**, **Compare**, and **Runs**. The **Tiers** and **Versions** tabs have their own pickers but inherit the global filter when one is set."
+        "json": "# Umbraco Load Test Dashboard\nData source: `LoadTestSummary_CL` in the workspace below, populated by `scripts/publish-load-test-results.ps1` on every pipeline run.\n\n**Vocabulary (entities):**\n- **Run** — one pipeline build. Identified by `Run #` (the AzDO build ID).\n- **Case** — one (scenario × version × tier) slice. A multi-case pipeline run produces several rows per `Run #`.\n- **Scenario** — the workload YAML under `loadtests/scenarios/` (e.g. `BackofficeOnly`).\n- **Sampler** — one Locust task inside a scenario (an individual endpoint or operation). Shown as `Sampler` in tables (underlying column: `scenario_name`).\n- **Tier** — the Azure App Service + SQL Database pairing the case ran on (e.g. Starter, Standard, Premium).\n\n**Vocabulary (metrics):**\n- **p95 / p99** — 95th / 99th percentile of per-request latency in milliseconds. *5 in 100 / 1 in 100* requests were slower than this.\n- **Requests/sec** — throughput the case sustained.\n- **Err %** — percentage of requests that failed.\n- **Server CPU avg / peak %** — average and peak Azure App Service Plan CPU during the run.\n- **Database load avg / peak %** — average and peak Azure SQL Database load (Azure's bundled CPU + IO measure, internally called DTU).\n- **spread** — one standard deviation across the runs that produced the median. Rough indicator of variability; latency is skewed so treat as indicative, not symmetric.\n- **change %** — percentage difference vs. the chosen baseline. *Negative* = candidate is faster than baseline, *positive* = slower.\n\n**Layout:** the global filter scopes **Trends**, **Compare**, and **Runs**. The **Tiers** and **Versions** tabs have their own pickers but inherit the global filter when one is set."
       },
       "name": "title"
     },
@@ -145,19 +145,19 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Latest-run summary card. Top-of-page glance answer to 'is the latest\n// run OK?' Pulls one row per (scenario × version × tier) bounded by the\n// global filter. Capacity status flags infra saturation (CPU/Memory/DTU\n// >= 85/95% or error >= 1%); Regression surfaces the verdict posted by\n// scripts/check-regression.ps1 for the same case.\nlet runs = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier\n    | top 5 by TimeGenerated desc;\nlet regression = LoadTestSummary_CL\n    | where parse_status == 'regression_check'\n    | summarize arg_max(TimeGenerated, regression_status) by run_id, scenario, umbraco_version, infra_tier;\nruns\n| join kind=leftouter regression on run_id, scenario, umbraco_version, infra_tier\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Started = TimeGenerated,\n          ['Run #'] = run_id,\n          Scenario = scenario,\n          Version = umbraco_version,\n          Tier = infra_tier,\n          ['Plan CPU avg %'] = round(plan_CpuPercentage_avg, 1),\n          ['Plan CPU max %'] = round(plan_CpuPercentage_max, 1),\n          ['SQL DTU avg %']  = round(sql_dtu_consumption_percent_avg, 1),\n          ['SQL DTU max %']  = round(sql_dtu_consumption_percent_max, 1),\n          ['Err %']          = round(run_error_rate * 100, 2),\n          ['Capacity status'] = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK'),\n          Regression = case(\n              regression_status == 'regress',      'regression detected',\n              regression_status == 'pass',         'no regression',\n              regression_status == 'insufficient', 'not enough history',\n              isnotempty(regression_status),       regression_status,\n              TimeGenerated > ago(15min),          'checking',\n              'not run')\n| order by Started desc",
+        "query": "// Latest-run summary card. Top-of-page glance answer to 'is the latest\n// run OK?' Pulls one row per (scenario × version × tier) bounded by the\n// global filter. Capacity status flags infra saturation (Server CPU /\n// memory / Database load peaks at 85/95% or error rate at 1%);\n// Regression surfaces the verdict posted by scripts/check-regression.ps1\n// for the same case.\nlet runs = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier\n    | top 5 by TimeGenerated desc;\nlet regression = LoadTestSummary_CL\n    | where parse_status == 'regression_check'\n    | summarize arg_max(TimeGenerated, regression_status) by run_id, scenario, umbraco_version, infra_tier;\nruns\n| join kind=leftouter regression on run_id, scenario, umbraco_version, infra_tier\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Started = TimeGenerated,\n          ['Run #'] = run_id,\n          Scenario = scenario,\n          Version = umbraco_version,\n          Tier = infra_tier,\n          ['Server CPU avg %'] = round(plan_CpuPercentage_avg, 1),\n          ['Server CPU peak %'] = round(plan_CpuPercentage_max, 1),\n          ['Database load avg %']  = round(sql_dtu_consumption_percent_avg, 1),\n          ['Database load peak %']  = round(sql_dtu_consumption_percent_max, 1),\n          ['Err %']          = round(run_error_rate * 100, 2),\n          ['Capacity status'] = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK'),\n          Regression = case(\n              regression_status == 'regress',      'regression detected',\n              regression_status == 'pass',         'no regression',\n              regression_status == 'insufficient', 'not enough history',\n              isnotempty(regression_status),       regression_status,\n              TimeGenerated > ago(15min),          'checking',\n              'not run')\n| order by Started desc",
         "size": 0,
-        "title": "Latest 5 runs — Capacity status flags infra saturation (CPU/Memory/DTU ≥ 85/95% or error rate ≥1%); Regression surfaces the per-case latency verdict from the regression-check pipeline stage.",
+        "title": "Latest 5 runs — Capacity status flags infrastructure saturation (Server CPU / memory / Database load peaks at 85%+ or error rate at 1%+); Regression surfaces the per-case latency verdict from the regression-check pipeline stage.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Plan CPU avg %", "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Plan CPU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "SQL DTU avg %",  "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "SQL DTU max %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU avg %", "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load avg %",  "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load peak %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
             { "columnMatch": "Err %",          "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
             { "columnMatch": "Capacity status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
               { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
@@ -204,7 +204,7 @@
               "additionalResourceOptions": [],
               "showDefault": false
             },
-            "jsonData": "[\n    { \"value\": \"p95 (ms)\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99 (ms)\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg (ms)\", \"label\": \"avg (ms)\" },\n    { \"value\": \"error rate\", \"label\": \"error rate\" },\n    { \"value\": \"throughput (RPS)\", \"label\": \"throughput (RPS)\" },\n    { \"value\": \"Plan CPU max %\", \"label\": \"Plan CPU max %\" },\n    { \"value\": \"SQL DTU max %\", \"label\": \"SQL DTU max %\" }\n]"
+            "jsonData": "[\n    { \"value\": \"p95 (ms)\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99 (ms)\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg (ms)\", \"label\": \"avg (ms)\" },\n    { \"value\": \"error rate\", \"label\": \"error rate\" },\n    { \"value\": \"Requests/sec\", \"label\": \"Requests/sec\" },\n    { \"value\": \"Server CPU peak %\", \"label\": \"Server CPU peak %\" },\n    { \"value\": \"Database load peak %\", \"label\": \"Database load peak %\" }\n]"
           }
         ],
         "style": "pills"
@@ -216,7 +216,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Run-indexed x-axis (NOT time): each Run # is a discrete categorical\n// position so runs are equally spaced regardless of how long elapsed\n// between them. Time-based axis crammed bursts and isolated long-gap\n// runs together making run-to-run trends unreadable. Chronological order\n// is preserved via the upstream `order by TimeGenerated asc`.\nlet col = case(\n    '{Metric}' == 'p95 (ms)', 'p95_ms',\n    '{Metric}' == 'p99 (ms)', 'p99_ms',\n    '{Metric}' == 'avg (ms)', 'avg_ms',\n    '{Metric}' == 'error rate', 'error_rate',\n    '{Metric}' == 'throughput (RPS)', 'requests_per_sec',\n    '{Metric}' == 'Plan CPU max %', 'plan_CpuPercentage_max',\n    '{Metric}' == 'SQL DTU max %', 'sql_dtu_consumption_percent_max',\n    'p95_ms');\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend Sampler = strcat(scenario_name, ' · ', umbraco_version, ' · ', infra_tier)\n| order by TimeGenerated asc\n| extend Run = strcat('#', run_id)\n| project Run, Sampler, value = column_ifexists(col, real(null))\n| where isnotnull(value)",
+        "query": "// Run-indexed x-axis (NOT time): each Run # is a discrete categorical\n// position so runs are equally spaced regardless of how long elapsed\n// between them. Time-based axis crammed bursts and isolated long-gap\n// runs together making run-to-run trends unreadable. Chronological order\n// is preserved via the upstream `order by TimeGenerated asc`.\nlet col = case(\n    '{Metric}' == 'p95 (ms)', 'p95_ms',\n    '{Metric}' == 'p99 (ms)', 'p99_ms',\n    '{Metric}' == 'avg (ms)', 'avg_ms',\n    '{Metric}' == 'error rate', 'error_rate',\n    '{Metric}' == 'Requests/sec', 'requests_per_sec',\n    '{Metric}' == 'Server CPU peak %', 'plan_CpuPercentage_max',\n    '{Metric}' == 'Database load peak %', 'sql_dtu_consumption_percent_max',\n    'p95_ms');\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend Sampler = strcat(scenario_name, ' · ', umbraco_version, ' · ', infra_tier)\n| order by TimeGenerated asc\n| extend Run = strcat('#', run_id)\n| project Run, Sampler, value = column_ifexists(col, real(null))\n| where isnotnull(value)",
         "size": 0,
         "title": "{Metric} per run — one line per (sampler · version · tier), oldest → newest left to right",
         "queryType": 0,
@@ -235,9 +235,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// 'error rate' is 0..1 and rounds to '0 ±0' at integer precision — use 3\n// decimals for fractional metrics, integers for everything else.\nlet col = case(\n    '{Metric}' == 'p95 (ms)', 'p95_ms',\n    '{Metric}' == 'p99 (ms)', 'p99_ms',\n    '{Metric}' == 'avg (ms)', 'avg_ms',\n    '{Metric}' == 'error rate', 'error_rate',\n    '{Metric}' == 'throughput (RPS)', 'requests_per_sec',\n    '{Metric}' == 'Plan CPU max %', 'plan_CpuPercentage_max',\n    '{Metric}' == 'SQL DTU max %', 'sql_dtu_consumption_percent_max',\n    'p95_ms');\nlet precision = iif('{Metric}' == 'error rate', 3, 0);\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists(col, real(null))\n| where isnotnull(value)\n| summarize med = round(percentile(value, 50), precision), sd = round(stdev(value), precision), n = count() by scenario_name, umbraco_version, infra_tier\n| project Sampler = scenario_name, Version = umbraco_version, Tier = infra_tier, ['median ±σ (runs)'] = strcat(med, ' ±', sd, ' (', n, ' runs)')\n| order by Sampler asc, Version asc, Tier asc",
+        "query": "// 'error rate' is 0..1 and rounds to '0 ±0' at integer precision — use 3\n// decimals for fractional metrics, integers for everything else.\nlet col = case(\n    '{Metric}' == 'p95 (ms)', 'p95_ms',\n    '{Metric}' == 'p99 (ms)', 'p99_ms',\n    '{Metric}' == 'avg (ms)', 'avg_ms',\n    '{Metric}' == 'error rate', 'error_rate',\n    '{Metric}' == 'Requests/sec', 'requests_per_sec',\n    '{Metric}' == 'Server CPU peak %', 'plan_CpuPercentage_max',\n    '{Metric}' == 'Database load peak %', 'sql_dtu_consumption_percent_max',\n    'p95_ms');\nlet precision = iif('{Metric}' == 'error rate', 3, 0);\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = column_ifexists(col, real(null))\n| where isnotnull(value)\n| summarize med = round(percentile(value, 50), precision), sd = round(stdev(value), precision), n = count() by scenario_name, umbraco_version, infra_tier\n| project Sampler = scenario_name, Version = umbraco_version, Tier = infra_tier, ['median ± spread (runs)'] = strcat(med, ' ± ', sd, ' (', n, ' runs)')\n| order by Sampler asc, Version asc, Tier asc",
         "size": 0,
-        "title": "Matrix view — median {Metric} ± stddev across runs",
+        "title": "Matrix view — median {Metric} ± spread across runs",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
@@ -251,7 +251,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Server-side resource pressure per run. Read alongside the latency chart\n// above: if latency climbs as CPU/DTU does, you're infra-bound; if they\n// diverge, the regression is code-side. Run-indexed x-axis matches the\n// chart above and prevents Workbook's time-bin aggregation from summing\n// max-percentages across rows (a 'Sum' line showing 300%+ is meaningless).\n//\n// Unpivoted to long-form so the chart can render one line per\n// (metric × tier). Otherwise a multi-tier sweep zigzags between the\n// tiers' values on a single 'Plan CPU' line.\nlet pressure = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *) by run_id, umbraco_version, infra_tier;\nunion\n    (pressure | extend metric='Plan CPU max %',    value=round(todouble(plan_CpuPercentage_max), 1)),\n    (pressure | extend metric='Plan Memory max %', value=round(todouble(plan_MemoryPercentage_max), 1)),\n    (pressure | extend metric='SQL DTU max %',     value=round(todouble(sql_dtu_consumption_percent_max), 1)),\n    (pressure | extend metric='SQL CPU max %',     value=round(todouble(sql_cpu_percent_max), 1))\n| where isnotnull(value)\n| order by TimeGenerated asc\n| extend Run = strcat('#', run_id), Series = strcat(metric, ' · ', infra_tier)\n| project Run, Series, value",
+        "query": "// Server-side resource pressure per run. Read alongside the latency chart\n// above: if latency climbs as Server CPU / Database load does, you're\n// infra-bound; if they diverge, the regression is code-side. Run-indexed\n// x-axis matches the chart above and prevents Workbook's time-bin\n// aggregation from summing peak-percentages across rows (a 'Sum' line\n// showing 300%+ is meaningless).\n//\n// Unpivoted to long-form so the chart can render one line per\n// (metric × tier). Otherwise a multi-tier sweep zigzags between the\n// tiers' values on a single 'Server CPU' line.\nlet pressure = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *) by run_id, umbraco_version, infra_tier;\nunion\n    (pressure | extend metric='Server CPU peak %',    value=round(todouble(plan_CpuPercentage_max), 1)),\n    (pressure | extend metric='Server memory peak %', value=round(todouble(plan_MemoryPercentage_max), 1)),\n    (pressure | extend metric='Database load peak %',     value=round(todouble(sql_dtu_consumption_percent_max), 1)),\n    (pressure | extend metric='Database CPU peak %',     value=round(todouble(sql_cpu_percent_max), 1))\n| where isnotnull(value)\n| order by TimeGenerated asc\n| extend Run = strcat('#', run_id), Series = strcat(metric, ' · ', infra_tier)\n| project Run, Series, value",
         "size": 0,
         "title": "Resource pressure per run — read alongside the latency chart above",
         "queryType": 0,
@@ -327,22 +327,22 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Per-run summary row (empty scenario_name) carries the run-level RPS and\n// resource maxes. Filtering explicitly avoids arg_max picking an arbitrary\n// per-sampler row.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok' and isempty(scenario_name)\n| summarize arg_max(TimeGenerated, *) by infra_tier\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Tier = infra_tier,\n          ['Run #']             = run_id,\n          RPS                   = round(todouble(requests_per_sec), 1),\n          ['Plan CPU avg %']    = round(plan_CpuPercentage_avg, 1),\n          ['Plan CPU max %']    = round(plan_CpuPercentage_max, 1),\n          ['Plan Memory max %'] = round(plan_MemoryPercentage_max, 1),\n          ['SQL DTU avg %']     = round(sql_dtu_consumption_percent_avg, 1),\n          ['SQL DTU max %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['SQL CPU max %']     = round(sql_cpu_percent_max, 1),\n          ['Err %']             = round(run_error_rate * 100, 2),\n          ['Capacity status'] = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK'),\n          Headroom = round(100 - max_of(plan_CpuPercentage_max, plan_MemoryPercentage_max, sql_dtu_consumption_percent_max, sql_cpu_percent_max), 0)\n| order by Tier asc",
+        "query": "// Per-run summary row (empty scenario_name) carries the run-level\n// Requests/sec and resource peaks. Filtering explicitly avoids arg_max\n// picking an arbitrary per-sampler row.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok' and isempty(scenario_name)\n| summarize arg_max(TimeGenerated, *) by infra_tier\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Tier = infra_tier,\n          ['Run #']             = run_id,\n          ['Requests/sec']      = round(todouble(requests_per_sec), 1),\n          ['Server CPU avg %']    = round(plan_CpuPercentage_avg, 1),\n          ['Server CPU peak %']    = round(plan_CpuPercentage_max, 1),\n          ['Server memory peak %'] = round(plan_MemoryPercentage_max, 1),\n          ['Database load avg %']     = round(sql_dtu_consumption_percent_avg, 1),\n          ['Database load peak %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['Database CPU peak %']     = round(sql_cpu_percent_max, 1),\n          ['Err %']             = round(run_error_rate * 100, 2),\n          ['Capacity status'] = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK'),\n          Headroom = round(100 - max_of(plan_CpuPercentage_max, plan_MemoryPercentage_max, sql_dtu_consumption_percent_max, sql_cpu_percent_max), 0)\n| order by Tier asc",
         "size": 0,
-        "title": "Capacity verdict — did the infra hit the wall? RPS = throughput each tier sustained; Headroom = 100 - the worst resource max (higher = more capacity to spare).",
+        "title": "Capacity verdict — did the infra hit the wall? Requests/sec = throughput each tier sustained; Headroom = 100 minus the worst peak resource % (higher = more capacity to spare).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "RPS",               "formatter": 8, "formatOptions": { "palette": "blue",              "min": 0, "max": 500 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Plan CPU avg %",    "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Plan CPU max %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Plan Memory max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "SQL DTU avg %",     "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "SQL DTU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "SQL CPU max %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Requests/sec",      "formatter": 8, "formatOptions": { "palette": "blue",              "min": 0, "max": 500 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU avg %",    "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU peak %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server memory peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load avg %",     "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load peak %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database CPU peak %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
             { "columnMatch": "Err %",             "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
             { "columnMatch": "Headroom", "formatter": 8, "formatOptions": { "palette": "redToGreen", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } },
             { "columnMatch": "Capacity status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
@@ -370,7 +370,8 @@
         "chartSettings": {
           "xAxis": "Sampler",
           "createOtherGroup": 0,
-          "showLegend": true
+          "showLegend": true,
+          "stackedMode": "none"
         }
       },
       "name": "tiers-bar",
@@ -380,7 +381,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['Run #']         = run_id,\n          ['RPS (sampler)'] = round(todouble(requests_per_sec), 1),\n          ['p95 (ms)']      = round(p95_ms, 0),\n          ['p99 (ms)']      = round(p99_ms, 0),\n          ['Err %']         = round(error_rate * 100, 1),\n          ['Plan CPU max %'] = round(plan_CpuPercentage_max, 1),\n          ['SQL DTU max %']  = round(sql_dtu_consumption_percent_max, 1)\n| order by Sampler asc, Tier asc",
+        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['Run #']         = run_id,\n          ['Requests/sec (per sampler)'] = round(todouble(requests_per_sec), 1),\n          ['p95 (ms)']      = round(p95_ms, 0),\n          ['p99 (ms)']      = round(p99_ms, 0),\n          ['Err %']         = round(error_rate * 100, 1),\n          ['Server CPU peak %'] = round(plan_CpuPercentage_max, 1),\n          ['Database load peak %']  = round(sql_dtu_consumption_percent_max, 1)\n| order by Sampler asc, Tier asc",
         "size": 0,
         "title": "Per-sampler + server-side detail per tier",
         "queryType": 0,
@@ -389,9 +390,9 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "RPS (sampler)",  "formatter": 8, "formatOptions": { "palette": "blue",             "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Plan CPU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "SQL DTU max %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Requests/sec (per sampler)", "formatter": 8, "formatOptions": { "palette": "blue", "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
             { "columnMatch": "Err %",         "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } }
           ]
         }
@@ -466,7 +467,7 @@
             "id": "param-versions-threshold",
             "version": "KqlParameterItem/1.0",
             "name": "VersionsThreshold",
-            "label": "Significant Delta (%)",
+            "label": "Significant change (%)",
             "type": 1,
             "isRequired": true,
             "value": "10"
@@ -492,6 +493,7 @@
           "xAxis": "Sampler",
           "createOtherGroup": 0,
           "showLegend": true,
+          "stackedMode": "none",
           "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
         }
       },
@@ -502,7 +504,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Overall version-vs-baseline delta. For each non-baseline version,\n// compute median p95/p99 per sampler, take the average % delta against\n// the baseline version's median, then summarize across samplers as a\n// single per-version row. 'faster_p95' counts how many samplers got\n// better in the candidate; 'slower_p95' the opposite.\nlet baseline = LoadTestSummary_CL\n    | where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version == '{VersionsBaseline}'\n    | where isnotempty(scenario_name) and parse_status == 'ok'\n    | summarize base_p95 = percentile(p95_ms, 50), base_p99 = percentile(p99_ms, 50) by scenario_name;\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version != '{VersionsBaseline}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize cand_p95 = percentile(p95_ms, 50), cand_p99 = percentile(p99_ms, 50), runs = count_distinct(run_id) by scenario_name, umbraco_version\n| join kind=inner baseline on scenario_name\n| extend p95_delta = (cand_p95 - base_p95) / base_p95 * 100,\n         p99_delta = (cand_p99 - base_p99) / base_p99 * 100\n| summarize\n    ['Samplers']     = count(),\n    runs_min         = min(runs),\n    runs_max         = max(runs),\n    ['Avg Delta p95 %']  = round(avg(p95_delta), 0),\n    ['Avg Delta p99 %']  = round(avg(p99_delta), 0),\n    ['Faster (p95)'] = countif(p95_delta < 0),\n    ['Slower (p95)'] = countif(p95_delta > 0)\n    by Version = umbraco_version\n| extend ['Runs (per sampler)'] = iif(runs_min == runs_max, tostring(runs_min), strcat(runs_min, '–', runs_max))\n| project Version, Samplers, ['Runs (per sampler)'], ['Avg Delta p95 %'], ['Avg Delta p99 %'], ['Faster (p95)'], ['Slower (p95)']\n| order by Version asc",
+        "query": "// Overall version-vs-baseline delta. For each non-baseline version,\n// compute median p95/p99 per sampler, take the average % delta against\n// the baseline version's median, then summarize across samplers as a\n// single per-version row. 'faster_p95' counts how many samplers got\n// better in the candidate; 'slower_p95' the opposite.\nlet baseline = LoadTestSummary_CL\n    | where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version == '{VersionsBaseline}'\n    | where isnotempty(scenario_name) and parse_status == 'ok'\n    | summarize base_p95 = percentile(p95_ms, 50), base_p99 = percentile(p99_ms, 50) by scenario_name;\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version != '{VersionsBaseline}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize cand_p95 = percentile(p95_ms, 50), cand_p99 = percentile(p99_ms, 50), runs = count_distinct(run_id) by scenario_name, umbraco_version\n| join kind=inner baseline on scenario_name\n| extend p95_delta = (cand_p95 - base_p95) / base_p95 * 100,\n         p99_delta = (cand_p99 - base_p99) / base_p99 * 100\n| summarize\n    ['Samplers']     = count(),\n    runs_min         = min(runs),\n    runs_max         = max(runs),\n    ['Avg p95 change %']  = round(avg(p95_delta), 0),\n    ['Avg p99 change %']  = round(avg(p99_delta), 0),\n    ['Samplers faster'] = countif(p95_delta < 0),\n    ['Samplers slower'] = countif(p95_delta > 0)\n    by Version = umbraco_version\n| extend ['Runs (per sampler)'] = iif(runs_min == runs_max, tostring(runs_min), strcat(runs_min, '–', runs_max))\n| project Version, Samplers, ['Runs (per sampler)'], ['Avg p95 change %'], ['Avg p99 change %'], ['Samplers faster'], ['Samplers slower']\n| order by Version asc",
         "size": 0,
         "title": "Overall — each version vs baseline {VersionsBaseline}",
         "queryType": 0,
@@ -511,18 +513,18 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Avg Delta p95 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "Avg p95 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{VersionsThreshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{VersionsThreshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "Avg Delta p99 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "Avg p99 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{VersionsThreshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{VersionsThreshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "Faster (p95)", "formatter": 8, "formatOptions": { "palette": "green",          "min": 0, "max": 10 } },
-            { "columnMatch": "Slower (p95)", "formatter": 8, "formatOptions": { "palette": "redBright",      "min": 0, "max": 10 } }
+            { "columnMatch": "Samplers faster", "formatter": 8, "formatOptions": { "palette": "green",     "min": 0, "max": 10 } },
+            { "columnMatch": "Samplers slower", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
           ]
         }
       },
@@ -533,7 +535,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// median + worst Err %: median represents typical behavior, worst surfaces\n// catastrophic single-run outliers that the median would otherwise hide\n// (e.g. one run at 100% error rate in a 5-run sample → median 0%, worst 100%).\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize\n    Runs = count(),\n    ['median p95 (ms)'] = round(percentile(p95_ms, 50), 0),\n    ['±σ p95']          = round(stdev(p95_ms), 0),\n    ['median p99 (ms)'] = round(percentile(p99_ms, 50), 0),\n    ['median Err %']    = round(percentile(error_rate, 50) * 100, 1),\n    ['worst Err %']     = round(max(error_rate) * 100, 1)\n    by Sampler = scenario_name, Version = umbraco_version\n| order by Sampler asc, Version asc",
+        "query": "// median + worst Err %: median represents typical behavior, worst surfaces\n// catastrophic single-run outliers that the median would otherwise hide\n// (e.g. one run at 100% error rate in a 5-run sample → median 0%, worst 100%).\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize\n    Runs = count(),\n    ['median p95 (ms)'] = round(percentile(p95_ms, 50), 0),\n    ['p95 spread (ms)'] = round(stdev(p95_ms), 0),\n    ['median p99 (ms)'] = round(percentile(p99_ms, 50), 0),\n    ['median Err %']    = round(percentile(error_rate, 50) * 100, 1),\n    ['worst Err %']     = round(max(error_rate) * 100, 1)\n    by Sampler = scenario_name, Version = umbraco_version\n| order by Sampler asc, Version asc",
         "size": 0,
         "title": "Per-sampler stats per version",
         "queryType": 0,
@@ -555,7 +557,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Compare\nPick two runs to see per-sampler + server-side deltas. The dropdowns honour the global **Time range** but ignore the other global filters — each entry is one `(run × scenario × version × tier)`, so a multi-case pipeline run shows up as several picks."
+        "json": "## Compare\nPick two runs to see per-sampler + server-side changes. The dropdowns honour the global **Time range** but ignore the other global filters — each entry is one `(run × scenario × version × tier)`, so a multi-case pipeline run shows up as several picks."
       },
       "name": "compare-header",
       "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
@@ -595,7 +597,7 @@
             "id": "param-compare-threshold",
             "version": "KqlParameterItem/1.0",
             "name": "Threshold",
-            "label": "Significant Delta (%)",
+            "label": "Significant change (%)",
             "type": 1,
             "isRequired": true,
             "value": "10"
@@ -640,26 +642,26 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// {Baseline}/{Candidate} values are composite keys 'run_id|scenario|version|tier'\n// produced by the dropdown queries above. Split here so a single dropdown\n// pick targets exactly one case of one run, not 'all cases of run_id'.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where isnotempty(scenario_name);\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| project Sampler = coalesce(scenario_name, scenario_name1),\n          ['Reqs baseline'] = request_count,    ['Reqs candidate'] = request_count1,\n          ['p95 baseline (ms)'] = round(p95_ms, 0), ['p95 candidate (ms)'] = round(p95_ms1, 0),\n          ['p99 baseline (ms)'] = round(p99_ms, 0), ['p99 candidate (ms)'] = round(p99_ms1, 0),\n          ['Delta avg %'] = delta(avg_ms, avg_ms1),\n          ['Delta p95 %'] = delta(p95_ms, p95_ms1),\n          ['Delta p99 %'] = delta(p99_ms, p99_ms1)\n| order by Sampler asc",
+        "query": "// {Baseline}/{Candidate} values are composite keys 'run_id|scenario|version|tier'\n// produced by the dropdown queries above. Split here so a single dropdown\n// pick targets exactly one case of one run, not 'all cases of run_id'.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where isnotempty(scenario_name);\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| project Sampler = coalesce(scenario_name, scenario_name1),\n          ['Reqs baseline'] = request_count,    ['Reqs candidate'] = request_count1,\n          ['p95 baseline (ms)'] = round(p95_ms, 0), ['p95 candidate (ms)'] = round(p95_ms1, 0),\n          ['p99 baseline (ms)'] = round(p99_ms, 0), ['p99 candidate (ms)'] = round(p99_ms1, 0),\n          ['avg change %'] = delta(avg_ms, avg_ms1),\n          ['p95 change %'] = delta(p95_ms, p95_ms1),\n          ['p99 change %'] = delta(p99_ms, p99_ms1)\n| order by Sampler asc",
         "size": 0,
-        "title": "Per-sampler delta",
+        "title": "Per-sampler change",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Delta avg %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "avg change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "Delta p95 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "p95 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
             ] } },
-            { "columnMatch": "Delta p99 %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "p99 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
@@ -686,6 +688,7 @@
           "yAxis": ["Baseline", "Candidate"],
           "createOtherGroup": 0,
           "showLegend": true,
+          "stackedMode": "none",
           "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
         }
       },
@@ -696,16 +699,16 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Per-run resource max comes from the run-level summary row (no\n// scenario_name); per-sampler rows carry the same fields but only for\n// the slice they cover. Filter explicitly to the run-level row so this\n// table never picks an arbitrary sampler's view of the resource max.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Plan CPU max %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Plan Memory max %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='SQL DTU max %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='SQL CPU max %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='SQL Log-write max %', Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='App 5xx max',         Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Baseline = round(Baseline, 1), Candidate = round(Candidate, 1), ['Delta %'] = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
+        "query": "// Per-run resource max comes from the run-level summary row (no\n// scenario_name); per-sampler rows carry the same fields but only for\n// the slice they cover. Filter explicitly to the run-level row so this\n// table never picks an arbitrary sampler's view of the resource max.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Server CPU peak %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Server memory peak %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='Database load peak %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='Database CPU peak %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='Database log-write peak %', Baseline=sql_log_write_percent_max,    Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='Server HTTP 5xx peak',      Baseline=app_Http5xx_max,              Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Baseline = round(Baseline, 1), Candidate = round(Candidate, 1), ['change %'] = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0))",
         "size": 0,
-        "title": "Server-side delta",
+        "title": "Server-side change",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Delta %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+            { "columnMatch": "change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
               { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
               { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
               { "operator": "Default", "representation": "transparent" }
