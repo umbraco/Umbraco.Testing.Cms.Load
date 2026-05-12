@@ -81,15 +81,6 @@ parameters:
     type: boolean
     default: false
 
-  # Default behaviour is "fail if the ephemeral RG already exists" so a stuck
-  # leftover from a previous failed run isn't silently overwritten. Set this to
-  # true ONLY when you've verified the existing RG is from a stuck run you want
-  # to discard — the pipeline will force-delete it before provisioning fresh infra.
-  - name: forceCleanup
-    displayName: Force-delete a stuck ephemeral RG (only set true when recovering from a known-failed run)
-    type: boolean
-    default: false
-
   - name: validationTimeoutMinutes
     displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
     type: number
@@ -267,26 +258,21 @@ stages:
         displayName: Check if resource group exists
         steps:
           - task: AzureCLI@2
-            displayName: Fail (or force-delete) if resource group already exists
+            displayName: Fail if resource group already exists
             inputs:
               azureSubscription: '$(serviceConnection)'
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                # Fail if the RG already exists - either a stuck previous run or a prefix collision.
-                # forceCleanup=true bypasses the fail by deleting the stuck RG first; only meant
-                # for recovering from a known-failed run that left infra behind.
+                # Fail if the RG already exists — either a stuck previous run or a prefix collision.
+                # If it's a stuck run you want to discard, delete it directly:
+                #   az group delete -n <name> --yes
+                # then re-queue this pipeline.
                 $exists = az group exists -n $(azureResourceGroup)
                 if ($exists -eq 'true') {
-                  if ('${{ parameters.forceCleanup }}' -eq 'True') {
-                    Write-Host "Resource group '$(azureResourceGroup)' exists; forceCleanup=true, deleting before provisioning..."
-                    az group delete -n $(azureResourceGroup) --yes
-                    Write-Host "Resource group deleted - safe to proceed."
-                  } else {
-                    Write-Host "##vso[task.logissue type=error]Resource group '$(azureResourceGroup)' already exists."
-                    Write-Host "##vso[task.logissue type=error]  Re-queue with forceCleanup=true to delete it, or use a different prefix."
-                    exit 1
-                  }
+                  Write-Host "##vso[task.logissue type=error]Resource group '$(azureResourceGroup)' already exists."
+                  Write-Host "##vso[task.logissue type=error]  Delete it manually with 'az group delete -n $(azureResourceGroup) --yes' (if it's from a stuck run), or use a different prefix."
+                  exit 1
                 } else {
                   Write-Host "Resource group '$(azureResourceGroup)' does not exist - safe to proceed."
                 }
