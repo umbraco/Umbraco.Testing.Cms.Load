@@ -28,7 +28,7 @@ param(
     [Parameter(Mandatory = $true)] [int]$UserCount,
     [Parameter(Mandatory = $true)] [int]$SpawnRate,
     [Parameter(Mandatory = $true)] [int]$DurationSeconds,
-    [Parameter(Mandatory = $true)] [string]$ColdStart,
+    [Parameter(Mandatory = $true)] [string]$SkipWarmup,
     [Parameter(Mandatory = $true)] [string]$TestCaseId,
 
     # Optional server-side metric query window + resource IDs. When all five are
@@ -70,7 +70,10 @@ $metadata = [ordered]@{
     user_count       = $UserCount
     spawn_rate       = $SpawnRate
     duration_seconds = $DurationSeconds
-    cold_start       = [bool]::Parse($ColdStart)
+    # Schema name stays `cold_start` — it describes the test condition
+    # (was warmup skipped, i.e. cold-start exercised). $SkipWarmup is the
+    # procedural pipeline-side phrasing; both mean the same boolean.
+    cold_start       = [bool]::Parse($SkipWarmup)
 }
 
 # Server-side metrics from Azure Monitor over the load-test window. Latency-only

@@ -13,7 +13,7 @@ parameters:
     type: string
   - name: umbracoVersion
     type: string
-  - name: coldStart
+  - name: skipWarmup
     type: boolean
     default: false
   - name: historyResourceGroup
@@ -90,8 +90,8 @@ steps:
       inlineScript: |
         az webapp start -n $(appServiceName) -g ${{ parameters.resourceGroupName }}
 
-  # Skipped when coldStart=true - so the test hits a freshly started App Service.
-  - ${{ if not(parameters.coldStart) }}:
+  # Skipped when skipWarmup=true — so the test hits a freshly started App Service.
+  - ${{ if not(parameters.skipWarmup) }}:
     - task: PowerShell@2
       displayName: 'Warm up [${{ parameters.testCaseId }}]'
       condition: and(succeeded(), ne(variables['hostName'], ''))
@@ -350,7 +350,7 @@ steps:
         -UserCount $(userAmount)
         -SpawnRate $(spawnRate)
         -DurationSeconds $(testDuration)
-        -ColdStart "${{ parameters.coldStart }}"
+        -SkipWarmup "${{ parameters.skipWarmup }}"
         -TestCaseId "${{ parameters.testCaseId }}"
         -LoadTestStartTime "$(loadTestStartTime)"
         -LoadTestEndTime "$(loadTestEndTime)"

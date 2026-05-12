@@ -44,7 +44,7 @@ parameters:
   # Encodes load intensity only (preset, VUs, spawn rate, duration, engines).
   # Tier selection is independent — the runStarter/runStandard/runPro checkboxes
   # above pick which tiers each profile gets exercised against.
-  - name: profile
+  - name: loadProfile
     displayName: Load profile (intensity)
     type: string
     default: 'standard'
@@ -66,13 +66,13 @@ parameters:
       - West US 2
 
   # Feeds into RG name + resource names. Concurrent runs with the same prefix collide.
-  - name: prefix
-    displayName: Prefix for all resources (max 16 chars, lowercase alphanumeric + hyphens; must be unique per concurrent run)
+  - name: resourcePrefix
+    displayName: Resource name prefix (max 16 chars, lowercase alphanumeric + hyphens; must be unique per concurrent run)
     type: string
     default: umbraco-loadtest
 
-  - name: coldStart
-    displayName: Cold start test (skip warmup)
+  - name: skipWarmup
+    displayName: Skip warmup (test cold-start behaviour)
     type: boolean
     default: false
 
@@ -117,7 +117,7 @@ variables:
   - name: serviceConnection
     value: 'terraform-umbraco-load-testing-az-connection'
   - name: azureResourceGroup
-    value: '${{ parameters.prefix }}-rg'
+    value: '${{ parameters.resourcePrefix }}-rg'
   - name: terraformWorkingDirectory
     value: '$(System.DefaultWorkingDirectory)/Terraform'
 
@@ -132,7 +132,7 @@ stages:
             name: out
             displayName: Resolve profile + validate scenario
             env:
-              PROFILE: ${{ parameters.profile }}
+              PROFILE: ${{ parameters.loadProfile }}
               UMBRACO_VERSION: ${{ parameters.umbracoVersion }}
               SCENARIO: ${{ parameters.scenario }}
               RUN_STARTER: ${{ parameters.runStarter }}
@@ -307,7 +307,7 @@ stages:
               command: 'plan'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
       - job: apply
         displayName: Terraform Apply
@@ -359,7 +359,7 @@ stages:
               command: 'apply'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
           - task: PowerShell@2
             name: outputVars
@@ -427,7 +427,7 @@ stages:
                 tier: 'Starter'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
-                coldStart: ${{ parameters.coldStart }}
+                skipWarmup: ${{ parameters.skipWarmup }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
@@ -441,7 +441,7 @@ stages:
                 tier: 'Standard'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
-                coldStart: ${{ parameters.coldStart }}
+                skipWarmup: ${{ parameters.skipWarmup }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
@@ -455,7 +455,7 @@ stages:
                 tier: 'Pro'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
-                coldStart: ${{ parameters.coldStart }}
+                skipWarmup: ${{ parameters.skipWarmup }}
                 historyResourceGroup: '$(historyResourceGroup)'
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
@@ -498,12 +498,12 @@ stages:
                 Write-Host "=============================================="
                 Write-Host ""
                 Write-Host "Run-level configuration:"
-                Write-Host "  Profile:        ${{ parameters.profile }}"
+                Write-Host "  Profile:        ${{ parameters.loadProfile }}"
                 Write-Host "  Region:         ${{ parameters.azureRegion }}"
                 Write-Host "  Default users:  $(resolvedUserAmount)"
                 Write-Host "  Spawn rate:     $(resolvedSpawnRate) users/sec"
                 Write-Host "  Default duration: $(resolvedTestDuration)s"
-                Write-Host "  Cold start:     ${{ parameters.coldStart }}"
+                Write-Host "  Skip warmup:    ${{ parameters.skipWarmup }}"
                 Write-Host "  Seeder preset:  $(resolvedSeederPreset)"
                 Write-Host "  Engine instances: $(resolvedEngineInstances)"
                 Write-Host "  SQL SKU override: ${{ parameters.sqlSkuOverride }}"

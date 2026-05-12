@@ -155,8 +155,8 @@ The profile only encodes load intensity — the same profile can drive any combi
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
 | `azureRegion` | Azure region | West Europe | West Europe, North Europe, East US, West US 2 |
-| `prefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
-| `coldStart` | Skip warmup (test cache warm-up behaviour) | false | true, false |
+| `resourcePrefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
+| `skipWarmup` | Skip warmup (test cold-start / cache warm-up behaviour) | false | true, false |
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 | `sqlSkuOverride` | Force every case onto a specific SQL SKU (decouples DB sizing from tier) | Auto | Auto, S0, S1, S2, S3 |
@@ -339,7 +339,7 @@ The non-homepage tasks are **inventory-driven**: at test start, locust calls `/u
 
 By default, the pipeline **warms up** the App Service (5-minute poll for `200` on `/`) before starting the load test, so measurements reflect steady-state cache-warm behaviour — the most stable comparison surface across tiers and versions.
 
-Set `coldStart: true` to skip the warmup. The load test then hits a freshly-started App Service with cold caches, measuring the full delivery pipeline including initial cache population — useful for understanding cache warm-up cost, restart behaviour, and the front-edge of a request burst against a cold app.
+Set `skipWarmup: true` to skip the warmup. The load test then hits a freshly-started App Service with cold caches, measuring the full delivery pipeline including initial cache population — useful for understanding cache warm-up cost, restart behaviour, and the front-edge of a request burst against a cold app.
 
 ## Results
 
@@ -567,9 +567,9 @@ Pipeline parameters for the 3 baseline runs:
   umbracoVersion: 17.0.0
   scenario:       Default
   runStarter:     true   (others false — start narrow)
-  profile:        standard
+  loadProfile:    standard
   sqlSkuOverride: Auto
-  coldStart:      false
+  skipWarmup:     false
   skipLoadTests:  false
 ```
 
