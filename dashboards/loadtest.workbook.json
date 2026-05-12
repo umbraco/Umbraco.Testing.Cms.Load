@@ -360,18 +360,18 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| extend value = case(\n    '{TiersMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{TiersMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{TiersMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| project Sampler = scenario_name, infra_tier, value\n| evaluate pivot(infra_tier, any(value))\n| order by Sampler asc",
+        "query": "// Long-form (Sampler, Tier, value) + `group: Tier` in chartSettings.\n// Pivoted-wide-form bars stack by default in Workbook; the explicit group\n// column renders them side-by-side.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| extend ['{TiersMetric}'] = case(\n    '{TiersMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{TiersMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{TiersMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| project Sampler = scenario_name, Tier = infra_tier, ['{TiersMetric}']\n| order by Sampler asc, Tier asc",
         "size": 0,
-        "title": "Latest run per tier — {TiersMetric} per sampler (one bar per tier)",
+        "title": "Latest run per tier — {TiersMetric} per sampler, side by side",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "Sampler",
+          "group": "Tier",
           "createOtherGroup": 0,
-          "showLegend": true,
-          "stackedMode": "none"
+          "showLegend": true
         }
       },
       "name": "tiers-bar",
@@ -484,18 +484,18 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Note: KQL `pivot` does not let us control output column order. The bars\n// per sampler appear in pivot's insertion / alphabetical order, not\n// parse_version order — '17.10.0' may sit between '17.0.0' and '17.1.0'.\n// Acceptable for visual scanning; the per-sampler table below has\n// explicit version labels per row.\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = case(\n    '{VersionsMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{VersionsMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{VersionsMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| where isnotnull(value)\n| summarize median_metric = round(percentile(value, 50), 0) by scenario_name, umbraco_version\n| project Sampler = scenario_name, umbraco_version, median_metric\n| evaluate pivot(umbraco_version, any(median_metric))\n| order by Sampler asc",
+        "query": "// Long-form output (Sampler, Version, value) and `group: Version` in\n// chartSettings — pivoted-wide-form would stack the bars; long-form\n// with an explicit grouping column renders side-by-side reliably.\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = case(\n    '{VersionsMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{VersionsMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{VersionsMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| where isnotnull(value)\n| summarize ['{VersionsMetric}'] = round(percentile(value, 50), 0) by Sampler = scenario_name, Version = umbraco_version\n| order by Sampler asc, parse_version(Version) asc",
         "size": 0,
-        "title": "Median {VersionsMetric} per sampler — one bar per version",
+        "title": "Median {VersionsMetric} per sampler — one bar per version, side by side",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "Sampler",
+          "group": "Version",
           "createOtherGroup": 0,
           "showLegend": true,
-          "stackedMode": "none",
           "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
         }
       },
