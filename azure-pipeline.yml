@@ -237,21 +237,18 @@ stages:
                 -StorageAccountName "$(historyStorageAccount)"
                 -ContainerName "$(historyContainer)"
 
-  - stage: terraformDeploy
-    displayName: Terraform Setup and Apply
+  # Stage split: previously one mega-stage called terraformDeploy that held
+  # 10 jobs (provision + load tests + regression + cleanup). Split into four
+  # focused stages so failure isolation, rerun-from-stage, and pipeline-summary
+  # readability all work at the stage level instead of the job level.
+  - stage: provision
+    displayName: Provision infrastructure
     dependsOn:
       - validateTestCases
       - ensureHistoryInfra
-    # Cross-stage outputs from the validation stage, scoped to the whole stage.
     variables:
       testCasesJson:           $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
-      resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
-      resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
-      resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
-      resolvedUserAmount:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
-      resolvedSpawnRate:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSpawnRate'] ]
-      resolvedTestDuration:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestDuration'] ]
       resolvedSqlSkuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSqlSkuOverride'] ]
     jobs:
       - job: checkResourceGroup
@@ -383,13 +380,29 @@ stages:
               script: |
                 Remove-Item .terraform, terraform.tfstate* -Recurse -Force -ErrorAction SilentlyContinue
 
+  - stage: loadTest
+    displayName: Run load tests
+    dependsOn:
+      - validateTestCases
+      - provision
+    # Only run if provision completed; if provision failed we skip straight to cleanup.
+    condition: succeeded('provision')
+    variables:
+      # Stage-level fan-out: every job in this stage inherits these.
+      # Resolved values come from validateTestCases; testCaseOutputs from provision.apply.
+      testCaseOutputs:         $[ stageDependencies.provision.apply.outputs['outputVars.testCaseOutputs'] ]
+      resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
+      resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
+      resolvedUserAmount:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
+      resolvedSpawnRate:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSpawnRate'] ]
+      resolvedTestDuration:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestDuration'] ]
+    jobs:
       # Smoke check, only when skipLoadTests=true. Load tests do their own warm-up.
       - job: verifyDeployments
         displayName: Smoke-verify deployed sites
-        dependsOn: apply
         condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'True'))
-        variables:
-          testCaseOutputs: $[ dependencies.apply.outputs['outputVars.testCaseOutputs'] ]
         steps:
           - task: AzureCLI@2
             displayName: Start, hit /, stop each App Service
@@ -405,13 +418,10 @@ stages:
 
       - job: runLoadTests
         displayName: Run Load Tests
-        dependsOn: apply
         condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'False'))
         # Each case: warm-up (~5 min) + load test (configurable up to 600s) + publish.
         # Sequential per-case execution; budget for a 21-case full matrix.
         timeoutInMinutes: 720
-        variables:
-          testCaseOutputs: $[ dependencies.apply.outputs['outputVars.testCaseOutputs'] ]
         steps:
           # Tier expansion driven by the runStarter/runStandard/runPro checkboxes.
           # Profile is independent and only sets load intensity (resolved via the
@@ -477,11 +487,12 @@ stages:
 
       - job: testSummary
         dependsOn:
-          - apply
           - verifyDeployments
           - runLoadTests
-        # Only print a summary when apply succeeded; nothing useful to summarise on failure.
-        condition: succeeded('apply')
+        # Always print a summary at the end of the loadTest stage — provision
+        # already succeeded (stage-level condition), so the summary is always
+        # meaningful here.
+        condition: succeededOrFailed()
         displayName: Test Summary
         steps:
           - task: PowerShell@2
@@ -524,16 +535,17 @@ stages:
                 }
                 Write-Host "=============================================="
 
-      # Compare the just-published run against the baseline-median in history
-      # storage. Fails the pipeline only when a cell exceeds a threshold AND has
-      # >= 3 prior runs to compare against — early in a scenario's life, every
-      # cell reports "insufficient baseline" and the script exits 0. Once
-      # baselines accrue per (version, tier, sampler), this becomes a real gate.
+  # Compare the just-published run against the baseline-median in history
+  # storage. Fails the pipeline only when a cell exceeds a threshold AND has
+  # >= 3 prior runs to compare against — early in a scenario's life, every
+  # cell reports "insufficient baseline" and the script exits 0. Once
+  # baselines accrue per (version, tier, sampler), this becomes a real gate.
+  - stage: regression
+    displayName: Regression check
+    dependsOn: loadTest
+    condition: and(succeeded('loadTest'), eq('${{ parameters.skipLoadTests }}', 'False'))
+    jobs:
       - job: regressionCheck
-        dependsOn:
-          - apply
-          - runLoadTests
-        condition: and(succeeded('runLoadTests'), eq('${{ parameters.skipLoadTests }}', 'False'))
         displayName: Regression check
         steps:
           - task: AzureCLI@2
@@ -560,18 +572,19 @@ stages:
               ArtifactName: 'regression-report'
               publishLocation: 'Container'
 
+  # Cleanup runs regardless of upstream success/failure (succeededOrFailed):
+  # we always need to either tear down or offer manual validation. Depends on
+  # provision so the chain still fires if loadTest/regression were skipped or
+  # failed; depends on loadTest+regression so cleanup doesn't race with them.
+  - stage: cleanup
+    displayName: Cleanup
+    dependsOn:
+      - provision
+      - loadTest
+      - regression
+    condition: succeededOrFailed()
+    jobs:
       - job: checkResourceGroupForCleanup
-        dependsOn:
-          - apply
-          - verifyDeployments
-          - runLoadTests
-          - testSummary
-          - regressionCheck
-        # apply in dependsOn ensures the cleanup chain still fires on apply-failure
-        # (apply Failed is a definite state; the others would be Skipped). regressionCheck
-        # added to the chain so cleanup waits for the gate to finish; cleanup uses
-        # succeededOrFailed() so a regression-fail still triggers RG teardown.
-        condition: succeededOrFailed()
         displayName: Check resource group for cleanup
         steps:
           - task: AzureCLI@2
