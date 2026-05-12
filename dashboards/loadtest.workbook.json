@@ -214,13 +214,17 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Picker exposes friendly metric labels ('p95 (ms)', etc); translate to the\n// underlying schema column here so chart titles and the picker stay readable.\nlet col = case(\n    '{Metric}' == 'p95 (ms)', 'p95_ms',\n    '{Metric}' == 'p99 (ms)', 'p99_ms',\n    '{Metric}' == 'avg (ms)', 'avg_ms',\n    '{Metric}' == 'error rate', 'error_rate',\n    '{Metric}' == 'throughput (RPS)', 'requests_per_sec',\n    '{Metric}' == 'Plan CPU max %', 'plan_CpuPercentage_max',\n    '{Metric}' == 'SQL DTU max %', 'sql_dtu_consumption_percent_max',\n    'p95_ms');\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend Sampler = strcat(scenario_name, ' · ', umbraco_version, ' · ', infra_tier)\n| project TimeGenerated, Sampler, value = column_ifexists(col, real(null))\n| where isnotnull(value)\n| order by TimeGenerated asc",
+        "query": "// Run-indexed x-axis (NOT time): each Run # is a discrete categorical\n// position so runs are equally spaced regardless of how long elapsed\n// between them. Time-based axis crammed bursts and isolated long-gap\n// runs together making run-to-run trends unreadable. Chronological order\n// is preserved via the upstream `order by TimeGenerated asc`.\nlet col = case(\n    '{Metric}' == 'p95 (ms)', 'p95_ms',\n    '{Metric}' == 'p99 (ms)', 'p99_ms',\n    '{Metric}' == 'avg (ms)', 'avg_ms',\n    '{Metric}' == 'error rate', 'error_rate',\n    '{Metric}' == 'throughput (RPS)', 'requests_per_sec',\n    '{Metric}' == 'Plan CPU max %', 'plan_CpuPercentage_max',\n    '{Metric}' == 'SQL DTU max %', 'sql_dtu_consumption_percent_max',\n    'p95_ms');\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend Sampler = strcat(scenario_name, ' · ', umbraco_version, ' · ', infra_tier)\n| order by TimeGenerated asc\n| extend Run = strcat('#', run_id)\n| project Run, Sampler, value = column_ifexists(col, real(null))\n| where isnotnull(value)",
         "size": 0,
-        "title": "{Metric} over time — one line per (sampler · version · tier)",
+        "title": "{Metric} per run — one line per (sampler · version · tier), oldest → newest left to right",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
-        "visualization": "timechart"
+        "visualization": "linechart",
+        "chartSettings": {
+          "xAxis": "Run",
+          "showLegend": true
+        }
       },
       "name": "trends-chart",
       "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
@@ -245,14 +249,16 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Server-side resource pressure on the same time axis as the latency\n// chart above. Read this together with that chart: if latency climbs at\n// the same time CPU/DTU does, you're infra-bound — the latency number\n// reflects the ceiling, not the workload. If they diverge, you're\n// looking at a code-side regression.\n//\n// Unpivoted to long-form so the timechart can render one line per\n// (metric × tier). A multi-tier sweep would otherwise zigzag between\n// the tiers' values on a single 'Plan CPU' line and be unreadable.\nlet pressure = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *) by run_id, umbraco_version, infra_tier;\nunion\n    (pressure | extend metric='Plan CPU max %',    value=round(todouble(plan_CpuPercentage_max), 1)),\n    (pressure | extend metric='Plan Memory max %', value=round(todouble(plan_MemoryPercentage_max), 1)),\n    (pressure | extend metric='SQL DTU max %',     value=round(todouble(sql_dtu_consumption_percent_max), 1)),\n    (pressure | extend metric='SQL CPU max %',     value=round(todouble(sql_cpu_percent_max), 1))\n| where isnotnull(value)\n| project TimeGenerated, series = strcat(metric, ' · ', infra_tier), value\n| order by TimeGenerated asc",
+        "query": "// Server-side resource pressure per run. Read alongside the latency chart\n// above: if latency climbs as CPU/DTU does, you're infra-bound; if they\n// diverge, the regression is code-side. Run-indexed x-axis matches the\n// chart above and prevents Workbook's time-bin aggregation from summing\n// max-percentages across rows (a 'Sum' line showing 300%+ is meaningless).\n//\n// Unpivoted to long-form so the chart can render one line per\n// (metric × tier). Otherwise a multi-tier sweep zigzags between the\n// tiers' values on a single 'Plan CPU' line.\nlet pressure = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and isempty(scenario_name)\n    | summarize arg_max(TimeGenerated, *) by run_id, umbraco_version, infra_tier;\nunion\n    (pressure | extend metric='Plan CPU max %',    value=round(todouble(plan_CpuPercentage_max), 1)),\n    (pressure | extend metric='Plan Memory max %', value=round(todouble(plan_MemoryPercentage_max), 1)),\n    (pressure | extend metric='SQL DTU max %',     value=round(todouble(sql_dtu_consumption_percent_max), 1)),\n    (pressure | extend metric='SQL CPU max %',     value=round(todouble(sql_cpu_percent_max), 1))\n| where isnotnull(value)\n| order by TimeGenerated asc\n| extend Run = strcat('#', run_id), Series = strcat(metric, ' · ', infra_tier)\n| project Run, Series, value",
         "size": 0,
-        "title": "Resource pressure over time — read alongside the latency chart above",
+        "title": "Resource pressure per run — read alongside the latency chart above",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
-        "visualization": "timechart",
+        "visualization": "linechart",
         "chartSettings": {
+          "xAxis": "Run",
+          "showLegend": true,
           "ySettings": { "min": 0, "max": 100, "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
         }
       },
