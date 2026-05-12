@@ -285,7 +285,7 @@
             "id": "param-tiers-scenario",
             "version": "KqlParameterItem/1.0",
             "name": "TiersScenario",
-            "label": "Scenario (held fixed; tier is swept)",
+            "label": "Scenario",
             "type": 2,
             "isRequired": true,
             "query": "// Inherits the global Scenario filter when set: with a global selection the\n// dropdown lists only that scenario and showDefault auto-picks it; with `*` it\n// shows the full universe.\nLoadTestSummary_CL\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
@@ -298,7 +298,7 @@
             "id": "param-tiers-version",
             "version": "KqlParameterItem/1.0",
             "name": "TiersVersion",
-            "label": "Version (held fixed; tier is swept)",
+            "label": "Version",
             "type": 2,
             "isRequired": true,
             "query": "// Show all versions; if the global Version filter is set, sort the matching\n// version first so showDefault picks it. Otherwise newest-first.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}'\n| distinct umbraco_version\n| where isnotempty(umbraco_version)\n| order by iif(umbraco_version == '{Version}', tolong(99999999999), tolong(parse_version(umbraco_version))) desc",
@@ -329,7 +329,7 @@
         "version": "KqlItem/1.0",
         "query": "// Resource metrics (plan_*, sql_*) are duplicated across all per-sampler\n// rows of the same run by the publish script, so arg_max by infra_tier\n// returns valid run-level values regardless of which sampler row wins.\n// Requests/sec is similarly run-scoped on each row.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Tier = infra_tier,\n          ['Run #']             = run_id,\n          ['Requests/sec']      = round(todouble(requests_per_sec), 1),\n          ['Server CPU avg %']    = round(plan_CpuPercentage_avg, 1),\n          ['Server CPU peak %']    = round(plan_CpuPercentage_max, 1),\n          ['Server memory peak %'] = round(plan_MemoryPercentage_max, 1),\n          ['Database load avg %']     = round(sql_dtu_consumption_percent_avg, 1),\n          ['Database load peak %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['Database CPU peak %']     = round(sql_cpu_percent_max, 1),\n          ['Error %']             = round(run_error_rate * 100, 2),\n          ['Capacity status'] = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK'),\n          Headroom = round(100 - max_of(plan_CpuPercentage_max, plan_MemoryPercentage_max, sql_dtu_consumption_percent_max, sql_cpu_percent_max), 0)\n| order by Tier asc",
         "size": 0,
-        "title": "Capacity verdict — did the infra hit the wall? Requests/sec = throughput each tier sustained; Headroom = 100 minus the worst peak resource % (higher = more capacity to spare).",
+        "title": "Capacity verdict per tier. Requests/sec = how much traffic the tier handled. Headroom = how much room was left before any resource (CPU / memory / database) hit 100%. Higher Headroom = the tier had more capacity to spare.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
@@ -381,7 +381,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['Run #']         = run_id,\n          ['Requests/sec (per sampler)'] = round(todouble(requests_per_sec), 1),\n          ['p95 (ms)']      = round(p95_ms, 0),\n          ['p99 (ms)']      = round(p99_ms, 0),\n          ['Error %']         = round(error_rate * 100, 1),\n          ['Server CPU peak %'] = round(plan_CpuPercentage_max, 1),\n          ['Database load peak %']  = round(sql_dtu_consumption_percent_max, 1)\n| order by Sampler asc, Tier asc",
+        "query": "// Per-sampler detail. The run-level resource metrics (Server CPU peak,\n// Database load peak) are NOT shown here — they're identical for every\n// sampler in the same run, so they'd just repeat the same number on every\n// row. Those values live in the Capacity verdict table above.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['Run #']         = run_id,\n          Requests          = toint(request_count),\n          ['Requests/sec']  = round(todouble(requests_per_sec), 1),\n          ['avg (ms)']      = round(avg_ms, 0),\n          ['p95 (ms)']      = round(p95_ms, 0),\n          ['p99 (ms)']      = round(p99_ms, 0),\n          ['max (ms)']      = round(max_ms, 0),\n          ['Error %']       = round(error_rate * 100, 2)\n| order by Sampler asc, Tier asc",
         "size": 0,
         "title": "Per-sampler + server-side detail per tier",
         "queryType": 0,
@@ -390,10 +390,12 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Requests/sec (per sampler)", "formatter": 8, "formatOptions": { "palette": "blue", "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server CPU peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database load peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Error %",         "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } }
+            { "columnMatch": "Requests",      "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 10000 } },
+            { "columnMatch": "Requests/sec",  "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "p95 (ms)",      "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 2000 } },
+            { "columnMatch": "p99 (ms)",      "formatter": 8, "formatOptions": { "palette": "orange",          "min": 0, "max": 2000 } },
+            { "columnMatch": "max (ms)",      "formatter": 8, "formatOptions": { "palette": "redBright",       "min": 0, "max": 10000 } },
+            { "columnMatch": "Error %",       "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } }
           ]
         }
       },
@@ -418,7 +420,7 @@
             "id": "param-versions-scenario",
             "version": "KqlParameterItem/1.0",
             "name": "VersionsScenario",
-            "label": "Scenario (held fixed; version is swept)",
+            "label": "Scenario",
             "type": 2,
             "isRequired": true,
             "query": "LoadTestSummary_CL\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
@@ -431,7 +433,7 @@
             "id": "param-versions-tier",
             "version": "KqlParameterItem/1.0",
             "name": "VersionsTier",
-            "label": "Tier (held fixed; version is swept)",
+            "label": "Tier",
             "type": 2,
             "isRequired": true,
             "query": "// Show all tiers; if the global Tier filter is set, sort the matching\n// tier first so showDefault picks it. Otherwise alphabetical.\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}'\n| distinct infra_tier\n| where isnotempty(infra_tier)\n| extend sort_key = iif(infra_tier == '{Tier}', '0', strcat('1_', infra_tier))\n| order by sort_key asc\n| project infra_tier",
