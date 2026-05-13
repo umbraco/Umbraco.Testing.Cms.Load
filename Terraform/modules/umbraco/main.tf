@@ -83,12 +83,15 @@ resource "azurerm_mssql_firewall_rule" "allow_azure_services" {
 
 # Standard-tier Elastic Pool per tier. Pool eDTU is the smallest valid Standard
 # size that can hold a DB at the tier cap; per-DB max DTU equals the cap.
+# max_size_gb=50 is the Standard-tier minimum; our test data is well under that,
+# so the floor is enough and avoids paying for storage we won't use.
 resource "azurerm_mssql_elasticpool" "pool" {
   for_each            = local.tiers_in_use
   name                = "${var.resource_name_prefix}-pool-${lower(each.key)}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   server_name         = azurerm_mssql_server.sql_server[each.key].name
+  max_size_gb         = 50
   tags                = merge(local.common_tags, { tier = each.key })
 
   sku {
