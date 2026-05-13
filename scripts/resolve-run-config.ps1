@@ -4,7 +4,7 @@
 # Local invocation for testing:
 #   pwsh -File scripts/resolve-run-config.ps1 `
 #       -Profile standard -UmbracoVersion 17.0.0 -Scenario Default `
-#       -RunStarter $true -RunStandard $false -RunPro $false -RunEnterprise $false `
+#       -RunStarter True -RunStandard False -RunPro False -RunEnterprise False `
 #       -PoolDtuOverride Auto -AppSkuOverride Auto `
 #       -WorkspaceRoot $PWD
 
@@ -13,10 +13,13 @@ param (
     [Parameter(Mandatory = $true)] [ValidateSet('smoke', 'standard', 'stress')] [string]$Profile,
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$Scenario,
-    [Parameter(Mandatory = $true)] [bool]$RunStarter,
-    [Parameter(Mandatory = $true)] [bool]$RunStandard,
-    [Parameter(Mandatory = $true)] [bool]$RunPro,
-    [Parameter(Mandatory = $true)] [bool]$RunEnterprise,
+    # Bool-shaped flags pass through as strings — AzDO interpolates booleans as
+    # 'True'/'False', and PowerShell's strict [bool] binder refuses to coerce
+    # quoted strings (only $true/$false/1/0). Compared against 'True' below.
+    [Parameter(Mandatory = $true)] [string]$RunStarter,
+    [Parameter(Mandatory = $true)] [string]$RunStandard,
+    [Parameter(Mandatory = $true)] [string]$RunPro,
+    [Parameter(Mandatory = $true)] [string]$RunEnterprise,
     [Parameter(Mandatory = $true)] [string]$PoolDtuOverride,
     [Parameter(Mandatory = $true)] [string]$AppSkuOverride,
     [Parameter(Mandatory = $true)] [string]$WorkspaceRoot
@@ -28,10 +31,10 @@ $PSNativeCommandUseErrorActionPreference = $true
 . "$PSScriptRoot/_helpers.ps1"
 
 $tiers = @()
-if ($RunStarter)    { $tiers += 'Starter' }
-if ($RunStandard)   { $tiers += 'Standard' }
-if ($RunPro)        { $tiers += 'Pro' }
-if ($RunEnterprise) { $tiers += 'Enterprise' }
+if ($RunStarter    -ieq 'True') { $tiers += 'Starter' }
+if ($RunStandard   -ieq 'True') { $tiers += 'Standard' }
+if ($RunPro        -ieq 'True') { $tiers += 'Pro' }
+if ($RunEnterprise -ieq 'True') { $tiers += 'Enterprise' }
 if ($tiers.Count -eq 0) {
     Write-PipelineError "At least one tier must be selected (runStarter / runStandard / runPro / runEnterprise)."
 }
