@@ -176,6 +176,20 @@ function Get-Pct ($Sorted, [double]$Pct) {
 
 $rows = @()
 
+# Azure Load Testing's task downloads run artifacts as results.zip (and
+# report.zip) and doesn't unpack them. The engine*_results.csv we scan for
+# below lives INSIDE results.zip, so without this expansion every run
+# would silently fall through to parse_status="no_metrics" and produce a
+# metadata-only NDJSON row with no latency data.
+$resultsZips = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "results.zip" -File -ErrorAction SilentlyContinue)
+foreach ($zip in $resultsZips) {
+    $dest = Join-Path $zip.Directory.FullName ($zip.BaseName + "-extracted")
+    if (-not (Test-Path $dest)) {
+        Expand-Archive -Path $zip.FullName -DestinationPath $dest -Force
+        Write-Host "Extracted $($zip.Name) to $dest"
+    }
+}
+
 $engineFiles = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "engine*_results.csv" -File -ErrorAction SilentlyContinue)
 if ($engineFiles.Count -gt 0) {
     Write-Host "Parsing $($engineFiles.Count) engine result file(s) (JMeter format):"
