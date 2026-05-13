@@ -16,15 +16,18 @@ parameters:
     type: string
     default: '17.0.0'
 
-  # Free-text instead of a fixed values list - adding a scenario should be
-  # a folder drop under loadtests/scenarios/, not a YAML edit. The validator
-  # in prepare-test-cases.ps1 enumerates the folders, rejects unknown names
-  # with a "did you mean?" hint, and prints the available list at the top of
-  # its log.
+  # Dropdown values must match folder names under loadtests/scenarios/. Adding
+  # a scenario = create the folder + add the name here. The validator in
+  # prepare-test-cases.ps1 is the source-of-truth check (enumerates folders,
+  # rejects unknown names with a "did you mean?" hint), so this list is purely
+  # a queue-time discovery aid.
   - name: scenario
-    displayName: Scenario (folder name under loadtests/scenarios/)
+    displayName: Scenario (must match a folder under loadtests/scenarios/)
     type: string
     default: 'Default'
+    values:
+      - 'Default'
+      - 'DeliveryApi'
 
   - name: runStarter
     displayName: Run Starter tier

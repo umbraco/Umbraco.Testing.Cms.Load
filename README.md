@@ -309,8 +309,9 @@ All fields optional. A missing `scenario.yaml` (or an empty `loadProfile` block)
 1. Create `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json` with your config overlay (and any code overlay files alongside, e.g. `Program.cs`).
 2. Create `loadtests/scenarios/{Name}/locustfile.py` declaring the scenario's workload (import probes / `pick_url` from `_helpers.py` as needed).
 3. Optionally add `loadtests/scenarios/{Name}/scenario.yaml` with description + load profile overrides.
+4. Add `{Name}` to the `scenario` parameter's `values:` list in `azure-pipeline.yml` so it appears in the queue-time dropdown.
 
-That's it — **no pipeline or Terraform edits needed**. The validator enumerates `loadtests/scenarios/*/` on every run, accepts the free-text `scenario` parameter, and rejects unknown names with a "did you mean?" hint plus the available-scenarios list.
+The validator (`scripts/prepare-test-cases.ps1`) is the source-of-truth check — it enumerates the folders on every run, prints the available list at the top of its log, and rejects unknown names with a "did you mean?" hint. The dropdown is a queue-time discovery aid; no HCL or downstream-pipeline edits are needed.
 
 ### Load Pattern
 
