@@ -1,8 +1,8 @@
 {
-  "_comment": "Mirrors Umbraco Cloud production specs as of 2026-05. Cloud runs all plans on shared P1V3 App Service hardware (2 CPU / 8 GB RAM / 250 GB disk) and differentiates plans via per-site CPU/memory/disk quotas - quotas we can't replicate on dedicated plans, so our Starter app-side results will read more optimistic than real Cloud Starter. SQL is reproducible: Cloud uses Standard-tier Elastic Pools with a tier-specific per-DB DTU cap (Starter=20, Standard=50, Pro=100). DB size is not enforced. We provision one pool per tier in use; the pool's eDTU capacity is the smallest valid Standard size that can hold a DB at the cap (Starter+Standard share a 50-eDTU pool, Pro uses a 100-eDTU pool); per-DB max DTU is set to the tier cap.",
+  "_comment": "Mirrors Umbraco Cloud production specs as of 2026-05. App Service is dedicated per-tier with different P-series SKUs - Cloud differentiates plans via dedicated SKUs (corrected by Mikulas; the previous shared-P1V3 model was wrong). SQL is Standard-tier Elastic Pools with per-DB DTU caps. DB size is not enforced. Exact tier-to-SKU + DTU mapping is a best-guess pending confirmation; adjust here if Cloud's real mapping differs.",
   "tiers": {
     "Starter": {
-      "app_sku": "P1v3",
+      "app_sku": "P0v3",
       "dtu_max": 20
     },
     "Standard": {
@@ -10,8 +10,12 @@
       "dtu_max": 50
     },
     "Pro": {
-      "app_sku": "P1v3",
+      "app_sku": "P2v3",
       "dtu_max": 100
+    },
+    "Enterprise": {
+      "app_sku": "P3v3",
+      "dtu_max": 200
     }
   }
 }

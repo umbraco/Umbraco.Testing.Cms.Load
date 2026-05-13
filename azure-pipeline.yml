@@ -44,6 +44,11 @@ parameters:
     type: boolean
     default: false
 
+  - name: runEnterprise
+    displayName: Run Enterprise tier
+    type: boolean
+    default: false
+
   # === How hard to test ===
 
   # Encodes load intensity only (preset, VUs, spawn rate, duration, engines).
@@ -100,8 +105,7 @@ parameters:
   # Override the per-DB DTU cap for every case so SQL can be sized independently
   # of the tier's default — useful for "is SQL actually the bottleneck?"
   # experiments. Defaults (per loadtests/tiers.json): Starter=20, Standard=50,
-  # Pro=100 DTUs, since the App Service SKU is identical across tiers (mirrors Cloud).
-  # 'Auto' = use each tier's built-in DTU cap.
+  # Pro=100, Enterprise=200. 'Auto' = use each tier's built-in DTU cap.
   - name: poolDtuOverride
     displayName: SQL per-DB DTU override (Auto = use the tier's default)
     type: string
@@ -113,6 +117,21 @@ parameters:
       - '50'
       - '100'
       - '200'
+
+  # Override the App Service Plan SKU for every case so app size is independent
+  # of the tier — counterpart to poolDtuOverride on the app side. Defaults
+  # (per loadtests/tiers.json): Starter=P0v3, Standard=P1v3, Pro=P2v3,
+  # Enterprise=P3v3. 'Auto' = use each tier's built-in SKU.
+  - name: appSkuOverride
+    displayName: App Service SKU override (Auto = use the tier's default)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'P0v3'
+      - 'P1v3'
+      - 'P2v3'
+      - 'P3v3'
 
 variables:
   # Variable group `umbraco-loadtest-history` provides all history* variables:
@@ -144,19 +163,22 @@ stages:
               RUN_STARTER: ${{ parameters.runStarter }}
               RUN_STANDARD: ${{ parameters.runStandard }}
               RUN_PRO: ${{ parameters.runPro }}
+              RUN_ENTERPRISE: ${{ parameters.runEnterprise }}
               POOL_DTU_OVERRIDE: ${{ parameters.poolDtuOverride }}
+              APP_SKU_OVERRIDE: ${{ parameters.appSkuOverride }}
             inputs:
               targetType: 'inline'
               script: |
-                # Build the tier list from the three checkboxes. Profile is independent
+                # Build the tier list from the tier checkboxes. Profile is independent
                 # and only encodes load intensity (preset/users/spawn/duration/engines),
                 # so the same profile can drive any combination of tiers.
                 $tiers = @()
-                if ($env:RUN_STARTER  -eq 'True') { $tiers += 'Starter' }
-                if ($env:RUN_STANDARD -eq 'True') { $tiers += 'Standard' }
-                if ($env:RUN_PRO      -eq 'True') { $tiers += 'Pro' }
+                if ($env:RUN_STARTER    -eq 'True') { $tiers += 'Starter' }
+                if ($env:RUN_STANDARD   -eq 'True') { $tiers += 'Standard' }
+                if ($env:RUN_PRO        -eq 'True') { $tiers += 'Pro' }
+                if ($env:RUN_ENTERPRISE -eq 'True') { $tiers += 'Enterprise' }
                 if ($tiers.Count -eq 0) {
-                    Write-Error "At least one tier must be selected (runStarter / runStandard / runPro)."
+                    Write-Error "At least one tier must be selected (runStarter / runStandard / runPro / runEnterprise)."
                     exit 1
                 }
 
@@ -190,14 +212,16 @@ stages:
                     }
                 }
 
-                # 'Auto' is the queue-time signal for "use the tier's built-in DTU cap".
-                # Terraform expects 0 for that case.
+                # 'Auto' is the queue-time signal for "use the tier's built-in value".
+                # Terraform expects 0 / "" for that case.
                 $poolDtuOverride = if ($env:POOL_DTU_OVERRIDE -eq 'Auto') { '0' } else { $env:POOL_DTU_OVERRIDE }
+                $appSkuOverride  = if ($env:APP_SKU_OVERRIDE  -eq 'Auto') { ''  } else { $env:APP_SKU_OVERRIDE  }
 
                 Write-Host "Tiers:           $($tiers -join ', ')"
                 Write-Host "Profile '$env:PROFILE': preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
                 Write-Host "Umbraco $env:UMBRACO_VERSION (major $umbracoMajor) -> .NET $dotnetVersion"
                 Write-Host "Pool DTU override: $(if ($poolDtuOverride -ne '0') { "$poolDtuOverride DTUs per DB" } else { 'Auto (per-tier defaults)' })"
+                Write-Host "App SKU override:  $(if ($appSkuOverride) { $appSkuOverride } else { 'Auto (per-tier defaults)' })"
 
                 $testCases = @(@{
                     umbraco  = $env:UMBRACO_VERSION
@@ -215,6 +239,7 @@ stages:
                 Write-Host "##vso[task.setvariable variable=resolvedSpawnRate;isOutput=true]$spawn"
                 Write-Host "##vso[task.setvariable variable=resolvedTestDuration;isOutput=true]$duration"
                 Write-Host "##vso[task.setvariable variable=resolvedPoolDtuOverride;isOutput=true]$poolDtuOverride"
+                Write-Host "##vso[task.setvariable variable=resolvedAppSkuOverride;isOutput=true]$appSkuOverride"
 
                 & "$(System.DefaultWorkingDirectory)/scripts/prepare-test-cases.ps1" `
                     -UserAmount $users `
@@ -256,6 +281,7 @@ stages:
       testCasesJson:            $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
       resolvedSeederPreset:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedPoolDtuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedPoolDtuOverride'] ]
+      resolvedAppSkuOverride:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedAppSkuOverride'] ]
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
@@ -310,7 +336,7 @@ stages:
               command: 'plan'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var app_sku_override=$(resolvedAppSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
       - job: apply
         displayName: Terraform Apply
@@ -362,7 +388,7 @@ stages:
               command: 'apply'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var app_sku_override=$(resolvedAppSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
           - task: PowerShell@2
             name: outputVars
@@ -476,6 +502,20 @@ stages:
                 historyLoadTestName: '$(historyLoadTestName)'
                 historyStorageAccount: '$(historyStorageAccount)'
                 historyContainer: '$(historyContainer)'
+          - ${{ if eq(parameters.runEnterprise, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                serviceConnection: '$(serviceConnection)'
+                resourceGroupName: '$(azureResourceGroup)'
+                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__${{ parameters.scenario }}'
+                tier: 'Enterprise'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                historyResourceGroup: '$(historyResourceGroup)'
+                historyLoadTestName: '$(historyLoadTestName)'
+                historyStorageAccount: '$(historyStorageAccount)'
+                historyContainer: '$(historyContainer)'
 
           # Stop all apps so none run idle during the manual validation window.
           - task: AzureCLI@2
@@ -524,6 +564,7 @@ stages:
                 Write-Host "  Seeder preset:  $(resolvedSeederPreset)"
                 Write-Host "  Engine instances: $(resolvedEngineInstances)"
                 Write-Host "  Pool DTU override: ${{ parameters.poolDtuOverride }}"
+                Write-Host "  App SKU override:  ${{ parameters.appSkuOverride }}"
                 Write-Host ""
                 Write-Host "Test cases:"
                 $cases = $env:RESOLVED_TEST_CASES | ConvertFrom-Json

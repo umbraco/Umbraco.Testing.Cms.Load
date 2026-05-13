@@ -48,13 +48,15 @@ resource "random_password" "admin_password" {
 }
 
 # One plan per tier in use; same-tier cases share it (only one app hot at a time).
+# Override lets a run size the app independently of the tier (paired with
+# pool_dtu_override on the SQL side) to isolate app-vs-SQL bottlenecks.
 resource "azurerm_service_plan" "appserviceplan" {
   for_each            = local.tiers_in_use
   name                = "${var.resource_name_prefix}-asp-${lower(each.key)}"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Windows"
-  sku_name            = var.tier_specs[each.key].app_sku
+  sku_name            = var.app_sku_override != "" ? var.app_sku_override : var.tier_specs[each.key].app_sku
   tags                = merge(local.common_tags, { tier = each.key })
 }
 

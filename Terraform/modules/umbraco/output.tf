@@ -9,7 +9,7 @@ output "test_case_outputs" {
       dotnet_version         = m.test_case_values.dotnet_version
       tier                   = var.test_cases[k].tier
       scenario               = m.test_case_values.scenario
-      app_service_sku        = var.tier_specs[var.test_cases[k].tier].app_sku
+      app_service_sku        = var.app_sku_override != "" ? var.app_sku_override : var.tier_specs[var.test_cases[k].tier].app_sku
       # Reflect the override here so downstream metadata (NDJSON, ALT run name/description)
       # records the per-DB DTU cap actually provisioned, not the tier's nominal value.
       pool_dtu_max           = var.pool_dtu_override != 0 ? var.pool_dtu_override : var.tier_specs[var.test_cases[k].tier].dtu_max

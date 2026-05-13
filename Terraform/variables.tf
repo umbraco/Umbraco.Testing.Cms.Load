@@ -61,3 +61,16 @@ variable "pool_dtu_override" {
     error_message = "pool_dtu_override must be 0 (auto) or one of the valid Standard per-DB DTU caps: 10, 20, 50, 100, 200"
   }
 }
+
+# Override the App Service Plan SKU for every case in the run. Empty = use
+# the tier's built-in value from tiers.json. Counterpart to pool_dtu_override
+# on the app side — useful for "is the app saturating before SQL does?" sweeps.
+variable "app_sku_override" {
+  type        = string
+  description = "Override App Service Plan SKU for every case ('' = use each tier's default)."
+  default     = ""
+  validation {
+    condition     = var.app_sku_override == "" || contains(["P0v3", "P1v3", "P2v3", "P3v3"], var.app_sku_override)
+    error_message = "app_sku_override must be empty (auto) or one of: P0v3, P1v3, P2v3, P3v3"
+  }
+}

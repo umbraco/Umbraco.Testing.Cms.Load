@@ -38,6 +38,7 @@ module "umbraco" {
   test_cases        = var.test_cases
   seeder_preset     = var.seeder_preset
   pool_dtu_override = var.pool_dtu_override
+  app_sku_override  = var.app_sku_override
 
   build_id = var.build_id
 }

@@ -22,7 +22,7 @@ Locust tests execute on Azure Load Testing's managed infrastructure (dedicated S
 A pipeline run is parameterised by a list of **test cases**. Each case picks:
 
 - **Umbraco/.NET version pair** (e.g. `17.0.0` on `v10.0`)
-- **Infrastructure tier** — `Starter` / `Standard` / `Pro`, defined in [`loadtests/tiers.json`](loadtests/tiers.json) (App Service Plan SKU + SQL SKU + max DB size)
+- **Infrastructure tier** — `Starter` / `Standard` / `Pro` / `Enterprise`, defined in [`loadtests/tiers.json`](loadtests/tiers.json) (App Service Plan SKU + per-DB DTU cap inside a Standard-tier Elastic Pool)
 - **Scenario** — a folder under `loadtests/scenarios/` containing the Umbraco `appsettings.json` overlay for that scenario plus optional `scenario.yaml` load-profile overrides
 
 Cases on the same tier in one run share an App Service Plan; cases on different tiers each get their own. Tests within a run run sequentially (one App Service hot at a time) so each measurement gets the full plan capacity.
@@ -83,7 +83,7 @@ Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per 
 │   ├── _helpers.py              # Shared workload mixin + inventory/Delivery API probes used by scenario locustfiles
 │   ├── locust.conf              # Local development config
 │   ├── scenarios/<Name>/locustfile.py  # Scenario-specific workload, imports from _helpers
-│   ├── tiers.json               # Tier catalog (Starter / Standard / Pro → SKUs)
+│   ├── tiers.json               # Tier catalog (Starter / Standard / Pro / Enterprise → SKUs + DTU caps)
 │   └── scenarios/
 │       ├── Default/
 │       │   ├── AdditionalSetup/
@@ -118,7 +118,7 @@ Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per 
 
 ### Pipeline Parameters
 
-The queue UI splits into three concerns: **what to test**, **which tiers to test it on**, and **how hard to test**. Each lives on its own knob so you can mix freely (e.g. "stress profile against Standard only" or "smoke profile against all three tiers").
+The queue UI splits into three concerns: **what to test**, **which tiers to test it on**, and **how hard to test**. Each lives on its own knob so you can mix freely (e.g. "stress profile against Standard only" or "smoke profile against all four tiers").
 
 **What to test:**
 
@@ -131,11 +131,12 @@ The queue UI splits into three concerns: **what to test**, **which tiers to test
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `runStarter` | Run the Starter (S1) tier | true |
-| `runStandard` | Run the Standard (S2) tier | false |
-| `runPro` | Run the Pro (S3) tier | false |
+| `runStarter` | Run the Starter tier (P0v3 app, 20 DTU SQL) | true |
+| `runStandard` | Run the Standard tier (P1v3 app, 50 DTU SQL) | false |
+| `runPro` | Run the Pro tier (P2v3 app, 100 DTU SQL) | false |
+| `runEnterprise` | Run the Enterprise tier (P3v3 app, 200 DTU SQL) | false |
 
-At least one tier must be selected — the validator fails the run if all three are unchecked.
+At least one tier must be selected — the validator fails the run if all are unchecked.
 
 **Load profile (intensity):**
 
@@ -161,8 +162,11 @@ The profile only encodes load intensity — the same profile can drive any combi
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 | `poolDtuOverride` | Force every case onto a specific per-DB DTU cap (decouples DB sizing from tier) | Auto | Auto, 10, 20, 50, 100, 200 |
+| `appSkuOverride` | Force every case onto a specific App Service Plan SKU (decouples app sizing from tier) | Auto | Auto, P0v3, P1v3, P2v3, P3v3 |
 
-**Pool DTU override.** When set to a value other than `Auto`, every test case in the run uses the same per-DB DTU cap regardless of the tier's nominal value — useful for cross-checking whether SQL is actually the bottleneck. Default caps are Starter→20, Standard→50, Pro→100 DTUs (see `tiers.json`); since all three tiers share the same App Service SKU today, the override is mainly for "is the app saturating before SQL does?" experiments. The Elastic Pool's eDTU capacity is sized automatically to the smallest valid Standard pool that can hold a DB at the chosen cap.
+**Pool DTU override.** When set to a value other than `Auto`, every test case in the run uses the same per-DB DTU cap regardless of the tier's default — useful for "is SQL actually the bottleneck?" experiments. Default caps are Starter→20, Standard→50, Pro→100, Enterprise→200 (see `tiers.json`). The Elastic Pool's eDTU capacity is sized automatically to the smallest valid Standard pool that can hold a DB at the chosen cap.
+
+**App SKU override.** Counterpart to `poolDtuOverride` on the app side. When set to a value other than `Auto`, every test case uses the same App Service Plan SKU regardless of the tier's default — useful for "is the app actually the bottleneck?" experiments. Default SKUs are Starter→P0v3, Standard→P1v3, Pro→P2v3, Enterprise→P3v3.
 
 The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds).
 
@@ -173,20 +177,21 @@ The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario
 ```json
 {
   "tiers": {
-    "Starter":  { "app_sku": "P1v3", "dtu_max": 20 },
-    "Standard": { "app_sku": "P1v3", "dtu_max": 50 },
-    "Pro":      { "app_sku": "P1v3", "dtu_max": 100 }
+    "Starter":    { "app_sku": "P0v3", "dtu_max": 20  },
+    "Standard":   { "app_sku": "P1v3", "dtu_max": 50  },
+    "Pro":        { "app_sku": "P2v3", "dtu_max": 100 },
+    "Enterprise": { "app_sku": "P3v3", "dtu_max": 200 }
   }
 }
 ```
 
-`dtu_max` is the per-DB DTU cap inside the tier's Elastic Pool. Terraform computes the pool's eDTU capacity from this cap (smallest valid Standard pool size that can hold a DB at the cap — 50 for Starter+Standard, 100 for Pro).
+`dtu_max` is the per-DB DTU cap inside the tier's Elastic Pool. Terraform computes the pool's eDTU capacity from this cap (smallest valid Standard pool size that can hold a DB at the cap).
 
 Add a tier by adding a key here. Both the validator and Terraform will pick it up automatically — but to make a new tier queueable from the pipeline UI you also need to add a matching `run{Name}` boolean parameter in `azure-pipeline.yml` and a corresponding `if eq(parameters.run{Name}, true)` block in the tier-expansion list.
 
 A pipeline run only provisions plans + pools for tiers actually referenced by its resolved test cases — an all-Standard run creates one App Service Plan + one SQL server + one Elastic Pool; a mixed-tier run creates one per distinct tier in use.
 
-**SKU choice — why all three tiers share `P1v3`.** Umbraco Cloud Dedicated runs every plan tier on a single shared P1V3 App Service Plan pool (2 CPU / 8 GB RAM / 250 GB disk) and differentiates plans via per-site CPU/memory/disk *quotas* — quotas Azure doesn't let us replicate on a non-Cloud plan. Putting all three tiers on `P1v3` keeps the App Service-side variable matching Cloud's reality rather than introducing dedicated-plan SKUs Cloud doesn't actually use. The trade-off: our **Starter** numbers will look more optimistic than real Cloud Starter (no quota throttling). What we *can* differentiate cleanly is **SQL DTU** — Cloud uses Standard-tier Elastic Pools with per-DB caps of 20/50/100 DTUs (Starter/Standard/Pro), which we replicate exactly. SQL DTU is also usually the dominant bottleneck for content-heavy Umbraco workloads, so the tier comparison is effectively a SQL-DTU comparison until we find a way to model the App Service quotas.
+**SKU choice — why each tier gets a dedicated P-SKU.** Umbraco Cloud differentiates plans via dedicated App Service Plan SKUs (P0v3 / P1v3 / P2v3 / P3v3 across the four tiers), not via per-site quotas on a shared pool — so we provision one dedicated plan per tier in use with the same SKU progression. SQL side mirrors Cloud exactly: Standard-tier Elastic Pools with per-DB DTU caps of 20 / 50 / 100 / 200 DTUs for Starter / Standard / Pro / Enterprise. The two `*Override` queue-time parameters let an operator decouple app sizing from SQL sizing for bottleneck diagnosis (e.g. "P3v3 app + 20 DTU SQL" isolates the SQL contribution).
 
 ## Scenarios
 
@@ -519,7 +524,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 
 1. Run the pipeline manually from Azure DevOps.
 2. Pick the **load profile** (`smoke` / `standard` / `stress`), **Umbraco version** (free text — prereleases ok), and **scenario** (defaults to `Default`).
-3. Tick the **tiers** to run against (`runStarter` / `runStandard` / `runPro` — at least one). Defaults to Starter only.
+3. Tick the **tiers** to run against (`runStarter` / `runStandard` / `runPro` / `runEnterprise` — at least one). Defaults to Starter only.
 4. Adjust the orthogonal knobs (region, prefix, cold start, skip load tests, validation window) only if you need to.
 5. Wait for validation → ensure-history-infra → provisioning → load tests → regression check to complete.
 6. Review results in Azure Load Testing portal, pipeline artifacts, and history storage NDJSON. The `regression-report` artifact has the post-run regression check output.
@@ -719,7 +724,7 @@ Every provisioned resource carries:
 | `managed_by` | Ephemeral resources | `terraform` |
 | `managed_by` | Long-lived history infra | `ensure-script` |
 | `build_id` | Ephemeral resources | `$(Build.BuildId)` from the pipeline (or `local` for hand runs) |
-| `tier` | App Service Plan | The tier name (`Starter` / `Standard` / `Pro`) |
+| `tier` | App Service Plan | The tier name (`Starter` / `Standard` / `Pro` / `Enterprise`) |
 | `test_case_id` | App Service, SQL Server, SQL DB | The full testCaseId |
 | `umbraco_version` | App Service, SQL Server, SQL DB | The Umbraco CMS version |
 | `scenario` | App Service, SQL Server, SQL DB | The scenario folder name |
