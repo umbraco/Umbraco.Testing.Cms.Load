@@ -47,7 +47,7 @@ parameters:
   # Tier selection is independent — the runStarter/runStandard/runPro checkboxes
   # above pick which tiers each profile gets exercised against.
   - name: loadProfile
-    displayName: Load profile (intensity)
+    displayName: 'Load profile (intensity) — smoke: 50 VUs / 60s, standard: 100 VUs / 300s, stress: 300 VUs / 600s'
     type: string
     default: 'standard'
     values:
