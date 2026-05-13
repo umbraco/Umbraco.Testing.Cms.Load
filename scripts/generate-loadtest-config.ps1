@@ -98,12 +98,13 @@ $config = @"
 version: v0.1
 testId: $testId
 displayName: Umbraco load test - $Scenario
-testPlan: loadtests/locustfile.py
+testPlan: loadtests/scenarios/$Scenario/locustfile.py
 testType: Locust
 description: Holds all version/tier runs for the '$Scenario' scenario; pick runs in 'Compare' to overlay.
 engineInstances: $EngineInstances
 configurationFiles:
   - loadtests/locust.conf
+  - loadtests/_helpers.py
 failureCriteria:
   - avg(response_time_ms) > 2000
   - p95(response_time_ms) > 5000

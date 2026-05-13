@@ -52,9 +52,10 @@ steps:
         Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
         Write-Host "##vso[task.setvariable variable=appServicePlanId]$($tfOut.app_service_plan_id)"
         Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
-        Write-Host "##vso[task.setvariable variable=sqlSku]$($tfOut.sql_sku)"
+        Write-Host "##vso[task.setvariable variable=poolDtuMax]$($tfOut.pool_dtu_max)"
         Write-Host "##vso[task.setvariable variable=sqlDatabaseName]$($tfOut.sql_database_name)"
         Write-Host "##vso[task.setvariable variable=sqlDatabaseId]$($tfOut.sql_database_id)"
+        Write-Host "##vso[task.setvariable variable=elasticPoolId]$($tfOut.elastic_pool_id)"
         Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
         Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
@@ -177,11 +178,11 @@ steps:
       resourceGroup: '${{ parameters.historyResourceGroup }}'
       loadTestResource: '${{ parameters.historyLoadTestName }}'
       # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
-      # SQL SKU is in the name explicitly — when sqlSkuOverride is set, the run name has to
-      # differentiate (e.g. 'Standard S2' default vs 'Standard S3' override) or you can't tell
-      # override runs apart from default-pairing runs in the portal Compare view.
-      loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(sqlSku) #$(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], app=$(appServiceSku) sql=$(sqlSku), $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
+      # The per-DB DTU cap is in the name explicitly — when poolDtuOverride is set, the run
+      # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
+      # or you can't tell override runs apart from default-pairing runs in the portal Compare view.
+      loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(poolDtuMax)DTU #$(Build.BuildId)'
+      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], app=$(appServiceSku) sql=$(poolDtuMax)DTU, $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
 
   - task: PowerShell@2
     displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
@@ -229,7 +230,7 @@ steps:
         -UmbracoVersion "${{ parameters.umbracoVersion }}"
         -DotNetVersion "$(resolvedDotnetVersion)"
         -AppServiceSku "$(appServiceSku)"
-        -SqlSku "$(sqlSku)"
+        -PoolDtuMax $(poolDtuMax)
         -SeederPreset "$(resolvedSeederPreset)"
         -Tier "${{ parameters.tier }}"
         -Scenario "${{ parameters.scenario }}"

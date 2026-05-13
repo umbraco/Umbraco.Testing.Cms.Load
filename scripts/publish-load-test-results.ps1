@@ -21,7 +21,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$DotNetVersion,
     [Parameter(Mandatory = $true)] [string]$AppServiceSku,
-    [Parameter(Mandatory = $true)] [string]$SqlSku,
+    [Parameter(Mandatory = $true)] [int]$PoolDtuMax,
     [Parameter(Mandatory = $true)] [string]$SeederPreset,
     [Parameter(Mandatory = $true)] [string]$Tier,
     [Parameter(Mandatory = $true)] [string]$Scenario,
@@ -63,7 +63,7 @@ $metadata = [ordered]@{
     umbraco_version  = $UmbracoVersion
     dotnet_version   = $DotNetVersion
     app_service_sku  = $AppServiceSku
-    sql_sku          = $SqlSku
+    pool_dtu_max     = $PoolDtuMax
     seeder_preset    = $SeederPreset
     infra_tier       = $Tier
     scenario         = $Scenario

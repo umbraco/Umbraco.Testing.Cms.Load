@@ -6,7 +6,7 @@ A starting point for load testing Umbraco CMS on Azure using Terraform, Locust, 
 
 - **Establish CMS performance baselines** — repeatable, comparable metrics for Umbraco under standard conditions across versions.
 - **Enable version comparison** — run the same scenario against multiple Umbraco versions to detect regressions or improvements.
-- **Build infrastructure capacity benchmarks** — what each App Service + SQL SKU combination can handle, as reference data for sizing decisions. (The shipped tiers fix the App Service at `P1v3` to mirror Umbraco Cloud's reality and vary SQL eDTU; the `sqlSkuOverride` parameter and `tiers.json` are the levers for sweeping other combinations.)
+- **Build infrastructure capacity benchmarks** — what each App Service + SQL DTU combination can handle, as reference data for sizing decisions. (The shipped tiers fix the App Service at `P1v3` to mirror Umbraco Cloud's reality and vary the SQL Elastic Pool per-DB DTU cap; the `poolDtuOverride` parameter and `tiers.json` are the levers for sweeping other combinations.)
 - **Provide a reusable foundation** — a working pipeline + harness that other teams can extend without rebuilding infra.
 
 Thresholds (fail-the-pipeline gates) are intentionally **deferred** until baselines exist — once we know what "normal" looks like per scenario per tier, Locust thresholds can be wired in to fail on regression.
@@ -80,8 +80,9 @@ Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per 
 │   └── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
 │
 ├── loadtests/
-│   ├── locustfile.py            # Inventory-driven workload (CMS browsing + contact-form write + Delivery API splice)
+│   ├── _helpers.py              # Shared workload mixin + inventory/Delivery API probes used by scenario locustfiles
 │   ├── locust.conf              # Local development config
+│   ├── scenarios/<Name>/locustfile.py  # Scenario-specific workload, imports from _helpers
 │   ├── tiers.json               # Tier catalog (Starter / Standard / Pro → SKUs)
 │   └── scenarios/
 │       ├── Default/
@@ -159,9 +160,9 @@ The profile only encodes load intensity — the same profile can drive any combi
 | `skipWarmup` | Skip warmup (test cold-start / cache warm-up behaviour) | false | true, false |
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
-| `sqlSkuOverride` | Force every case onto a specific SQL SKU (decouples DB sizing from tier) | Auto | Auto, S0, S1, S2, S3 |
+| `poolDtuOverride` | Force every case onto a specific per-DB DTU cap (decouples DB sizing from tier) | Auto | Auto, 10, 20, 50, 100, 200 |
 
-**SQL SKU override.** When set to a value other than `Auto`, every test case in the run uses the same SQL DB SKU regardless of the tier's nominal pairing — useful for cross-checking whether SQL is actually the bottleneck. Default pairings are Starter→S1, Standard→S2, Pro→S3 (see `tiers.json`); since all three tiers share the same App Service SKU today, the override is mainly for "is the app saturating before SQL does?" experiments. The `sql_max_size_gb` cap stays at the tier default (5/10/20 GB) — manually edit `tiers.json` if a larger cap is needed alongside an SKU bump.
+**Pool DTU override.** When set to a value other than `Auto`, every test case in the run uses the same per-DB DTU cap regardless of the tier's nominal value — useful for cross-checking whether SQL is actually the bottleneck. Default caps are Starter→20, Standard→50, Pro→100 DTUs (see `tiers.json`); since all three tiers share the same App Service SKU today, the override is mainly for "is the app saturating before SQL does?" experiments. The Elastic Pool's eDTU capacity is sized automatically to the smallest valid Standard pool that can hold a DB at the chosen cap.
 
 The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds).
 
@@ -172,18 +173,20 @@ The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario
 ```json
 {
   "tiers": {
-    "Starter":  { "app_sku": "P1v3", "sql_sku": "S1", "sql_max_size_gb": 5  },
-    "Standard": { "app_sku": "P1v3", "sql_sku": "S2", "sql_max_size_gb": 10 },
-    "Pro":      { "app_sku": "P1v3", "sql_sku": "S3", "sql_max_size_gb": 20 }
+    "Starter":  { "app_sku": "P1v3", "dtu_max": 20 },
+    "Standard": { "app_sku": "P1v3", "dtu_max": 50 },
+    "Pro":      { "app_sku": "P1v3", "dtu_max": 100 }
   }
 }
 ```
 
+`dtu_max` is the per-DB DTU cap inside the tier's Elastic Pool. Terraform computes the pool's eDTU capacity from this cap (smallest valid Standard pool size that can hold a DB at the cap — 50 for Starter+Standard, 100 for Pro).
+
 Add a tier by adding a key here. Both the validator and Terraform will pick it up automatically — but to make a new tier queueable from the pipeline UI you also need to add a matching `run{Name}` boolean parameter in `azure-pipeline.yml` and a corresponding `if eq(parameters.run{Name}, true)` block in the tier-expansion list.
 
-A pipeline run only provisions plans for tiers actually referenced by its resolved test cases — an all-Standard run creates one plan; a mixed-tier run creates one per distinct tier in use.
+A pipeline run only provisions plans + pools for tiers actually referenced by its resolved test cases — an all-Standard run creates one App Service Plan + one SQL server + one Elastic Pool; a mixed-tier run creates one per distinct tier in use.
 
-**SKU choice — why all three tiers share `P1v3`.** Umbraco Cloud Dedicated runs every plan tier on a single shared P1V3 App Service Plan pool (2 CPU / 8 GB RAM / 250 GB disk) and differentiates plans via per-site CPU/memory/disk *quotas* — quotas Azure doesn't let us replicate on a non-Cloud plan. Putting all three tiers on `P1v3` keeps the App Service-side variable matching Cloud's reality rather than introducing dedicated-plan SKUs Cloud doesn't actually use. The trade-off: our **Starter** numbers will look more optimistic than real Cloud Starter (no quota throttling). What we *can* differentiate cleanly is **SQL eDTU** (`S1` / `S2` / `S3`), which is also usually the dominant bottleneck for content-heavy Umbraco workloads — so the tier comparison is effectively a SQL-tier comparison until we find a way to model the App Service quotas.
+**SKU choice — why all three tiers share `P1v3`.** Umbraco Cloud Dedicated runs every plan tier on a single shared P1V3 App Service Plan pool (2 CPU / 8 GB RAM / 250 GB disk) and differentiates plans via per-site CPU/memory/disk *quotas* — quotas Azure doesn't let us replicate on a non-Cloud plan. Putting all three tiers on `P1v3` keeps the App Service-side variable matching Cloud's reality rather than introducing dedicated-plan SKUs Cloud doesn't actually use. The trade-off: our **Starter** numbers will look more optimistic than real Cloud Starter (no quota throttling). What we *can* differentiate cleanly is **SQL DTU** — Cloud uses Standard-tier Elastic Pools with per-DB caps of 20/50/100 DTUs (Starter/Standard/Pro), which we replicate exactly. SQL DTU is also usually the dominant bottleneck for content-heavy Umbraco workloads, so the tier comparison is effectively a SQL-DTU comparison until we find a way to model the App Service quotas.
 
 ## Scenarios
 
@@ -205,7 +208,7 @@ loadtests/scenarios/
     scenario.yaml          # optional load profile overrides
 ```
 
-The shipped scenarios are **`Default`** (vanilla Umbraco — baseline) and **`DeliveryApi`** (headless mode with the Content Delivery API enabled and public access on; the locustfile probes the API at startup and splices Delivery-API tasks into the workload mix when the scenario is active, so non-DeliveryApi runs aren't polluted with Delivery-API samplers).
+The shipped scenarios are **`Default`** (traditional customer — rendered pages + media + write path) and **`DeliveryApi`** (headless customer — Content Delivery API + media + write path, no rendered-page traffic). Each scenario ships its own `locustfile.py` next to its `AdditionalSetup/` and declares its tasks explicitly, so the workload that runs for a given scenario is fully visible in that one file. Shared building blocks (inventory probe, Delivery API probe, `pick_url` helper) live in `loadtests/_helpers.py` and are imported by each scenario's locustfile.
 
 ### Naming convention
 
@@ -303,11 +306,11 @@ All fields optional. A missing `scenario.yaml` (or an empty `loadProfile` block)
 
 ### Adding a new scenario
 
-1. Create `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json` with your config overlay.
-2. Optionally add `loadtests/scenarios/{Name}/scenario.yaml` with description + load profile overrides.
-3. Add it to the `scenario` parameter's `values` list in `azure-pipeline.yml` so it appears in the queue dropdown.
+1. Create `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json` with your config overlay (and any code overlay files alongside, e.g. `Program.cs`).
+2. Create `loadtests/scenarios/{Name}/locustfile.py` declaring the scenario's workload (import probes / `pick_url` from `_helpers.py` as needed).
+3. Optionally add `loadtests/scenarios/{Name}/scenario.yaml` with description + load profile overrides.
 
-That's it. No HCL or pipeline edits needed.
+That's it — **no pipeline or Terraform edits needed**. The validator enumerates `loadtests/scenarios/*/` on every run, accepts the free-text `scenario` parameter, and rejects unknown names with a "did you mean?" hint plus the available-scenarios list.
 
 ### Load Pattern
 
@@ -321,7 +324,7 @@ When comparing runs, only the steady-state samples are meaningful — ramp-up/do
 
 ### Workload distribution
 
-`loadtests/locustfile.py` uses **weighted Locust tasks** so virtual users don't all hammer the same flow — they distribute across the seeded site the way real traffic would. Current weights (sum to 113):
+Each scenario's locustfile declares its `@task` methods explicitly, so the workload that runs for a given scenario is fully visible in that one file. The Default scenario (traditional content-browsing customer) uses **weighted Locust tasks** so virtual users don't all hammer the same flow — they distribute across the seeded site the way real traffic would. Current weights (sum to 113):
 
 | Task | Weight | Path pattern |
 |---|---:|---|
@@ -333,7 +336,7 @@ When comparing runs, only the steady-state samples are meaningful — ramp-up/do
 | `media` | 5 | media URLs |
 | `submit_contact_form` | 8 | `POST /umbraco/api/contactform/submit` (write path) |
 
-The non-homepage tasks are **inventory-driven**: at test start, locust calls `/umbraco/api/seederstatus/inventory` to discover the actual URLs the seeder generated, so the same test code works against any seeder preset and any scenario without per-run config. Adjust weights in `locustfile.py` to model a different traffic mix.
+The non-homepage tasks are **inventory-driven**: at test start, locust calls `/umbraco/api/seederstatus/inventory` to discover the actual URLs the seeder generated, so the same test code works against any seeder preset without per-run config. Tasks raise (visible as a 100%-error task in the report) when a bucket is empty — no silent fallbacks, so a broken seeder or misconfigured scenario surfaces loudly instead of distorting the workload. Adjust weights in a scenario's own `locustfile.py` to change that scenario's traffic mix; the DeliveryApi scenario is structured the same way but exercises the Content Delivery API endpoints instead of rendered pages.
 
 ### Cold-cache vs warm-cache testing
 
@@ -546,7 +549,9 @@ terraform apply
 ```bash
 cd loadtests
 pip install locust
-locust -f locustfile.py --host https://<app-service-url>
+locust -f scenarios/Default/locustfile.py --host https://<app-service-url>
+# Or run the DeliveryApi scenario:
+# locust -f scenarios/DeliveryApi/locustfile.py --host https://<app-service-url>
 # Open http://localhost:8089 to configure and start the test
 ```
 
@@ -579,7 +584,7 @@ Pipeline parameters for the 3 baseline runs:
   scenario:       Default
   runStarter:     true   (others false — start narrow)
   loadProfile:    standard
-  sqlSkuOverride: Auto
+  poolDtuOverride: Auto
   skipWarmup:     false
   skipLoadTests:  false
 ```
@@ -597,7 +602,7 @@ Wait for all 3 to finish, then approve cleanup on each.
 
 Cells with `n=3` and `stddev / median < 5%` on p95 are stable enough to baseline. If a cell is wider than that, queue 2 more runs and re-check; the first run is sometimes cold relative to the others. If it's still wide after 5, the workload itself is too noisy for that cell to be a useful baseline target.
 
-**Step 3 — Queue a candidate.** Once stable, queue the run you actually want to evaluate — typically a different `umbracoVersion`, or the same version with a `sqlSkuOverride` to test SQL-tier effects.
+**Step 3 — Queue a candidate.** Once stable, queue the run you actually want to evaluate — typically a different `umbracoVersion`, or the same version with a `poolDtuOverride` to test SQL-tier effects.
 
 ```
 Pipeline parameters for the candidate:
@@ -628,7 +633,7 @@ Pipeline parameters for the candidate:
 - **All read paths regressed by ~10-30%** — likely a code change in the content/render hot path.
 - **One sampler regressed but others didn't** — likely a code change scoped to that endpoint.
 - **p99 regressed but p95 didn't** — usually a tail-latency issue (GC, lock contention, transient SQL slowness). p99 is noisier; rule out before raising alarm.
-- **All samplers up uniformly + SQL `dtu_consumption_percent_max` near 100%** — SQL DTU saturation, not code. Try `sqlSkuOverride=S3` and re-run.
+- **All samplers up uniformly + SQL `dtu_consumption_percent_max` near 100%** — SQL DTU saturation, not code. Try `poolDtuOverride=100` (or 200) and re-run.
 - **All samplers up + `plan_CpuPercentage_max` near 100%** — App Service saturation. Same diagnostic question, different lever (App Service tier).
 
 The `regression-report` artifact + the per-sampler table from `compare-runs.ps1` together usually tell you whether to **investigate the code** or **revisit the infra sizing**.
@@ -639,7 +644,7 @@ Status of in-progress and not-yet-started work.
 
 ### Planned scenarios
 
-The pipeline ships with the `Default` scenario only. The following scenarios are planned baseline coverage; each will live as its own folder under `loadtests/scenarios/` with an `appsettings.json` overlay (and code overlay where needed) plus extensions to `locustfile.py`.
+The pipeline currently ships with the `Default` and `DeliveryApi` scenarios. The following are planned baseline coverage; each will live as its own folder under `loadtests/scenarios/` with an `appsettings.json` overlay (and code overlay where needed) plus a scenario-specific `locustfile.py` that imports from `loadtests/_helpers.py`.
 
 **Front-end user journeys**
 - **Homepage and navigation flow** — land on the homepage, navigate menus, browse pages.

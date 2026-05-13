@@ -32,8 +32,6 @@ app.UseUmbraco()
     })
     .WithEndpoints(u =>
     {
-        // v17 dropped UseInstallerEndpoints() from the endpoint builder context;
-        // the installer routes are now part of UseBackOfficeEndpoints().
         u.UseBackOfficeEndpoints();
         u.UseWebsiteEndpoints();
     });

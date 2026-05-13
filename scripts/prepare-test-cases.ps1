@@ -168,6 +168,7 @@ if (-not (Test-Path -LiteralPath $scenariosRoot -PathType Container)) {
     Fail "scenarios root folder not found: loadtests/scenarios/"
 }
 $scenarioFolders = @(Get-ChildItem -LiteralPath $scenariosRoot -Directory | ForEach-Object { $_.Name })
+Write-Host "Available scenarios: $($scenarioFolders -join ', ')"
 
 # --- Process each case ---
 

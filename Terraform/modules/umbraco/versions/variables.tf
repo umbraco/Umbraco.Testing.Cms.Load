@@ -56,14 +56,29 @@ variable "admin_password" {
   sensitive   = true
 }
 
-variable "sql_sku" {
+variable "sql_server_name" {
   type        = string
-  description = "SQL Database SKU"
+  description = "Name of the shared per-tier SQL server hosting this case's database"
 }
 
-variable "sql_max_size_gb" {
-  type        = number
-  description = "SQL Database max size in GB"
+variable "sql_server_id" {
+  type        = string
+  description = "Resource ID of the shared per-tier SQL server"
+}
+
+variable "sql_server_fqdn" {
+  type        = string
+  description = "Fully qualified domain name of the shared per-tier SQL server"
+}
+
+variable "elastic_pool_id" {
+  type        = string
+  description = "ID of the per-tier Elastic Pool this case's database joins"
+}
+
+variable "sql_firewall_rule_dependency" {
+  type        = string
+  description = "Pass-through ID of the parent module's firewall rule, used only to express the create-order dependency in the versions submodule."
 }
 
 variable "seeder_preset" {

@@ -6,9 +6,10 @@ output "test_case_values" {
     umbraco_version        = var.umbraco_version
     dotnet_version         = var.dotnet_version
     scenario               = var.scenario
-    sql_server_name        = azurerm_mssql_server.sql_server.name
-    sql_server_resource_id = azurerm_mssql_server.sql_server.id
+    sql_server_name        = var.sql_server_name
+    sql_server_resource_id = var.sql_server_id
     sql_database_name      = azurerm_mssql_database.database.name
     sql_database_id        = azurerm_mssql_database.database.id
+    elastic_pool_id        = var.elastic_pool_id
   }
 }

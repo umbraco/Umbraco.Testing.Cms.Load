@@ -6,9 +6,9 @@ resource_group_name     = "umbraco-loadtest-rg"
 resource_group_location = "West Europe"
 seeder_preset           = "Medium"   # Small / Medium / Large / Massive
 
-# Force every case onto a specific SQL DB SKU. Empty = use each tier's pairing
-# from loadtests/tiers.json. Set to S1/S2/S3 to isolate the app-side contribution.
-sql_sku_override = ""
+# Force every case onto a specific per-DB DTU cap. 0 = use each tier's value
+# from loadtests/tiers.json. Set to 10/20/50/100/200 to isolate the app-side contribution.
+pool_dtu_override = 0
 
 # Tier values must exist in loadtests/tiers.json. app_settings_overlay normally
 # comes from the validator; hand-write a small one for local plans.

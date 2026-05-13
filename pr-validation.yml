@@ -2,7 +2,7 @@
 # no load test — just lints the things humans tend to forget locally:
 #   - terraform fmt + validate
 #   - PSScriptAnalyzer over scripts/ (matches the README's "local checks" rule set)
-#   - python -m py_compile on loadtests/locustfile.py
+#   - python -m py_compile on every .py under loadtests/
 #
 # Wire as a build validation policy on the `main` branch in AzDO branch policies
 # so it's required before merge. Typical runtime ~1 minute (no provisioning).
@@ -88,15 +88,22 @@ stages:
               versionSpec: '3.x'
 
           - task: PowerShell@2
-            displayName: py_compile loadtests/locustfile.py
+            displayName: py_compile loadtests/**/*.py
             inputs:
               targetType: inline
               workingDirectory: '$(System.DefaultWorkingDirectory)'
               script: |
                 $ErrorActionPreference = "Stop"
                 $PSNativeCommandUseErrorActionPreference = $true
-                python -m py_compile loadtests/locustfile.py
-                Write-Host "loadtests/locustfile.py compiled cleanly."
+                $pyFiles = Get-ChildItem -Path loadtests -Recurse -Filter *.py -File
+                if ($pyFiles.Count -eq 0) {
+                    Write-Error "No Python files found under loadtests/"
+                    exit 1
+                }
+                foreach ($f in $pyFiles) {
+                    python -m py_compile $f.FullName
+                    Write-Host "  $($f.FullName.Substring($PWD.Path.Length + 1)) - ok"
+                }
 
       - job: yaml
         displayName: YAML lint

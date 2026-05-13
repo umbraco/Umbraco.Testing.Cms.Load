@@ -47,16 +47,17 @@ variable "seeder_preset" {
   }
 }
 
-# Override the SQL SKU for every case in the run. Empty string = use the tier's
-# built-in pairing from tiers.json. Lets you size SQL independently of the App
+# Override the per-DB DTU cap for every case in the run. 0 = use the tier's
+# built-in value from tiers.json. Lets you size SQL independently of the App
 # Service tier — useful when comparison data shows the app tier scales but the
-# database is the bottleneck.
-variable "sql_sku_override" {
-  type        = string
-  description = "Override SQL DB SKU for every case ('' = use each tier's default)."
-  default     = ""
+# database is the bottleneck. The pool's eDTU capacity is computed from this
+# cap (smallest valid Standard pool size that can hold a DB at the cap).
+variable "pool_dtu_override" {
+  type        = number
+  description = "Override per-DB DTU cap for every case (0 = use each tier's default)."
+  default     = 0
   validation {
-    condition     = var.sql_sku_override == "" || contains(["S0", "S1", "S2", "S3"], var.sql_sku_override)
-    error_message = "sql_sku_override must be empty (auto) or one of: S0, S1, S2, S3"
+    condition     = var.pool_dtu_override == 0 || contains([10, 20, 50, 100, 200], var.pool_dtu_override)
+    error_message = "pool_dtu_override must be 0 (auto) or one of the valid Standard per-DB DTU caps: 10, 20, 50, 100, 200"
   }
 }

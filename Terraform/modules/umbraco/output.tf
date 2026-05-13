@@ -10,13 +10,14 @@ output "test_case_outputs" {
       tier                   = var.test_cases[k].tier
       scenario               = m.test_case_values.scenario
       app_service_sku        = var.tier_specs[var.test_cases[k].tier].app_sku
-      # Reflect the override here so downstream metadata (NDJSON, ALT run description)
-      # records the SKU actually provisioned, not the tier's nominal pairing.
-      sql_sku                = var.sql_sku_override != "" ? var.sql_sku_override : var.tier_specs[var.test_cases[k].tier].sql_sku
+      # Reflect the override here so downstream metadata (NDJSON, ALT run name/description)
+      # records the per-DB DTU cap actually provisioned, not the tier's nominal value.
+      pool_dtu_max           = var.pool_dtu_override != 0 ? var.pool_dtu_override : var.tier_specs[var.test_cases[k].tier].dtu_max
       sql_server_name        = m.test_case_values.sql_server_name
       sql_server_resource_id = m.test_case_values.sql_server_resource_id
       sql_database_name      = m.test_case_values.sql_database_name
       sql_database_id        = m.test_case_values.sql_database_id
+      elastic_pool_id        = m.test_case_values.elastic_pool_id
     }
   }
 }

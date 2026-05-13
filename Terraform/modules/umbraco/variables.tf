@@ -15,9 +15,8 @@ variable "resource_name_prefix" {
 
 variable "tier_specs" {
   type = map(object({
-    app_sku         = string
-    sql_sku         = string
-    sql_max_size_gb = number
+    app_sku = string
+    dtu_max = number
   }))
   description = "Decoded tier catalog (loadtests/tiers.json), keyed by tier name."
 }
@@ -39,10 +38,10 @@ variable "seeder_preset" {
   default     = "Medium"
 }
 
-variable "sql_sku_override" {
-  type        = string
-  description = "Override SQL DB SKU for every case ('' = use each tier's default from tier_specs)."
-  default     = ""
+variable "pool_dtu_override" {
+  type        = number
+  description = "Override per-DB DTU cap for every case (0 = use each tier's default from tier_specs)."
+  default     = 0
 }
 
 variable "build_id" {

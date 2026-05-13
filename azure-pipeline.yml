@@ -16,13 +16,15 @@ parameters:
     type: string
     default: '17.0.0'
 
+  # Free-text instead of a fixed values list - adding a scenario should be
+  # a folder drop under loadtests/scenarios/, not a YAML edit. The validator
+  # in prepare-test-cases.ps1 enumerates the folders, rejects unknown names
+  # with a "did you mean?" hint, and prints the available list at the top of
+  # its log.
   - name: scenario
-    displayName: Scenario (must match a folder under loadtests/scenarios/)
+    displayName: Scenario (folder name under loadtests/scenarios/)
     type: string
     default: 'Default'
-    values:
-      - 'Default'
-      - 'DeliveryApi'
 
   - name: runStarter
     displayName: Run Starter tier
@@ -92,21 +94,22 @@ parameters:
       - 120
       - 240
 
-  # Override the SQL SKU on every case so the database can be sized independently
-  # of the tier's nominal pairing — useful for "is SQL actually the bottleneck?"
-  # experiments. Defaults today (per loadtests/tiers.json): Starter→S1, Standard→S2,
-  # Pro→S3, since the App Service SKU is identical across tiers (mirrors Cloud).
-  # 'Auto' = use each tier's built-in pairing.
-  - name: sqlSkuOverride
-    displayName: SQL SKU override (Auto = use the tier's default pairing)
+  # Override the per-DB DTU cap for every case so SQL can be sized independently
+  # of the tier's default — useful for "is SQL actually the bottleneck?"
+  # experiments. Defaults (per loadtests/tiers.json): Starter=20, Standard=50,
+  # Pro=100 DTUs, since the App Service SKU is identical across tiers (mirrors Cloud).
+  # 'Auto' = use each tier's built-in DTU cap.
+  - name: poolDtuOverride
+    displayName: SQL per-DB DTU override (Auto = use the tier's default)
     type: string
     default: 'Auto'
     values:
       - 'Auto'
-      - 'S0'
-      - 'S1'
-      - 'S2'
-      - 'S3'
+      - '10'
+      - '20'
+      - '50'
+      - '100'
+      - '200'
 
 variables:
   # Variable group `umbraco-loadtest-history` provides all history* variables:
@@ -138,7 +141,7 @@ stages:
               RUN_STARTER: ${{ parameters.runStarter }}
               RUN_STANDARD: ${{ parameters.runStandard }}
               RUN_PRO: ${{ parameters.runPro }}
-              SQL_SKU_OVERRIDE: ${{ parameters.sqlSkuOverride }}
+              POOL_DTU_OVERRIDE: ${{ parameters.poolDtuOverride }}
             inputs:
               targetType: 'inline'
               script: |
@@ -184,14 +187,14 @@ stages:
                     }
                 }
 
-                # 'Auto' is the queue-time signal for "use the tier's built-in SQL pairing".
-                # Terraform expects an empty string for that case.
-                $sqlSkuOverride = if ($env:SQL_SKU_OVERRIDE -eq 'Auto') { '' } else { $env:SQL_SKU_OVERRIDE }
+                # 'Auto' is the queue-time signal for "use the tier's built-in DTU cap".
+                # Terraform expects 0 for that case.
+                $poolDtuOverride = if ($env:POOL_DTU_OVERRIDE -eq 'Auto') { '0' } else { $env:POOL_DTU_OVERRIDE }
 
                 Write-Host "Tiers:           $($tiers -join ', ')"
                 Write-Host "Profile '$env:PROFILE': preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
                 Write-Host "Umbraco $env:UMBRACO_VERSION (major $umbracoMajor) -> .NET $dotnetVersion"
-                Write-Host "SQL SKU override: $(if ($sqlSkuOverride) { $sqlSkuOverride } else { 'Auto (per-tier defaults)' })"
+                Write-Host "Pool DTU override: $(if ($poolDtuOverride -ne '0') { "$poolDtuOverride DTUs per DB" } else { 'Auto (per-tier defaults)' })"
 
                 $testCases = @(@{
                     umbraco  = $env:UMBRACO_VERSION
@@ -208,7 +211,7 @@ stages:
                 Write-Host "##vso[task.setvariable variable=resolvedUserAmount;isOutput=true]$users"
                 Write-Host "##vso[task.setvariable variable=resolvedSpawnRate;isOutput=true]$spawn"
                 Write-Host "##vso[task.setvariable variable=resolvedTestDuration;isOutput=true]$duration"
-                Write-Host "##vso[task.setvariable variable=resolvedSqlSkuOverride;isOutput=true]$sqlSkuOverride"
+                Write-Host "##vso[task.setvariable variable=resolvedPoolDtuOverride;isOutput=true]$poolDtuOverride"
 
                 & "$(System.DefaultWorkingDirectory)/scripts/prepare-test-cases.ps1" `
                     -UserAmount $users `
@@ -247,9 +250,9 @@ stages:
       - validateTestCases
       - ensureHistoryInfra
     variables:
-      testCasesJson:           $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
-      resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
-      resolvedSqlSkuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSqlSkuOverride'] ]
+      testCasesJson:            $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
+      resolvedSeederPreset:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      resolvedPoolDtuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedPoolDtuOverride'] ]
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
@@ -304,7 +307,7 @@ stages:
               command: 'plan'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
       - job: apply
         displayName: Terraform Apply
@@ -356,7 +359,7 @@ stages:
               command: 'apply'
               workingDirectory: '$(terraformWorkingDirectory)'
               environmentServiceNameAzureRM: '$(serviceConnection)'
-              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var sql_sku_override=$(resolvedSqlSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
 
           - task: PowerShell@2
             name: outputVars
@@ -517,7 +520,7 @@ stages:
                 Write-Host "  Skip warmup:    ${{ parameters.skipWarmup }}"
                 Write-Host "  Seeder preset:  $(resolvedSeederPreset)"
                 Write-Host "  Engine instances: $(resolvedEngineInstances)"
-                Write-Host "  SQL SKU override: ${{ parameters.sqlSkuOverride }}"
+                Write-Host "  Pool DTU override: ${{ parameters.poolDtuOverride }}"
                 Write-Host ""
                 Write-Host "Test cases:"
                 $cases = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
