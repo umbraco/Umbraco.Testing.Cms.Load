@@ -473,18 +473,29 @@ The long-lived RG is provisioned idempotently at the start of every pipeline run
 
 ## Pipeline Workflow
 
+The pipeline runs in six stages. Stage boundaries are visible in the AzDO run summary so failures isolate cleanly: a failed `provision` stage tells you Terraform broke; a failed `loadTest` stage tells you the test itself broke. The `cleanup` stage runs on `succeededOrFailed()` so the ephemeral RG always gets torn down (or offered for manual keep) regardless of upstream outcome.
+
 ```
-0.  validateTestCases            -> Validate testCases, read scenario folders, resolve load profile
-1.  ensureHistoryInfra           -> Idempotent: shared Azure Load Testing + storage + RBAC role
-2.  Check Resource Group         -> Does it already exist?
-3.  Terraform Setup              -> Init + Validate + Plan
-4.  Terraform Apply              -> Provision App Service Plans (one per tier), per-case App Services + SQL DBs
-5.  Verify Deployments           -> Smoke-check each site (only when skipLoadTests=true)
-6.  Run Load Tests               -> Sequential per-case Locust tests (on Azure Load Testing infra)
-7.  Test Summary                 -> Print run-level + per-case config
-8.  Regression Check             -> Compare published runs vs baseline-median; fail on regression
-9.  Manual Validation            -> Configurable window to keep resources (default 60 min)
-10. Cleanup                      -> Delete resource group if rejected/cancelled/expired
+validateTestCases    Validate testCases JSON, read scenario folders, resolve load profile
+                     (smoke / standard / stress) into seederPreset + engineInstances + VUs.
+
+ensureHistoryInfra   Idempotent: shared Azure Load Testing resource + storage + container.
+                     First run creates; subsequent runs no-op.
+
+provision            checkResourceGroup → setup (init + validate + plan) → apply.
+                     Provisions one App Service Plan per used tier, plus per-case App Services
+                     and SQL DBs. Emits test_case_outputs map.
+
+loadTest             verifyDeployments (only when skipLoadTests=true) OR runLoadTests, then
+                     testSummary. Each case warms up, runs Locust on ALT, publishes results
+                     to history storage and the build artifact.
+
+regression           Compare candidate run against baseline-median; fail the pipeline when a
+                     cell exceeds threshold AND has ≥3 prior runs. Skipped when
+                     skipLoadTests=true.
+
+cleanup              checkResourceGroupForCleanup → manualValidation (configurable window) →
+                     deleteResourceGroup if rejected/cancelled/expired. Always runs.
 ```
 
 ## Data Seeder Presets
@@ -514,7 +525,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 
 When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Two cheaper modes:
 
-- **Profile-only smoke** — `profile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Use this when you've changed something that might affect the load-test path (Locust task, test config YAML, ALT integration).
+- **Profile-only smoke** — `loadProfile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Use this when you've changed something that might affect the load-test path (Locust task, test config YAML, ALT integration).
 - **Infra-only smoke** — `skipLoadTests=true` (with any profile + tier selection). Skips ALT entirely; runs validate → provision → install + seed → verify-deployments → cleanup. Use this when you've changed scripts/Terraform that affect provisioning or deployment but not load tests.
 
 Both modes exercise the full ephemeral-infra cycle. The profile-only smoke mode runs the regression check too (a no-op until baselines accrue); the infra-only smoke mode skips it (no new run to check).
@@ -593,7 +604,7 @@ Pipeline parameters for the candidate:
   umbracoVersion: 17.0.1   (← the change being evaluated)
   scenario:       Default
   runStarter:     true
-  profile:        standard
+  loadProfile:    standard
   ...
 ```
 
