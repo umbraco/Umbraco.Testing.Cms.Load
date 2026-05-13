@@ -1,5 +1,5 @@
 {
-  "_comment": "Mirrors Umbraco Cloud production specs as of 2026-05. App Service is dedicated per-tier with different P-series SKUs - Cloud differentiates plans via dedicated SKUs (corrected by Mikulas; the previous shared-P1V3 model was wrong). SQL is Standard-tier Elastic Pools with per-DB DTU caps. DB size is not enforced. Exact tier-to-SKU + DTU mapping is a best-guess pending confirmation; adjust here if Cloud's real mapping differs.",
+  "_comment": "Mirrors Umbraco Cloud production specs as of 2026-05 (confirmed by Mikulas). App Service is dedicated per-tier with a P-series SKU progression - Cloud differentiates plans via dedicated SKUs, not via per-site quotas on a shared pool. SQL is Standard-tier Elastic Pools with per-DB DTU caps; DB size is not enforced.",
   "tiers": {
     "Starter": {
       "app_sku": "P0v3",
