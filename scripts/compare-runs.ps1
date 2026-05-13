@@ -63,51 +63,45 @@ $ErrorActionPreference = "Stop"
 # Native commands (az CLI in history mode) honour $ErrorActionPreference.
 $PSNativeCommandUseErrorActionPreference = $true
 
+. "$PSScriptRoot/_helpers.ps1"
+
 # --- Mode detection + validation ---
 
 $isCsvMode     = $BaselinePath -or $CandidatePath
 $isHistoryMode = $Scenario -or $StorageAccountName -or $ContainerName
 
 if ($isCsvMode -and $isHistoryMode) {
-    Write-Error "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-StorageAccountName/-ContainerName) — not both."
-    exit 1
+    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-StorageAccountName/-ContainerName) — not both."
 }
 if (-not ($isCsvMode -or $isHistoryMode)) {
-    Write-Error "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -StorageAccountName + -ContainerName + version/tier coordinates)."
-    exit 1
+    Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -StorageAccountName + -ContainerName + version/tier coordinates)."
 }
 
 if ($isCsvMode) {
     if (-not ($BaselinePath -and $CandidatePath)) {
-        Write-Error "CSV mode requires both -BaselinePath and -CandidatePath."
-        exit 1
+        Write-PipelineError "CSV mode requires both -BaselinePath and -CandidatePath."
     }
-    if (-not (Test-Path $BaselinePath))  { Write-Error "Baseline CSV not found: $BaselinePath";  exit 1 }
-    if (-not (Test-Path $CandidatePath)) { Write-Error "Candidate CSV not found: $CandidatePath"; exit 1 }
+    if (-not (Test-Path $BaselinePath))  { Write-PipelineError "Baseline CSV not found: $BaselinePath" }
+    if (-not (Test-Path $CandidatePath)) { Write-PipelineError "Candidate CSV not found: $CandidatePath" }
 }
 
 if ($isHistoryMode) {
     if (-not ($Scenario -and $StorageAccountName -and $ContainerName)) {
-        Write-Error "History mode requires -Scenario, -StorageAccountName, and -ContainerName."
-        exit 1
+        Write-PipelineError "History mode requires -Scenario, -StorageAccountName, and -ContainerName."
     }
     $isVersionPair = $BaselineVersion -and $CandidateVersion
     $isTierPair    = $BaselineTier -and $CandidateTier
     if ($isVersionPair -and $isTierPair) {
-        Write-Error "History mode: choose ONE comparison axis — version-vs-version (with shared -Tier) OR tier-vs-tier (with shared -Version)."
-        exit 1
+        Write-PipelineError "History mode: choose ONE comparison axis — version-vs-version (with shared -Tier) OR tier-vs-tier (with shared -Version)."
     }
     if (-not ($isVersionPair -or $isTierPair)) {
-        Write-Error "History mode: provide either version-vs-version (-Tier + -BaselineVersion + -CandidateVersion) or tier-vs-tier (-Version + -BaselineTier + -CandidateTier)."
-        exit 1
+        Write-PipelineError "History mode: provide either version-vs-version (-Tier + -BaselineVersion + -CandidateVersion) or tier-vs-tier (-Version + -BaselineTier + -CandidateTier)."
     }
     if ($isVersionPair -and -not $Tier) {
-        Write-Error "Version-vs-version comparison requires -Tier (the shared tier)."
-        exit 1
+        Write-PipelineError "Version-vs-version comparison requires -Tier (the shared tier)."
     }
     if ($isTierPair -and -not $Version) {
-        Write-Error "Tier-vs-tier comparison requires -Version (the shared version)."
-        exit 1
+        Write-PipelineError "Tier-vs-tier comparison requires -Version (the shared version)."
     }
 }
 
@@ -116,47 +110,10 @@ if ($isHistoryMode) {
 function Get-RunStats {
     param ([string]$Path)
 
-    # Stream-parse to keep memory bounded on Massive runs.
-    $byLabel = @{}
-    $allElapsed = New-Object 'System.Collections.Generic.List[int]'
-    $totalRows = 0
-    $totalErrors = 0
-
-    $reader = [System.IO.StreamReader]::new($Path)
-    try {
-        $reader.ReadLine() | Out-Null  # discard header
-        while ($null -ne ($line = $reader.ReadLine())) {
-            $cols = $line.Split(',')
-            if ($cols.Length -lt 8) { continue }
-            $elapsed = 0
-            if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
-            $label   = $cols[2]
-            $success = $cols[7] -eq 'TRUE'
-
-            $totalRows++
-            if (-not $success) { $totalErrors++ }
-            $allElapsed.Add($elapsed)
-
-            $bucket = $byLabel[$label]
-            if (-not $bucket) {
-                $bucket = @{ Samples = (New-Object 'System.Collections.Generic.List[int]'); Errors = 0 }
-                $byLabel[$label] = $bucket
-            }
-            $bucket.Samples.Add($elapsed)
-            if (-not $success) { $bucket.Errors++ }
-        }
-    }
-    finally { $reader.Dispose() }
-
-    function Get-Pct ($sortedArr, [double]$pct) {
-        if ($sortedArr.Count -eq 0) { return 0 }
-        # Nearest-rank: ceil(N * pct / 100) - 1, clamped. Trunc-towards-zero would
-        # bias high (e.g. for N=100 p=99 it picks index 99 = max, not the 99th value).
-        $i = [int][math]::Ceiling($sortedArr.Count * $pct / 100.0) - 1
-        if ($i -lt 0) { $i = 0 }
-        if ($i -gt $sortedArr.Count - 1) { $i = $sortedArr.Count - 1 }
-        return $sortedArr[$i]
-    }
+    # Parser is shared with publish-load-test-results.ps1 — see Parse-JmeterCsv
+    # in _helpers.ps1. -BuildAggregate keeps the per-CSV all-samples list so we
+    # can compute a true aggregate percentile (which history mode can't).
+    $parsed = Parse-JmeterCsv -Path $Path -BuildAggregate
 
     function Get-Stats ($samples, $errors) {
         $sorted = ($samples | Sort-Object)
@@ -173,12 +130,12 @@ function Get-RunStats {
     }
 
     $perLabel = @{}
-    foreach ($kv in $byLabel.GetEnumerator()) {
+    foreach ($kv in $parsed.ByLabel.GetEnumerator()) {
         $perLabel[$kv.Key] = Get-Stats $kv.Value.Samples $kv.Value.Errors
     }
 
     return [PSCustomObject]@{
-        Aggregate = Get-Stats $allElapsed $totalErrors
+        Aggregate = Get-Stats $parsed.AllElapsed $parsed.TotalErrors
         ByLabel   = $perLabel
         Runs      = @()  # CSV mode doesn't track run identifiers
     }
@@ -278,20 +235,17 @@ if ($isHistoryMode) {
         -ContainerName $ContainerName
 
     if ($cells.Count -eq 0) {
-        Write-Error "No history rows found for scenario '$Scenario'$(if ($Major) { " (major $Major)" }). Nothing to compare."
-        exit 1
+        Write-PipelineError "No history rows found for scenario '$Scenario'$(if ($Major) { " (major $Major)" }). Nothing to compare."
     }
 
     $baseline  = Get-HistoryStats -Cells $cells -Version $baselineVersion  -Tier $baselineTier  -Aggregate $Aggregate
     $candidate = Get-HistoryStats -Cells $cells -Version $candidateVersion -Tier $candidateTier -Aggregate $Aggregate
 
     if ($baseline.ByLabel.Count -eq 0) {
-        Write-Error "No history rows for baseline cell ($baselineVersion / $baselineTier / $Scenario). Has this combination ever run?"
-        exit 1
+        Write-PipelineError "No history rows for baseline cell ($baselineVersion / $baselineTier / $Scenario). Has this combination ever run?"
     }
     if ($candidate.ByLabel.Count -eq 0) {
-        Write-Error "No history rows for candidate cell ($candidateVersion / $candidateTier / $Scenario). Has this combination ever run?"
-        exit 1
+        Write-PipelineError "No history rows for candidate cell ($candidateVersion / $candidateTier / $Scenario). Has this combination ever run?"
     }
 }
 else {

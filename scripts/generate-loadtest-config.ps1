@@ -21,13 +21,13 @@ param(
     [Parameter(Mandatory = $true)] [int]$SpawnRate,
     [Parameter(Mandatory = $true)] [int]$TestDuration,
 
-    # Optional resource IDs — App Service Plan + SQL Database — used to register
-    # extra appComponents in ALT so plan-level (CpuPercentage / MemoryPercentage)
-    # and database-level (DTU / log writes / etc.) metrics are captured alongside
+    # Resource IDs — App Service Plan + SQL Database — used to register extra
+    # appComponents in ALT so plan-level (CpuPercentage / MemoryPercentage) and
+    # database-level (DTU / log writes / etc.) metrics are captured alongside
     # site-level metrics during the run.
-    [string]$AppServicePlanId,
-    [string]$SqlDatabaseId,
-    [string]$SqlDatabaseName,
+    [Parameter(Mandatory = $true)] [string]$AppServicePlanId,
+    [Parameter(Mandatory = $true)] [string]$SqlDatabaseId,
+    [Parameter(Mandatory = $true)] [string]$SqlDatabaseName,
 
     [string]$OutputDir = $PWD
 )
@@ -41,8 +41,6 @@ $appServiceResourceId = "/subscriptions/$subscriptionId/resourceGroups/$Resource
 # CpuPercentage / MemoryPercentage live on the App Service Plan
 # (Microsoft.Web/serverfarms), not the site — register the plan as its own
 # appComponent. SQL metrics scope to the database, not the server.
-$planComponent = ""
-if ($AppServicePlanId) {
 $planComponent = @"
   - resourceId: "$AppServicePlanId"
     resourceName: "$AppServiceName-plan"
@@ -55,10 +53,7 @@ $planComponent = @"
         namespace: Microsoft.Web/serverfarms
         aggregation: Average
 "@
-}
 
-$sqlComponent = ""
-if ($SqlDatabaseId) {
 $sqlComponent = @"
   - resourceId: "$SqlDatabaseId"
     resourceName: "$SqlDatabaseName"
@@ -83,7 +78,6 @@ $sqlComponent = @"
         namespace: Microsoft.Sql/servers/databases
         aggregation: Total
 "@
-}
 
 # testId must match ^[a-z0-9_-]{2,50}$. One testId per scenario so the portal's
 # 'Compare runs' view groups all (version × tier) runs of the same scenario.
@@ -103,7 +97,6 @@ testType: Locust
 description: Holds all version/tier runs for the '$Scenario' scenario; pick runs in 'Compare' to overlay.
 engineInstances: $EngineInstances
 configurationFiles:
-  - loadtests/locust.conf
   - loadtests/_helpers.py
 failureCriteria:
   - avg(response_time_ms) > 2000
@@ -152,5 +145,5 @@ Write-Host "##vso[task.setvariable variable=appServiceResourceId]$appServiceReso
 
 Write-Host "Generated load test config at: $configPath"
 Write-Host "App Service:      $appServiceResourceId"
-if ($AppServicePlanId) { Write-Host "App Service Plan: $AppServicePlanId" }
-if ($SqlDatabaseId)    { Write-Host "SQL Database:     $SqlDatabaseId" }
+Write-Host "App Service Plan: $AppServicePlanId"
+Write-Host "SQL Database:     $SqlDatabaseId"

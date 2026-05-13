@@ -6,7 +6,7 @@ A starting point for load testing Umbraco CMS on Azure using Terraform, Locust, 
 
 - **Establish CMS performance baselines** — repeatable, comparable metrics for Umbraco under standard conditions across versions.
 - **Enable version comparison** — run the same scenario against multiple Umbraco versions to detect regressions or improvements.
-- **Build infrastructure capacity benchmarks** — what each App Service + SQL DTU combination can handle, as reference data for sizing decisions. (The shipped tiers fix the App Service at `P1v3` to mirror Umbraco Cloud's reality and vary the SQL Elastic Pool per-DB DTU cap; the `poolDtuOverride` parameter and `tiers.json` are the levers for sweeping other combinations.)
+- **Build infrastructure capacity benchmarks** — what each App Service + SQL DTU combination can handle, as reference data for sizing decisions. (The shipped tiers mirror Umbraco Cloud's progression — dedicated App Service SKUs `P0v3 → P3v3` paired with per-DB DTU caps `20 / 50 / 100 / 200` in Standard-tier Elastic Pools. The `appSkuOverride` and `poolDtuOverride` queue parameters and `tiers.json` are the levers for sweeping other combinations.)
 - **Provide a reusable foundation** — a working pipeline + harness that other teams can extend without rebuilding infra.
 
 Thresholds (fail-the-pipeline gates) are intentionally **deferred** until baselines exist — once we know what "normal" looks like per scenario per tier, Locust thresholds can be wired in to fail on regression.
@@ -15,7 +15,9 @@ Thresholds (fail-the-pipeline gates) are intentionally **deferred** until baseli
 
 This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs Locust load tests via Azure Load Testing service.
 
-**Supported Umbraco versions: v17 and newer.** Older majors (v13–v16) are rejected at validation time — the seeder package doesn't yet have a release train for them.
+**Supported Umbraco versions: v13–v18.** Each major maps to a specific .NET runtime (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map) below). A run for a major that doesn't yet have a `Umbraco.Cms.TestDataSeeder` package build fails fast at install time with a clear message — update the per-major map in `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` when a new seeder version ships.
+
+The `DeliveryApi` scenario is **v17+ only** — its `Program.cs` overlay uses v17's builder shape. The validator rejects the `DeliveryApi` + < v17 combination before provisioning. Use the `Default` scenario for older majors.
 
 Locust tests execute on Azure Load Testing's managed infrastructure (dedicated Standard_D4d_v4 VMs), not on the pipeline agent. This ensures consistent, reliable performance measurements.
 
@@ -53,45 +55,47 @@ A new team forking this project should:
    If that command works, the analysis tools will work. If it fails with "AuthorizationFailed", grant yourself Storage Account Contributor (or higher) on the SA scope.
 6. **Queue 3-5 baseline runs** with the same configuration to populate history (see "Establishing a baseline" below). Until cells have ≥ 3 prior runs, the pipeline's regression-check stage reports "insufficient baseline" and exits 0 — it's safe to enable from day one.
 
-### Cost awareness
-
-Every queued run provisions an ephemeral RG with an App Service Plan (P1v3) per tier and a SQL DB per case. The plan + DB cost continues to accrue from the moment the RG is created until cleanup. With `validationTimeoutMinutes=240` (the maximum) and a multi-tier run, a forgotten run (no approve, no reject — just walk away) can rack up a half-day of premium SKU billing. Default is 60 min; bump to 120/240 only when you actually need that long to inspect resources, and prefer rejecting cleanup explicitly when done. There's no automated budget alert on the ephemeral RG today — adding an `azurerm_consumption_budget_resource_group` to `Terraform/main.tf` with an action group is a reasonable next step for any team treating this as production.
+> ⚠️ Before queueing your first non-default run, skim the [Pitfalls](#pitfalls) section — security, name-length, overlay-precedence, and cleanup gotchas live there.
 
 ## Project Structure
 
 ```
 ├── azure-pipeline.yml           # Main load test pipeline (manual queue)
-├── pr-validation.yml            # PR-time static checks (terraform/PS/Python/YAML lint, no Azure)
 ├── README.md
 │
 ├── templates/
 │   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
 │
 ├── scripts/
-│   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, Azure Load Testing, storage
+│   ├── resolve-run-config.ps1          # Pipeline entry: resolves queue-time params + invokes validator
 │   ├── prepare-test-cases.ps1          # Validator: validates testCases, flattens scenario appsettings,
 │   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
+│   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, Azure Load Testing, storage
+│   ├── generate-loadtest-config.ps1    # Per-case ALT YAML config (testId, appComponents, failureCriteria)
 │   ├── verify-deployments.ps1          # Smoke-check each deployed site (skipLoadTests=true path)
-│   ├── stop-all-app-services.ps1       # End-of-run sweep: stop all App Services in the case set
+│   ├── stop-all-app-services.ps1       # Pre-test and end-of-run sweep: stop App Services in the case set
 │   ├── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
-│   ├── compare-runs.ps1                # Markdown delta report between two engine_results.csv files (one-vs-one)
-│   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON (many-vs-many)
+│   ├── compare-runs.ps1                # Markdown delta report between two runs (CSV or history)
+│   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
+│   ├── _helpers.ps1                    # Shared helpers dot-sourced by other scripts (Get-Pct, Get-StorageAccountKey, …)
 │   └── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
 │
 ├── loadtests/
 │   ├── _helpers.py              # Shared workload mixin + inventory/Delivery API probes used by scenario locustfiles
-│   ├── locust.conf              # Local development config
 │   ├── scenarios/<Name>/locustfile.py  # Scenario-specific workload, imports from _helpers
 │   ├── tiers.json               # Tier catalog (Starter / Standard / Pro / Enterprise → SKUs + DTU caps)
 │   └── scenarios/
 │       ├── Default/
 │       │   ├── AdditionalSetup/
-│       │   │   └── appsettings.json  # {} — identity overlay
-│       │   └── scenario.yaml         # description; no profile overrides
+│       │   │   └── appsettings.json     # {} — identity overlay
+│       │   ├── locustfile.py
+│       │   └── scenario.yaml
 │       └── DeliveryApi/
 │           ├── AdditionalSetup/
-│           │   └── appsettings.json  # enables Umbraco:CMS:DeliveryApi
+│           │   ├── appsettings.json     # enables Umbraco:CMS:DeliveryApi
+│           │   └── Program.cs           # registers .AddDeliveryApi() in builder chain
+│           ├── locustfile.py
 │           └── scenario.yaml
 │
 └── Terraform/
@@ -124,7 +128,7 @@ The queue UI splits into three concerns: **what to test**, **which tiers to test
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator enforces v17+ and a recognisable `X.Y.Z[-suffix]` shape; the major segment maps to the .NET runtime automatically. | 17.0.0 | free text |
+| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator enforces v13+ and a recognisable `X.Y.Z[-suffix]` shape; the major segment maps to the .NET runtime automatically (see table below). | 17.0.0 | free text |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
 
 **Which tiers:**
@@ -148,7 +152,20 @@ At least one tier must be selected — the validator fails the run if all are un
 
 The profile only encodes load intensity — the same profile can drive any combination of tiers. Tuning a profile is a single-place edit to the inline `switch` in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step.
 
-**.NET runtime is derived, not selected.** The prep step maps the Umbraco major version → required .NET runtime (currently 17+→.NET 10; older majors are rejected by the validator and unreachable here). Extend the mapping when a future Umbraco version bumps the target framework.
+**.NET runtime is derived, not selected.** The prep step maps the Umbraco major version → required .NET runtime; the pipeline installs the matching SDK and Terraform sets the App Service runtime accordingly. Extend the map in `scripts/resolve-run-config.ps1` (and the seeder-version map in the install script) when a new Umbraco major ships.
+
+#### Umbraco-major → .NET-runtime map
+
+| Umbraco major | App Service runtime | SDK installed by pipeline |
+|---:|:---:|:---:|
+| 13 | `v8.0` | `8.x` |
+| 14 | `v8.0` | `8.x` |
+| 15 | `v9.0` | `9.x` |
+| 16 | `v9.0` | `9.x` |
+| 17 | `v10.0` | `10.x` |
+| 18 | `v10.0` | `10.x` |
+
+The v18 mapping should be verified against the actual v18 release notes before relying on it.
 
 **For multi-version comparisons in a single queue** (e.g. 17.0.0 vs 17.0.1 on the same tier): queue the pipeline twice — once per version. The ALT Compare runs view aggregates across pipeline runs anyway (testId is per-scenario, not per-pipeline-run), so two queues end up in the same comparison view.
 
@@ -195,21 +212,25 @@ A pipeline run only provisions plans + pools for tiers actually referenced by it
 
 ## Scenarios
 
-A **scenario** is an Umbraco-side configuration variant. The layout mirrors how Umbraco's own [acceptance test repo](https://github.com/umbraco/Umbraco-CMS) organises tests — a folder per scenario with an `AdditionalSetup/appsettings.json` carrying the configuration overlay:
+A **scenario** is an Umbraco-side configuration variant. The layout mirrors how Umbraco's own [acceptance test repo](https://github.com/umbraco/Umbraco-CMS) organises tests — a folder per scenario, optionally with an `AdditionalSetup/appsettings.json` carrying the configuration overlay. A scenario with no Umbraco config to override (like `Default`) can either omit `AdditionalSetup/` entirely or ship an empty `{}`:
 
 ```
 loadtests/scenarios/
   Default/
     AdditionalSetup/
-      appsettings.json     # {} — empty overlay
+      appsettings.json     # {} — identity overlay
+    locustfile.py
     scenario.yaml          # description; no profile overrides
   DeliveryApi/             # ships in the repo
     AdditionalSetup/
       appsettings.json     # enables Umbraco:CMS:DeliveryApi (PublicAccess on)
+      Program.cs           # code overlay: registers .AddDeliveryApi()
+    locustfile.py
     scenario.yaml
   RedisCache/              # add when needed
     AdditionalSetup/
       appsettings.json     # Redis-specific Umbraco keys
+    locustfile.py
     scenario.yaml          # optional load profile overrides
 ```
 
@@ -235,7 +256,7 @@ ${prefix}-appservice-${umbraco}-${tier}-${scenario}
    ≤16        12           ≤7      ≤8       ≤15        + connectors = 60 max
 ```
 
-Long Umbraco prerelease tags (e.g. `17.0.0-rc.1.beta`) eat into the budget. Prefer release versions (`X.Y.Z`) when possible, and shorten the scenario name if running prereleases on a long-named tier.
+Long prerelease tags eat into the budget — see [Pitfalls › Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap).
 
 ### `appsettings.json` overlay
 
@@ -265,7 +286,7 @@ Umbraco__CMS__DistributedLockingMechanism = RedisDistributedLockingMechanism
 ConnectionStrings__Redis__ConnectionString = redis://...
 ```
 
-⚠️ **Overlay precedence sharp edge.** Because overlay keys win over base keys, a sufficiently aggressive scenario can clobber base settings — including `Umbraco__CMS__Unattended__*` (which would break unattended install) or `Umbraco.Cms.TestDataSeeder__Options__Preset` (which would override the run-level seeder preset). This is intentional flexibility, but be deliberate about what your overlay touches.
+Overlay keys win over base keys — see [Pitfalls › Overlay precedence](#overlay-precedence-a-scenario-can-clobber-base-settings) for what that can clobber if you're not deliberate.
 
 ### Code overlays (`*.cs`, `*.cshtml`, `App_Plugins/`, …)
 
@@ -297,21 +318,21 @@ Convention notes:
 
 ### `scenario.yaml` schema
 
-Optional metadata + load profile overrides:
+Optional load profile overrides:
 
 ```yaml
-description: "Free-text description shown in run summaries"   # optional
-loadProfile:                                                  # optional whole block
+description: "Free-text description (folder-level docs only; not read by code)"   # optional
+loadProfile:                                                                       # optional whole block
   users:     200    # overrides the profile's user count    when present
   spawnRate:  20    # overrides the profile's spawn rate    when present
   duration:  600    # overrides the profile's duration (s)  when present
 ```
 
-All fields optional. A missing `scenario.yaml` (or an empty `loadProfile` block) means the case uses the queue-time pipeline-level defaults. The override resolution happens once in the validator — every downstream consumer (Terraform, Azure Load Testing, NDJSON publisher) sees the resolved values, not the override logic.
+All fields optional. The validator reads only `loadProfile.*`; `description` is a folder-level docs note and isn't consumed anywhere. A missing `scenario.yaml` (or an empty `loadProfile` block) means the case uses the queue-time pipeline-level defaults. Override resolution happens once in the validator — every downstream consumer (Terraform, Azure Load Testing, NDJSON publisher) sees the resolved values, not the override logic.
 
 ### Adding a new scenario
 
-1. Create `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json` with your config overlay (and any code overlay files alongside, e.g. `Program.cs`).
+1. If your scenario needs an Umbraco config overlay, create `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json` (and any code overlay files alongside, e.g. `Program.cs`). A scenario with no overlay either omits the folder or ships `AdditionalSetup/appsettings.json` with `{}` (the validator handles both).
 2. Create `loadtests/scenarios/{Name}/locustfile.py` declaring the scenario's workload (import probes / `pick_url` from `_helpers.py` as needed).
 3. Optionally add `loadtests/scenarios/{Name}/scenario.yaml` with description + load profile overrides.
 4. Add `{Name}` to the `scenario` parameter's `values:` list in `azure-pipeline.yml` so it appears in the queue-time dropdown.
@@ -348,7 +369,7 @@ The non-homepage tasks are **inventory-driven**: at test start, locust calls `/u
 
 By default, the pipeline **warms up** the App Service (5-minute poll for `200` on `/`) before starting the load test, so measurements reflect steady-state cache-warm behaviour — the most stable comparison surface across tiers and versions.
 
-Set `skipWarmup: true` to skip the warmup. The load test then hits a freshly-started App Service with cold caches, measuring the full delivery pipeline including initial cache population — useful for understanding cache warm-up cost, restart behaviour, and the front-edge of a request burst against a cold app.
+Set `skipWarmup: true` to skip the warmup. The load test then hits a freshly-started App Service with cold caches, measuring the full delivery pipeline including initial cache population — useful for understanding cache warm-up latency, restart behaviour, and the front-edge of a request burst against a cold app.
 
 ## Results
 
@@ -482,7 +503,7 @@ The long-lived RG is provisioned idempotently at the start of every pipeline run
 
 ## Pipeline Workflow
 
-The pipeline runs in six stages. Stage boundaries are visible in the AzDO run summary so failures isolate cleanly: a failed `provision` stage tells you Terraform broke; a failed `loadTest` stage tells you the test itself broke. The `cleanup` stage runs on `succeededOrFailed()` so the ephemeral RG always gets torn down (or offered for manual keep) regardless of upstream outcome.
+The pipeline runs in six stages. Stage boundaries are visible in the AzDO run summary so failures isolate cleanly: a failed `provision` stage tells you Terraform broke; a failed `loadTest` stage tells you the test itself broke. The `cleanup` stage runs on `always()` so the ephemeral RG gets torn down (or offered for manual keep) on every outcome — including pipeline cancellation.
 
 ```
 validateTestCases    Validate testCases JSON, read scenario folders, resolve load profile
@@ -495,9 +516,9 @@ provision            checkResourceGroup → setup (init + validate + plan) → a
                      Provisions one App Service Plan per used tier, plus per-case App Services
                      and SQL DBs. Emits test_case_outputs map.
 
-loadTest             verifyDeployments (only when skipLoadTests=true) OR runLoadTests, then
-                     testSummary. Each case warms up, runs Locust on ALT, publishes results
-                     to history storage and the build artifact.
+loadTest             verifyDeployments (only when skipLoadTests=true) OR runLoadTests.
+                     Each case warms up, runs Locust on ALT, publishes results to
+                     history storage and the build artifact.
 
 regression           Compare candidate run against baseline-median; fail the pipeline when a
                      cell exceeds threshold AND has ≥3 prior runs. Skipped when
@@ -516,7 +537,7 @@ cleanup              checkResourceGroupForCleanup → manualValidation (configur
 | Large | ~2000 | ~500 | ~500 | 15-30 min |
 | Massive | ~10000 | ~2000 | ~2000 | 30-60 min |
 
-The seeder preset is **run-level** — applied uniformly to every case. (A scenario *can* override it via the `appsettings.json` overlay key `Umbraco.Cms.TestDataSeeder__Options__Preset` if you really need it per-case, but that's the overlay-precedence sharp edge — be deliberate.)
+The seeder preset is **run-level** — applied uniformly to every case. (A scenario *can* override it via the `appsettings.json` overlay key `Umbraco.Cms.TestDataSeeder__Options__Preset` if you really need it per-case — see [Pitfalls › Overlay precedence](#overlay-precedence-a-scenario-can-clobber-base-settings).)
 
 ## Usage
 
@@ -532,7 +553,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 
 ### Smoke-testing changes
 
-When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Two cheaper modes:
+When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Two faster modes:
 
 - **Profile-only smoke** — `loadProfile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Use this when you've changed something that might affect the load-test path (Locust task, test config YAML, ALT integration).
 - **Infra-only smoke** — `skipLoadTests=true` (with any profile + tier selection). Skips ALT entirely; runs validate → provision → install + seed → verify-deployments → cleanup. Use this when you've changed scripts/Terraform that affect provisioning or deployment but not load tests.
@@ -567,7 +588,7 @@ Every per-case NDJSON row carries the metrics below (one row per Locust task, pl
 
 **Client-side (from Locust / `engine1_results.csv` → NDJSON):**
 - `request_count`, `failure_count`, `error_rate` — failure rate is the first thing to check; a fast-but-erroring run is not a successful run.
-- `avg_ms`, `median_ms`, `p50_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `min_ms`, `max_ms` — `p95` and `p99` are the tier-discriminating metrics. `max` is single-sample noise.
+- `avg_ms`, `p50_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `min_ms`, `max_ms` — `p95` and `p99` are the tier-discriminating metrics. `max` is single-sample noise.
 - `requests_per_sec` — throughput per task and aggregate.
 
 **Server-side (Azure Load Testing portal, server metrics tab):**
@@ -686,6 +707,40 @@ These need Azure Monitor diagnostic settings on the App Service or the App Servi
 
 `check-regression.ps1` is wired into the pipeline as a post-load-test job (`regressionCheck`). It runs after every load-test run and either passes (no regressions or insufficient baseline) or fails the pipeline (real regression detected). The mechanism is **always on** but starts permissive: each (scenario × version × tier × sampler) cell needs ≥ 3 prior runs before it gates — until then, the cell is reported as "insufficient baseline" and contributes no fails. As baselines accrue per the "Establishing a baseline" protocol, the gate activates per-cell automatically. The post-run `regression-report` build artifact captures the full per-cell breakdown.
 
+## Pitfalls
+
+Things that have caught people out at least once. Skim before queueing your first non-default run.
+
+### Approved-kept RGs are not auto-cleaned
+
+The cleanup behaviour:
+
+- **Reject the manual validation** (or let it time out, default 60 min) → the ephemeral RG is deleted automatically.
+- **Cancel the pipeline run** → still deletes, because `cleanup` runs `condition: always()`.
+- **Approve (Resume) the manual validation to keep resources for inspection** → the RG is **not** deleted, ever, by the pipeline. You have to `az group delete -n ${prefix}-rg --yes` yourself when you're done.
+
+So when you click Resume, write yourself a reminder. There's no scheduled reaper, no auto-expiry beyond the validation window, and a forgotten approved-kept RG persists until you (or the next pipeline run, which will fail with "resource group already exists" and surface the orphan) catches it.
+
+### Security: hardcoded backoffice creds on a public-internet App Service
+
+The Terraform unattended-install config bakes a known admin login (`loadtest@example.invalid` / `LoadTest123!`) into every App Service so any team member can poke around in the backoffice. The App Services are public-internet by default (no IP allowlist) and the hostname is predictable from the test case ID. The risk window is the lifetime of the ephemeral RG — keep `validationTimeoutMinutes` to the minimum you actually need, and prefer rejecting cleanup explicitly when you're done.
+
+This is fine for ephemeral load-test environments with no real data; it would not be fine for anything else. If you fork this for a workload that handles real data, replace the hardcoded creds with a per-run random password and add an IP allowlist (or vnet integration).
+
+### Overlay precedence: a scenario can clobber base settings
+
+A scenario's `AdditionalSetup/appsettings.json` is **merged into the base App Service `app_settings` with overlay keys winning on collision**. That's deliberate flexibility, but a sufficiently aggressive overlay can stomp on `Umbraco__CMS__Unattended__*` (breaks unattended install) or `Umbraco.Cms.TestDataSeeder__Options__Preset` (overrides the run-level seeder preset). Be deliberate about what your overlay touches.
+
+### Name length: long Umbraco prereleases break the 60-char App Service cap
+
+Azure App Service names are capped at 60 chars. The computed name is `${prefix}-appservice-${umbraco}-${tier}-${scenario}` (≤16 + 12 + ≤length(version) + ≤length(tier) + ≤15 + connectors). Long Umbraco prerelease tags (`17.0.0-rc.1.beta.2`) eat into the budget. Terraform fails the run early via a `lifecycle.precondition` with a clear error message, but you'd rather not get there — prefer release versions (`X.Y.Z`) and shorten scenario names if running prereleases on a long-named tier.
+
+### Capacity: Massive preset is slow
+
+The seeder timeout for Massive is **120 minutes per case** (10s polling × 720 attempts) — the worst-case ceiling, not the typical seed time (30-60 min per the Data Seeder Presets table). A full 4-tier Massive run can take ~6-8 hours in the apply stage alone before any load testing happens. The Terraform Apply task has a 720-minute budget, so this fits, but you're using most of it.
+
+Practical guidance: use Massive when you specifically need the data volume. For most baselining and comparison work, Medium (the `standard` profile) is the right grain — and runs in a fraction of the time.
+
 ## Troubleshooting
 
 ### Common Issues
@@ -694,7 +749,7 @@ These need Azure Monitor diagnostic settings on the App Service or the App Servi
 - Check `loadtests/tiers.json` — the tier catalog. Either fix the typo in your `testCases` entry or add the tier to the catalog.
 
 **Preflight fails with "scenario folder not found"**
-- The scenario folder must exist at `loadtests/scenarios/{Name}/AdditionalSetup/appsettings.json`. Folder lookup is case-strict on every agent — the validator will suggest the closest match if the casing differs.
+- The scenario folder must exist at `loadtests/scenarios/{Name}/`. Folder lookup is case-strict on every agent — the validator will suggest the closest match if the casing differs. `AdditionalSetup/appsettings.json` is optional (only needed for scenarios with an Umbraco config overlay).
 
 **Preflight fails with "duplicate testCaseId"**
 - You have two cases with the same `(umbraco, tier, scenario)` triple. Either remove the duplicate, or change one of the dimensions (e.g. different scenario folder).
@@ -729,7 +784,7 @@ Every provisioned resource carries:
 | `umbraco_version` | App Service, SQL Server, SQL DB | The Umbraco CMS version |
 | `scenario` | App Service, SQL Server, SQL DB | The scenario folder name |
 
-Cost reports in Azure Portal can group/filter by any of these — `managed_by` separates the per-run ephemeral spend from the long-lived history infra.
+Azure Portal can group/filter resources by any of these tags — `managed_by` separates per-run ephemeral resources from the long-lived history infra.
 
 Pre-existing untagged history infra (created before this change) won't be retroactively tagged. Either re-tag manually (`az group update -n umbraco-loadtest-history-rg --set tags.project=umbraco-loadtest tags.managed_by=ensure-script`) or recreate the RG.
 

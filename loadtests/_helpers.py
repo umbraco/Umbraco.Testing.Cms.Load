@@ -24,7 +24,6 @@ runs for a given scenario is fully visible in that scenario's locustfile.
 
 import logging
 import random
-
 import requests
 from locust import events
 
@@ -48,11 +47,13 @@ def register_inventory_probe():
             response.raise_for_status()
             data = response.json()
         except (requests.RequestException, ValueError) as ex:
-            logger.warning(f"Inventory unreachable ({ex}); falling back to homepage-only")
+            # Buckets stay empty; pick_url then raises per-call so the run shows up
+            # as 100%-error on the affected tasks rather than silently homepage-only.
+            logger.error(f"Inventory unreachable ({ex}); workload tasks will fail")
             return
 
         if not isinstance(data, dict):
-            logger.warning(f"Inventory returned non-object JSON ({type(data).__name__})")
+            logger.error(f"Inventory returned non-object JSON ({type(data).__name__}); workload tasks will fail")
             return
 
         # Defensive filtering - a single malformed sample would otherwise crash
@@ -70,38 +71,57 @@ def register_inventory_probe():
 
 
 def register_delivery_api_probe():
-    """Probe the Delivery API at test start. On 200 seed environment.delivery_ids."""
+    """Probe the Delivery API at test start. On 200 seed environment.delivery_ids.
+
+    Pages through the full set (in 100-item batches up to a safety cap) so
+    delivery_item picks from every seeded item, not a 50-item slice that would
+    sit hot in cache and make the test measure cache lookup rather than query
+    work. The safety cap is in place so a future seeder bug yielding millions
+    of items doesn't stall test_start.
+    """
+    PAGE_SIZE = 100
+    MAX_ITEMS = 5000   # safety cap; current Massive preset is ~10k docs
+
     @events.test_start.add_listener
     def _on_start(environment, **_):
         environment.delivery_ids = []
         if not environment.host:
             return
 
-        try:
-            response = requests.get(
-                environment.host.rstrip("/") + DELIVERY_API_LIST_PATH + "?take=50",
-                timeout=10,
-            )
-        except requests.RequestException as ex:
-            logger.warning(f"Delivery API probe failed ({ex})")
-            return
+        base = environment.host.rstrip("/") + DELIVERY_API_LIST_PATH
+        ids = []
+        skip = 0
+        while len(ids) < MAX_ITEMS:
+            try:
+                response = requests.get(f"{base}?skip={skip}&take={PAGE_SIZE}", timeout=10)
+            except requests.RequestException as ex:
+                logger.warning(f"Delivery API probe failed at skip={skip} ({ex})")
+                break
 
-        if response.status_code != 200:
-            logger.warning(f"Delivery API probe returned {response.status_code} (expected 200 in this scenario)")
-            return
+            if response.status_code != 200:
+                if skip == 0:
+                    logger.warning(f"Delivery API probe returned {response.status_code} (expected 200 in this scenario)")
+                break
 
-        try:
-            body = response.json()
-        except ValueError:
-            logger.warning("Delivery API probe returned 200 but body was not JSON")
-            return
+            try:
+                body = response.json()
+            except ValueError:
+                logger.warning(f"Delivery API probe returned 200 at skip={skip} but body was not JSON")
+                break
 
-        if not isinstance(body, dict):
-            return
+            if not isinstance(body, dict):
+                break
 
-        items = body.get("items", [])
-        environment.delivery_ids = [i["id"] for i in items if isinstance(i, dict) and "id" in i]
-        logger.info(f"Delivery API enabled: {len(environment.delivery_ids)} items inventoried")
+            page = [i["id"] for i in body.get("items", []) if isinstance(i, dict) and "id" in i]
+            if not page:
+                break  # ran past the end
+            ids.extend(page)
+            if len(page) < PAGE_SIZE:
+                break  # last page
+            skip += PAGE_SIZE
+
+        environment.delivery_ids = ids
+        logger.info(f"Delivery API enabled: {len(ids)} items inventoried")
 
 
 def pick_url(user, bucket: str, name: str) -> None:

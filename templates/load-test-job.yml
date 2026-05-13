@@ -1,10 +1,10 @@
 # Per-case load test step group: read terraform outputs -> start -> warm-up -> load test -> publish.
+#
+# Only the per-tier values are template parameters. Everything else (service
+# connection, history-RG/SA/container/loadtest names) is pipeline-variable scope
+# and referenced as $() directly inside the steps.
 
 parameters:
-  - name: serviceConnection
-    type: string
-  - name: resourceGroupName
-    type: string
   - name: testCaseId
     type: string
   - name: tier
@@ -16,17 +16,6 @@ parameters:
   - name: skipWarmup
     type: boolean
     default: false
-  - name: historyResourceGroup
-    type: string
-  - name: historyLoadTestName
-    type: string
-  - name: historyStorageAccount
-    type: string
-  - name: historyContainer
-    type: string
-  # engineInstances and seederPreset come in as runtime variables
-  # (resolvedEngineInstances / resolvedSeederPreset) emitted by the validate
-  # stage's profile resolver. They flow through stage-level variable mappings.
 
 steps:
   - task: PowerShell@2
@@ -55,11 +44,9 @@ steps:
         Write-Host "##vso[task.setvariable variable=poolDtuMax]$($tfOut.pool_dtu_max)"
         Write-Host "##vso[task.setvariable variable=sqlDatabaseName]$($tfOut.sql_database_name)"
         Write-Host "##vso[task.setvariable variable=sqlDatabaseId]$($tfOut.sql_database_id)"
-        Write-Host "##vso[task.setvariable variable=elasticPoolId]$($tfOut.elastic_pool_id)"
         Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
         Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
-        Write-Host "##vso[task.setvariable variable=testCaseLabel]$($myCase.label)"
 
         Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s"
 
@@ -69,33 +56,33 @@ steps:
   # measurement. Idempotent on already-stopped apps.
   - task: AzureCLI@2
     displayName: 'Stop other App Services [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     env:
       TEST_CASE_OUTPUTS: $(testCaseOutputs)
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'scriptPath'
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/stop-all-app-services.ps1'
       arguments: >
-        -ResourceGroupName "${{ parameters.resourceGroupName }}"
+        -ResourceGroupName "$(azureResourceGroup)"
         -ExceptAppService "$(appServiceName)"
 
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |
-        az webapp start -n $(appServiceName) -g ${{ parameters.resourceGroupName }}
+        az webapp start -n $(appServiceName) -g $(azureResourceGroup)
 
   # Skipped when skipWarmup=true — so the test hits a freshly started App Service.
   - ${{ if not(parameters.skipWarmup) }}:
     - task: PowerShell@2
       displayName: 'Warm up [${{ parameters.testCaseId }}]'
-      condition: and(succeeded(), ne(variables['hostName'], ''))
+      condition: succeeded()
       inputs:
         targetType: 'inline'
         script: |
@@ -130,15 +117,15 @@ steps:
   # testable and the template stays scannable.
   - task: AzureCLI@2
     displayName: 'Generate load test config [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'scriptPath'
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/generate-loadtest-config.ps1'
       arguments: >
         -AppServiceName "$(appServiceName)"
-        -ResourceGroupName "${{ parameters.resourceGroupName }}"
+        -ResourceGroupName "$(azureResourceGroup)"
         -HostName "$(hostName)"
         -Scenario "${{ parameters.scenario }}"
         -TestCaseId "${{ parameters.testCaseId }}"
@@ -158,7 +145,7 @@ steps:
   # near-zero load on the SUT, so averages aren't meaningfully skewed.
   - task: PowerShell@2
     displayName: 'Capture load test start time [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     inputs:
       targetType: 'inline'
       script: |
@@ -170,13 +157,13 @@ steps:
   # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.
   - task: AzureLoadTest@1
     displayName: 'Load Test [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     continueOnError: true
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       loadTestConfigFile: '$(loadTestConfigPath)'
-      resourceGroup: '${{ parameters.historyResourceGroup }}'
-      loadTestResource: '${{ parameters.historyLoadTestName }}'
+      resourceGroup: '$(historyResourceGroup)'
+      loadTestResource: '$(historyLoadTestName)'
       # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
       # The per-DB DTU cap is in the name explicitly — when poolDtuOverride is set, the run
       # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
@@ -186,7 +173,7 @@ steps:
 
   - task: PowerShell@2
     displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
-    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
+    condition: succeededOrFailed()
     inputs:
       targetType: 'inline'
       script: |
@@ -199,7 +186,7 @@ steps:
   # long-lived copy.
   - task: PublishBuildArtifacts@1
     displayName: 'Publish run artifacts [${{ parameters.testCaseId }}]'
-    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
+    condition: succeededOrFailed()
     continueOnError: true
     inputs:
       PathtoPublish: '$(System.DefaultWorkingDirectory)/loadTest'
@@ -211,18 +198,18 @@ steps:
   # data is already in Azure Load Testing and the build artifact); investigate via the step log.
   - task: AzureCLI@2
     displayName: 'Publish to history [${{ parameters.testCaseId }}]'
-    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
+    condition: succeededOrFailed()
     continueOnError: true
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'scriptPath'
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-load-test-results.ps1'
       arguments: >
         -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
-        -HistoryResourceGroup "${{ parameters.historyResourceGroup }}"
-        -StorageAccountName "${{ parameters.historyStorageAccount }}"
-        -ContainerName "${{ parameters.historyContainer }}"
+        -HistoryResourceGroup "$(historyResourceGroup)"
+        -StorageAccountName "$(historyStorageAccount)"
+        -ContainerName "$(historyContainer)"
         -BuildId "$(Build.BuildId)"
         -Commit "$(Build.SourceVersion)"
         -Branch "$(Build.SourceBranchName)"

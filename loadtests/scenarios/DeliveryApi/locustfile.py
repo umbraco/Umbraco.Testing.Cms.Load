@@ -40,7 +40,7 @@ register_inventory_probe()
 register_delivery_api_probe()
 
 
-class CmsUser(FastHttpUser):
+class FrontEndUser(FastHttpUser):
     wait_time = between(1, 3)
 
     # @task(N) is a relative pick weight - Locust picks per VU by weighted

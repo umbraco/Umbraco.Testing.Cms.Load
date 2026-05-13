@@ -91,9 +91,9 @@ function Read-ScenarioYaml {
     return $result
 }
 
-# Levenshtein distance; case-sensitive (chars compared by ordinal).
-# Uses a jagged array - the int[,] subscript syntax is parser-flaky across
-# PowerShell versions, jagged is portable.
+# Levenshtein distance; case-insensitive via PowerShell's default -eq comparison
+# (we want typos like 'default' → 'Default' to match). Jagged array because
+# the int[,] subscript syntax is parser-flaky across PowerShell versions.
 function Get-LevenshteinDistance {
     param([string] $a, [string] $b)
     if (-not $a) { return $b.Length }
@@ -187,14 +187,25 @@ foreach ($case in $cases) {
         }
     }
 
-    # Umbraco.Cms.TestDataSeeder targets v17+ only.
+    # Supported range is v13–v18. The .NET runtime + seeder package version maps
+    # in resolve-run-config.ps1 and install-umbraco-cms-on-appservice.ps1 must
+    # know each major; resolve-run-config catches new majors with an explicit
+    # error. Here we just enforce the lower bound + parse.
     $umbracoMajorRaw = ([string]$case.umbraco).Split('.')[0]
     $umbracoMajor    = 0
     if (-not [int]::TryParse($umbracoMajorRaw, [ref]$umbracoMajor)) {
         Fail "case ${caseIndex}: cannot parse umbraco version '$($case.umbraco)' (expected X.Y.Z)"
     }
-    if ($umbracoMajor -lt 17) {
-        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is unsupported (this pipeline targets v17+)"
+    if ($umbracoMajor -lt 13) {
+        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is unsupported (this pipeline targets v13+)"
+    }
+
+    # Scenarios with v17-only code overlays (e.g. DeliveryApi's Program.cs uses
+    # v17's builder shape). Reject the combination here so the run fails fast
+    # instead of breaking at dotnet build inside the install script.
+    $v17OnlyScenarios = @('DeliveryApi')
+    if ($v17OnlyScenarios -contains $case.scenario -and $umbracoMajor -lt 17) {
+        Fail "case ${caseIndex}: scenario '$($case.scenario)' requires Umbraco 17+ (got '$($case.umbraco)'). Use the Default scenario for older majors."
     }
 
     $hasTiers = $case.PSObject.Properties.Name -contains 'tiers'
@@ -222,16 +233,19 @@ foreach ($case in $cases) {
     }
     $scenarioDir = Join-Path $scenariosRoot $case.scenario
     $appSettingsFile = Join-Path $scenarioDir 'AdditionalSetup/appsettings.json'
-    if (-not (Test-Path $appSettingsFile)) {
-        Fail "case ${caseIndex}: scenario '$($case.scenario)' missing AdditionalSetup/appsettings.json"
+    # AdditionalSetup/appsettings.json is optional — a scenario with no Umbraco
+    # config overlay can omit the file (or ship `{}`). When present, it must
+    # be valid JSON.
+    if (Test-Path $appSettingsFile) {
+        try {
+            $appsettingsObj = Get-Content -Raw $appSettingsFile | ConvertFrom-Json
+        } catch {
+            Fail "case ${caseIndex}: scenario '$($case.scenario)' has invalid appsettings.json: $($_.Exception.Message)"
+        }
+        $overlay = ConvertTo-FlatAppSettings -Node $appsettingsObj
+    } else {
+        $overlay = @{}
     }
-
-    try {
-        $appsettingsObj = Get-Content -Raw $appSettingsFile | ConvertFrom-Json
-    } catch {
-        Fail "case ${caseIndex}: scenario '$($case.scenario)' has invalid appsettings.json: $($_.Exception.Message)"
-    }
-    $overlay = ConvertTo-FlatAppSettings -Node $appsettingsObj
 
     # Resolve load profile: scenario.yaml overrides win over pipeline defaults.
     $effUsers    = $UserAmount

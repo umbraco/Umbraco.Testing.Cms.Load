@@ -13,8 +13,10 @@ locals {
   })
 
   # Hash the scenario AdditionalSetup tree so deploy_umbraco re-runs on any overlay edit.
+  # The validator allows scenarios to omit the folder entirely; try() returns []
+  # when the directory doesn't exist, producing a stable empty-set hash.
   scenario_overlay_dir   = "${path.root}/../loadtests/scenarios/${var.scenario}/AdditionalSetup"
-  scenario_overlay_files = sort(tolist(fileset(local.scenario_overlay_dir, "**")))
+  scenario_overlay_files = try(sort(tolist(fileset(local.scenario_overlay_dir, "**"))), [])
   scenario_overlay_hash = sha256(join("|", [
     for f in local.scenario_overlay_files : "${f}=${filesha256("${local.scenario_overlay_dir}/${f}")}"
   ]))

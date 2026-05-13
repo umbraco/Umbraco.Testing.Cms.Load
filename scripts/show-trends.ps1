@@ -5,8 +5,7 @@
 # run-count when there are 2+ runs. The stddev makes baseline stability visible
 # (see "Establishing a baseline" in README).
 #
-# Usage (you must `az login` first; your user needs Storage Account Contributor
-# or higher on the history SA so `az storage account keys list` works):
+# Usage (run `az login` first):
 #   ./scripts/show-trends.ps1 -Scenario Default -Major 17 `
 #       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history
@@ -87,7 +86,7 @@ $tiers    = @($cells.Values | ForEach-Object { $_[0].infra_tier      } | Sort-Ob
 $samplers = @($cells.Values | ForEach-Object { $_[0].scenario_name   } | Sort-Object -Unique)
 
 # Stable tier ordering: known tiers first in their natural order, then anything else.
-$tierOrder = @('Starter', 'Standard', 'Pro')
+$tierOrder = @('Starter', 'Standard', 'Pro', 'Enterprise')
 $tiers = @($tierOrder | Where-Object { $tiers -contains $_ }) +
          @($tiers | Where-Object { $tierOrder -notcontains $_ })
 

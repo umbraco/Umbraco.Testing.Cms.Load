@@ -6,8 +6,7 @@
 # A cell with fewer than -MinBaselineRuns prior runs is reported as "insufficient
 # baseline" and never contributes to a fail — you can't regress against nothing.
 #
-# Usage (caller must `az login` and have Storage Account Contributor or higher
-# on the history SA so `az storage account keys list` works):
+# Usage (run `az login` first):
 #   ./scripts/check-regression.ps1 -Scenario Default `
 #       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history

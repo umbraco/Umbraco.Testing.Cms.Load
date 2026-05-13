@@ -7,8 +7,7 @@ standard content delivery without the Delivery API.
 
 Weights skew toward Detail (deepest read path, most SQL pressure); homepage
 is output-cached and kept low so it doesn't dominate metrics. Total weight
-113; write share 8/113 ≈ 7% (within the realistic 5-15% range for CMS
-production traffic).
+113; write share 8/113 ≈ 7%.
 """
 
 # Locally: locustfile lives in scenarios/<Name>/ but imports _helpers.py from
@@ -26,7 +25,7 @@ from _helpers import pick_url, register_inventory_probe
 register_inventory_probe()
 
 
-class CmsUser(FastHttpUser):
+class FrontEndUser(FastHttpUser):
     # ~0.5 req/s per VU. 100 VUs ≈ 500-1500 real visitors in load-equivalent
     # (humans wait 5-30 s between clicks). Fine for relative comparison;
     # do not read VU counts as concurrent humans.
