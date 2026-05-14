@@ -1,5 +1,4 @@
 {
-  "_comment": "Mirrors Umbraco Cloud production specs as of 2026-05. Cloud uses a single P1V3 pool across all plans (2 CPU / 8 GB RAM / 250 GB disk) and differentiates plans via per-site CPU/memory/disk quotas - quotas we can't replicate on dedicated plans, so our Starter results will be more optimistic than real Cloud Starter. SQL eDTU differentiation is reproducible and is usually the dominant bottleneck for content-heavy Umbraco workloads.",
   "tiers": {
     "Starter": {
       "app_sku": "P1v3",

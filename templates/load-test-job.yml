@@ -71,7 +71,6 @@ steps:
         Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
         Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
-        Write-Host "##vso[task.setvariable variable=testCaseLabel]$($myCase.label)"
 
         Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s"
 
@@ -81,7 +80,7 @@ steps:
   # measurement. Idempotent on already-stopped apps.
   - task: AzureCLI@2
     displayName: 'Stop other App Services [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     env:
       TEST_CASE_OUTPUTS: $(testCaseOutputs)
     inputs:
@@ -95,7 +94,7 @@ steps:
 
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
       scriptType: 'pscore'
@@ -107,7 +106,7 @@ steps:
   - ${{ if not(parameters.coldStart) }}:
     - task: PowerShell@2
       displayName: 'Warm up [${{ parameters.testCaseId }}]'
-      condition: and(succeeded(), ne(variables['hostName'], ''))
+      condition: succeeded()
       inputs:
         targetType: 'inline'
         script: |
@@ -140,7 +139,7 @@ steps:
   # Load test config is per-case so runs stay distinguishable in the portal.
   - task: AzureCLI@2
     displayName: 'Generate load test config [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
       scriptType: 'pscore'
@@ -224,9 +223,6 @@ steps:
         testType: Locust
         description: Holds all version/tier runs for the '${{ parameters.scenario }}' scenario; pick runs in 'Compare' to overlay.
         engineInstances: $(resolvedEngineInstances)
-        configurationFiles:
-          - loadtests/locust.conf
-        # Append scenario modules here when added so Azure Load Testing uploads them too.
         failureCriteria:
           - avg(response_time_ms) > 2000
           - p95(response_time_ms) > 5000
@@ -284,7 +280,7 @@ steps:
   # near-zero load on the SUT, so averages aren't meaningfully skewed.
   - task: PowerShell@2
     displayName: 'Capture load test start time [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     inputs:
       targetType: 'inline'
       script: |
@@ -296,7 +292,7 @@ steps:
   # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.
   - task: AzureLoadTest@1
     displayName: 'Load Test [${{ parameters.testCaseId }}]'
-    condition: and(succeeded(), ne(variables['hostName'], ''))
+    condition: succeeded()
     continueOnError: true
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'
@@ -312,7 +308,7 @@ steps:
 
   - task: PowerShell@2
     displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
-    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
+    condition: succeededOrFailed()
     inputs:
       targetType: 'inline'
       script: |
@@ -325,7 +321,7 @@ steps:
   # long-lived copy.
   - task: PublishBuildArtifacts@1
     displayName: 'Publish run artifacts [${{ parameters.testCaseId }}]'
-    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
+    condition: succeededOrFailed()
     continueOnError: true
     inputs:
       PathtoPublish: '$(System.DefaultWorkingDirectory)/loadTest'
@@ -337,7 +333,7 @@ steps:
   # data is already in Azure Load Testing and the build artifact); investigate via the step log.
   - task: AzureCLI@2
     displayName: 'Publish to history [${{ parameters.testCaseId }}]'
-    condition: and(succeededOrFailed(), ne(variables['hostName'], ''))
+    condition: succeededOrFailed()
     continueOnError: true
     inputs:
       azureSubscription: '${{ parameters.serviceConnection }}'

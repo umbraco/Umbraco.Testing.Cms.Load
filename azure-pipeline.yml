@@ -223,9 +223,6 @@ stages:
                 Write-Host "##vso[task.setvariable variable=resolvedDotnetVersion;isOutput=true]$dotnetVersion"
                 Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$preset"
                 Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
-                Write-Host "##vso[task.setvariable variable=resolvedUserAmount;isOutput=true]$users"
-                Write-Host "##vso[task.setvariable variable=resolvedSpawnRate;isOutput=true]$spawn"
-                Write-Host "##vso[task.setvariable variable=resolvedTestDuration;isOutput=true]$duration"
                 Write-Host "##vso[task.setvariable variable=resolvedSqlSkuOverride;isOutput=true]$sqlSkuOverride"
 
                 & "$(System.DefaultWorkingDirectory)/scripts/prepare-test-cases.ps1" `
@@ -322,9 +319,6 @@ stages:
       resolvedDotnetVersion:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedEngineInstances:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
-      resolvedUserAmount:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedUserAmount'] ]
-      resolvedSpawnRate:        $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSpawnRate'] ]
-      resolvedTestDuration:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestDuration'] ]
       resolvedSqlSkuOverride:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSqlSkuOverride'] ]
       monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
       monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
@@ -459,16 +453,6 @@ stages:
                 $compact = ($raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10)
                 Write-Host "##vso[task.setvariable variable=testCaseOutputs;isOutput=true]$compact"
 
-          # Clean state files; mainly relevant on self-hosted agents where the VM persists.
-          - task: PowerShell@2
-            displayName: Clean up local terraform state
-            condition: always()
-            inputs:
-              targetType: 'inline'
-              workingDirectory: '$(terraformWorkingDirectory)'
-              script: |
-                Remove-Item .terraform, terraform.tfstate* -Recurse -Force -ErrorAction SilentlyContinue
-
       # Smoke check, only when skipLoadTests=true. Load tests do their own warm-up.
       - job: verifyDeployments
         displayName: Smoke-verify deployed sites
@@ -570,56 +554,6 @@ stages:
               arguments: >
                 -ResourceGroupName "$(azureResourceGroup)"
 
-      - job: testSummary
-        dependsOn:
-          - apply
-          - verifyDeployments
-          - runLoadTests
-        # Only print a summary when apply succeeded; nothing useful to summarise on failure.
-        condition: succeeded('apply')
-        displayName: Test Summary
-        steps:
-          - task: PowerShell@2
-            displayName: Print summary
-            env:
-              RESOLVED_TEST_CASES: $(resolvedTestCases)
-              SKIP_LOAD_TESTS: ${{ parameters.skipLoadTests }}
-            inputs:
-              targetType: 'inline'
-              script: |
-                Write-Host ""
-                Write-Host "=============================================="
-                Write-Host "       LOAD TEST SUMMARY"
-                Write-Host "=============================================="
-                Write-Host ""
-                Write-Host "Run-level configuration:"
-                Write-Host "  Profile:        ${{ parameters.profile }}"
-                Write-Host "  Region:         ${{ parameters.azureRegion }}"
-                Write-Host "  Default users:  $(resolvedUserAmount)"
-                Write-Host "  Spawn rate:     $(resolvedSpawnRate) users/sec"
-                Write-Host "  Default duration: $(resolvedTestDuration)s"
-                Write-Host "  Cold start:     ${{ parameters.coldStart }}"
-                Write-Host "  Seeder preset:  $(resolvedSeederPreset)"
-                Write-Host "  Engine instances: $(resolvedEngineInstances)"
-                Write-Host "  SQL SKU override: ${{ parameters.sqlSkuOverride }}"
-                Write-Host ""
-                Write-Host "Test cases:"
-                $cases = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
-                foreach ($prop in $cases.PSObject.Properties) {
-                  Write-Host "  - $($prop.Value.label)"
-                }
-                Write-Host ""
-                if ($env:SKIP_LOAD_TESTS -eq 'True') {
-                  Write-Host "Load tests SKIPPED (skipLoadTests=true) - see verifyDeployments job for smoke results."
-                } else {
-                  Write-Host "Results available in:"
-                  Write-Host "  - Azure Load Testing portal"
-                  Write-Host "  - Pipeline artifacts (loadtest-results-*)"
-                  Write-Host "  - History storage NDJSON (rows tagged with infra_tier + scenario)"
-                  Write-Host "  - Log Analytics workspace (LoadTestSummary_CL) -> Umbraco Load Tests Workbook"
-                }
-                Write-Host "=============================================="
-
       # Compare the just-published run against the baseline-median in history
       # storage. Fails the pipeline only when a cell exceeds a threshold AND has
       # >= 3 prior runs to compare against — early in a scenario's life, every
@@ -664,7 +598,6 @@ stages:
           - apply
           - verifyDeployments
           - runLoadTests
-          - testSummary
           - regressionCheck
         # `always()` covers every outcome including pipeline cancel — `succeededOrFailed()`
         # would skip cleanup when the user cancels mid-run, orphaning the ephemeral RG

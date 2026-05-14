@@ -93,7 +93,6 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │
 ├── loadtests/
 │   ├── locustfile.py            # Inventory-driven workload (CMS browsing + contact-form write + Delivery API splice)
-│   ├── locust.conf              # Local development config
 │   ├── tiers.json               # Tier catalog (Starter / Standard / Pro → SKUs)
 │   └── scenarios/
 │       ├── Default/
