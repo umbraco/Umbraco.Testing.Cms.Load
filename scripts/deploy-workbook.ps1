@@ -27,9 +27,10 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
+. "$PSScriptRoot/_helpers.ps1"
+
 if (-not (Test-Path $WorkbookJsonPath)) {
-    Write-Error "Workbook JSON not found at: $WorkbookJsonPath"
-    exit 1
+    Write-PipelineError "Workbook JSON not found at: $WorkbookJsonPath"
 }
 
 Write-Host "=== Deploying Workbook ==="
@@ -46,16 +47,14 @@ try {
     Get-Content $WorkbookJsonPath -Raw | ConvertFrom-Json | Out-Null
 }
 catch {
-    Write-Error "Workbook JSON is invalid: $($_.Exception.Message)"
-    exit 1
+    Write-PipelineError "Workbook JSON is invalid: $($_.Exception.Message)"
 }
 
 $subId = az account show --query id -o tsv
 
 $workspaceId = az monitor log-analytics workspace show -n $WorkspaceName -g $HistoryResourceGroup --query id -o tsv
 if ([string]::IsNullOrWhiteSpace($workspaceId)) {
-    Write-Error "Couldn't resolve workspace '$WorkspaceName' in RG '$HistoryResourceGroup'. Run ensure-monitoring-infra.ps1 first."
-    exit 1
+    Write-PipelineError "Couldn't resolve workspace '$WorkspaceName' in RG '$HistoryResourceGroup'. Run ensure-monitoring-infra.ps1 first."
 }
 
 # serializedData is the Workbook content as a *string* embedded in the

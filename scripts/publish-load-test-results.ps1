@@ -31,15 +31,13 @@ param(
     [Parameter(Mandatory = $true)] [string]$ColdStart,
     [Parameter(Mandatory = $true)] [string]$TestCaseId,
 
-    # Optional server-side metric query window + resource IDs. When all five are
-    # provided, the script queries Azure Monitor for App Service Plan + SQL DB
-    # metrics over the window and injects mean/max into the row metadata. Empty
-    # (e.g. when called outside the pipeline) falls back to client-side metrics only.
-    [string]$LoadTestStartTime,
-    [string]$LoadTestEndTime,
-    [string]$AppServiceResourceId,
-    [string]$AppServicePlanResourceId,
-    [string]$SqlDatabaseResourceId,
+    # Server-side metric query window + resource IDs. Queried via Azure Monitor
+    # and injected into row metadata alongside the client-side latencies.
+    [Parameter(Mandatory = $true)] [string]$LoadTestStartTime,
+    [Parameter(Mandatory = $true)] [string]$LoadTestEndTime,
+    [Parameter(Mandatory = $true)] [string]$AppServiceResourceId,
+    [Parameter(Mandatory = $true)] [string]$AppServicePlanResourceId,
+    [Parameter(Mandatory = $true)] [string]$SqlDatabaseResourceId,
 
     # Optional Logs Ingestion API target. When all three are provided, the
     # script POSTs each row to a Log Analytics custom table in addition to the
@@ -127,50 +125,30 @@ function Get-MetricSummary {
     return $result
 }
 
-if ($LoadTestStartTime -and $LoadTestEndTime) {
-    Write-Host ""
-    Write-Host "Querying Azure Monitor for server-side metrics over [$LoadTestStartTime, $LoadTestEndTime]..."
+Write-Host ""
+Write-Host "Querying Azure Monitor for server-side metrics over [$LoadTestStartTime, $LoadTestEndTime]..."
 
-    if ($AppServicePlanResourceId) {
-        $planMetrics = Get-MetricSummary `
-            -ResourceId $AppServicePlanResourceId `
-            -Metrics @("CpuPercentage", "MemoryPercentage") `
-            -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-        foreach ($k in $planMetrics.Keys) { $metadata["plan_$k"] = $planMetrics[$k] }
-    }
+$planMetrics = Get-MetricSummary `
+    -ResourceId $AppServicePlanResourceId `
+    -Metrics @("CpuPercentage", "MemoryPercentage") `
+    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
+foreach ($k in $planMetrics.Keys) { $metadata["plan_$k"] = $planMetrics[$k] }
 
-    if ($SqlDatabaseResourceId) {
-        $sqlMetrics = Get-MetricSummary `
-            -ResourceId $SqlDatabaseResourceId `
-            -Metrics @("dtu_consumption_percent", "cpu_percent", "log_write_percent", "physical_data_read_percent") `
-            -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-        foreach ($k in $sqlMetrics.Keys) { $metadata["sql_$k"] = $sqlMetrics[$k] }
-    }
+$sqlMetrics = Get-MetricSummary `
+    -ResourceId $SqlDatabaseResourceId `
+    -Metrics @("dtu_consumption_percent", "cpu_percent", "log_write_percent", "physical_data_read_percent") `
+    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
+foreach ($k in $sqlMetrics.Keys) { $metadata["sql_$k"] = $sqlMetrics[$k] }
 
-    if ($AppServiceResourceId) {
-        $appMetrics = Get-MetricSummary `
-            -ResourceId $AppServiceResourceId `
-            -Metrics @("Http5xx", "Http4xx") `
-            -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-        foreach ($k in $appMetrics.Keys) { $metadata["app_$k"] = $appMetrics[$k] }
-    }
-}
+$appMetrics = Get-MetricSummary `
+    -ResourceId $AppServiceResourceId `
+    -Metrics @("Http5xx", "Http4xx") `
+    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
+foreach ($k in $appMetrics.Keys) { $metadata["app_$k"] = $appMetrics[$k] }
 
-# Two possible CSV shapes from a Locust run on Azure Load Testing:
-#
 # ALT emits engine{N}_results.csv (JMeter format) — raw per-request data, one
-# row per HTTP call. Header: timeStamp, elapsed, label, responseCode,
-# responseMessage, threadName, dataType, success, failureMessage, ...
-# Multi-engine runs produce one CSV per engine; we aggregate across all of them.
-
-function Get-Pct ($Sorted, [double]$Pct) {
-    if ($Sorted.Count -eq 0) { return 0 }
-    # Nearest-rank: ceil(N * pct / 100) - 1, clamped.
-    $i = [int][math]::Ceiling($Sorted.Count * $Pct / 100.0) - 1
-    if ($i -lt 0) { $i = 0 }
-    if ($i -gt $Sorted.Count - 1) { $i = $Sorted.Count - 1 }
-    return $Sorted[$i]
-}
+# row per HTTP call. Multi-engine runs produce one CSV per engine; we aggregate
+# across all of them. Get-Pct is provided by _helpers.ps1.
 
 $rows = @()
 

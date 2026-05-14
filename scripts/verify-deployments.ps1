@@ -15,9 +15,10 @@ param (
 
 $ErrorActionPreference = "Stop"
 
+. "$PSScriptRoot/_helpers.ps1"
+
 if (-not $env:TEST_CASE_OUTPUTS) {
-    Write-Error "TEST_CASE_OUTPUTS env var is not set."
-    exit 1
+    Write-PipelineError "TEST_CASE_OUTPUTS env var is not set."
 }
 
 $cases = $env:TEST_CASE_OUTPUTS | ConvertFrom-Json
@@ -67,8 +68,7 @@ foreach ($prop in $cases.PSObject.Properties) {
 }
 
 if ($failed.Count -gt 0) {
-    Write-Host "##vso[task.logissue type=error]Smoke verify failed for: $($failed -join ', ')"
-    exit 1
+    Write-PipelineError "Smoke verify failed for: $($failed -join ', ')"
 }
 
 Write-Host "All deployed sites responded 200."

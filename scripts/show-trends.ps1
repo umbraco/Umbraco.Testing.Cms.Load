@@ -5,8 +5,7 @@
 # run-count when there are 2+ runs. The stddev makes baseline stability visible
 # (see "Establishing a baseline" in README).
 #
-# Usage (you must `az login` first; your user needs Storage Account Contributor
-# or higher on the history SA so `az storage account keys list` works):
+# Usage (run `az login` first):
 #   ./scripts/show-trends.ps1 -Scenario Default -Major 17 `
 #       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history

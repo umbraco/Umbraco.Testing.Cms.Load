@@ -22,9 +22,10 @@ param (
 
 $ErrorActionPreference = "Stop"
 
+. "$PSScriptRoot/_helpers.ps1"
+
 if (-not $env:TEST_CASE_OUTPUTS) {
-    Write-Error "TEST_CASE_OUTPUTS env var is not set."
-    exit 1
+    Write-PipelineError "TEST_CASE_OUTPUTS env var is not set."
 }
 
 $cases = $env:TEST_CASE_OUTPUTS | ConvertFrom-Json

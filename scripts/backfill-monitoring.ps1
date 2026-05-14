@@ -55,8 +55,7 @@ Write-Host ""
 $dceShow = az monitor data-collection endpoint show -n $DceName -g $HistoryResourceGroup -o json | ConvertFrom-Json
 $dceUri  = $dceShow.logsIngestion.endpoint
 if ([string]::IsNullOrWhiteSpace($dceUri)) {
-    Write-Error "Couldn't resolve DCE '$DceName' in RG '$HistoryResourceGroup'. Run ensure-monitoring-infra.ps1 first."
-    exit 1
+    Write-PipelineError "Couldn't resolve DCE '$DceName' in RG '$HistoryResourceGroup'. Run ensure-monitoring-infra.ps1 first."
 }
 
 $subId = az account show --query id -o tsv
@@ -64,8 +63,7 @@ $dcrPath = "/subscriptions/$subId/resourceGroups/$HistoryResourceGroup/providers
 $dcrShow = az rest --method get --url "https://management.azure.com$dcrPath" -o json | ConvertFrom-Json
 $dcrImmutableId = $dcrShow.properties.immutableId
 if ([string]::IsNullOrWhiteSpace($dcrImmutableId)) {
-    Write-Error "Couldn't resolve DCR '$DcrName' immutableId. Run ensure-monitoring-infra.ps1 first."
-    exit 1
+    Write-PipelineError "Couldn't resolve DCR '$DcrName' immutableId. Run ensure-monitoring-infra.ps1 first."
 }
 
 # 2. Optionally collect existing run_ids so we can skip blobs we've already
@@ -76,8 +74,7 @@ if (-not $Force) {
     Write-Host "-> Querying existing run_ids in $TableName"
     $workspaceCustomerId = az monitor log-analytics workspace show -n $WorkspaceName -g $HistoryResourceGroup --query customerId -o tsv
     if ([string]::IsNullOrWhiteSpace($workspaceCustomerId)) {
-        Write-Error "Couldn't resolve workspace customerId. Run ensure-monitoring-infra.ps1 first or pass -Force to skip the dedup query."
-        exit 1
+        Write-PipelineError "Couldn't resolve workspace customerId. Run ensure-monitoring-infra.ps1 first or pass -Force to skip the dedup query."
     }
     try {
         $queryResult = az monitor log-analytics query `

@@ -35,11 +35,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 # Catch the placeholder default explicitly; the global check below could miss it if it's available.
 if ($StorageAccountName -eq 'loadtestchangeme') {
-    Write-Error @"
-historyStorageAccount is still set to the placeholder 'loadtestchangeme'.
-Override the variable with a globally-unique 3-24 lowercase alphanumeric value, then re-run.
-"@
-    exit 1
+    Write-PipelineError "historyStorageAccount is still set to the placeholder 'loadtestchangeme'. Override it with a globally-unique 3-24 lowercase alphanumeric value, then re-run."
 }
 
 # `az load` extension isn't pre-installed on every agent image.
@@ -96,8 +92,7 @@ if (Test-AzResource { az storage account show -n $StorageAccountName -g $History
 else {
     $availability = az storage account check-name --name $StorageAccountName | ConvertFrom-Json
     if (-not $availability.nameAvailable) {
-        Write-Error "Storage account '$StorageAccountName' not available globally ($($availability.reason): $($availability.message)). Override historyStorageAccount with a globally unique value."
-        exit 1
+        Write-PipelineError "Storage account '$StorageAccountName' not available globally ($($availability.reason): $($availability.message)). Override historyStorageAccount with a globally unique value."
     }
     az storage account create `
         -n $StorageAccountName `
