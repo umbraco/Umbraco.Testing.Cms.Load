@@ -37,6 +37,8 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
+. "$PSScriptRoot/_helpers.ps1"
+
 $streamName = "Custom-$TableName"
 
 Write-Host "=== Backfill summary rows: blob storage -> Log Analytics ==="
@@ -95,7 +97,7 @@ if (-not $Force) {
 
 # 3. Storage key for the blob list/download. Same auth path as
 #    publish-load-test-results.ps1 — keeps RBAC requirements narrow.
-$storageKey = az storage account keys list -n $StorageAccountName -g $HistoryResourceGroup --query "[0].value" -o tsv
+$storageKey = Get-StorageAccountKey -StorageAccountName $StorageAccountName -ResourceGroupName $HistoryResourceGroup
 
 Write-Host "-> Listing summary.ndjson blobs"
 $blobs = @(az storage blob list `

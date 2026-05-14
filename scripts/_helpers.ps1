@@ -1,0 +1,93 @@
+# Shared helpers; dot-source via `. "$PSScriptRoot/_helpers.ps1"`.
+
+# Nearest-rank percentile (ceil-based, so p99 of N=100 is the 99th value, not max).
+function Get-Pct ($Sorted, [double]$Pct) {
+    if ($Sorted.Count -eq 0) { return 0 }
+    $i = [int][math]::Ceiling($Sorted.Count * $Pct / 100.0) - 1
+    if ($i -lt 0) { $i = 0 }
+    if ($i -gt $Sorted.Count - 1) { $i = $Sorted.Count - 1 }
+    return $Sorted[$i]
+}
+
+function Get-StorageAccountKey {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$StorageAccountName,
+        [Parameter(Mandatory)] [string]$ResourceGroupName
+    )
+    $key = az storage account keys list `
+        -n $StorageAccountName -g $ResourceGroupName `
+        --query "[0].value" -o tsv
+    if (-not $key) {
+        Write-PipelineError "Could not read storage key for '$StorageAccountName' in '$ResourceGroupName' (requires Microsoft.Storage/storageAccounts/listKeys/action)."
+    }
+    return $key
+}
+
+# ##vso[task.logissue type=error] surfaces in the AzDO run summary; plain Write-Error doesn't.
+function Write-PipelineError([string] $Message) {
+    Write-Host "##vso[task.logissue type=error]$Message"
+    exit 1
+}
+
+function Get-UmbracoMajor([string] $Version) {
+    $raw = ($Version -split '\.')[0]
+    $major = 0
+    if (-not [int]::TryParse($raw, [ref]$major)) {
+        Write-PipelineError "Cannot parse Umbraco major from '$Version' (expected X.Y.Z[-suffix])."
+    }
+    return $major
+}
+
+# Stream-parse one engine_results.csv (JMeter format). Memory-bounded: keeps
+# per-task sample lists, not the whole CSV. Returns:
+#   @{ ByLabel = @{ '<label>' = @{ Samples = List[int]; Errors = int } };
+#      AllElapsed = List[int]    # only when -BuildAggregate
+#      TotalErrors = int         # only when -BuildAggregate
+#   }
+function Parse-JmeterCsv {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$Path,
+        [switch]$BuildAggregate
+    )
+
+    $byLabel = @{}
+    $allElapsed = if ($BuildAggregate) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
+    $totalErrors = 0
+
+    $reader = [System.IO.StreamReader]::new($Path)
+    try {
+        $reader.ReadLine() | Out-Null  # discard header
+        while ($null -ne ($line = $reader.ReadLine())) {
+            $cols = $line.Split(',')
+            if ($cols.Length -lt 8) { continue }
+            $elapsed = 0
+            if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
+            $label   = $cols[2]
+            $success = $cols[7] -ieq 'true'
+
+            $bucket = $byLabel[$label]
+            if (-not $bucket) {
+                $bucket = @{
+                    Samples = (New-Object 'System.Collections.Generic.List[int]')
+                    Errors  = 0
+                }
+                $byLabel[$label] = $bucket
+            }
+            $bucket.Samples.Add($elapsed)
+            if (-not $success) { $bucket.Errors++ }
+
+            if ($BuildAggregate) {
+                $allElapsed.Add($elapsed)
+                if (-not $success) { $totalErrors++ }
+            }
+        }
+    } finally { $reader.Dispose() }
+
+    return @{
+        ByLabel     = $byLabel
+        AllElapsed  = $allElapsed
+        TotalErrors = $totalErrors
+    }
+}

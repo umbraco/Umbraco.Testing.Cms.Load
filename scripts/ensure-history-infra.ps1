@@ -31,6 +31,8 @@ $ErrorActionPreference = "Stop"
 # fails fast instead of cascading errors through subsequent steps. Requires pwsh 7.3+.
 $PSNativeCommandUseErrorActionPreference = $true
 
+. "$PSScriptRoot/_helpers.ps1"
+
 # Catch the placeholder default explicitly; the global check below could miss it if it's available.
 if ($StorageAccountName -eq 'loadtestchangeme') {
     Write-Error @"
@@ -111,7 +113,7 @@ else {
 
 # Container
 Write-Host "-> Container"
-$storageKey = az storage account keys list -n $StorageAccountName -g $HistoryResourceGroup --query "[0].value" -o tsv
+$storageKey = Get-StorageAccountKey -StorageAccountName $StorageAccountName -ResourceGroupName $HistoryResourceGroup
 $containerExists = az storage container exists `
     --name $ContainerName `
     --account-name $StorageAccountName `

@@ -56,6 +56,8 @@ $ErrorActionPreference = "Stop"
 # fails the publish step instead of silently exiting 0. Requires pwsh 7.3+.
 $PSNativeCommandUseErrorActionPreference = $true
 
+. "$PSScriptRoot/_helpers.ps1"
+
 if (-not (Test-Path $ResultsDir)) {
     Write-Warning "Results dir '$ResultsDir' not found - nothing to publish."
     exit 0
@@ -375,7 +377,7 @@ $summaryFile = Join-Path (Split-Path -Parent $ResultsDir) "summary.ndjson"
 $rows | ForEach-Object { $_ | ConvertTo-Json -Compress -Depth 5 } |
     Out-File -FilePath $summaryFile -Encoding utf8
 
-$storageKey = az storage account keys list -n $StorageAccountName -g $HistoryResourceGroup --query "[0].value" -o tsv
+$storageKey = Get-StorageAccountKey -StorageAccountName $StorageAccountName -ResourceGroupName $HistoryResourceGroup
 
 Write-Host ""
 Write-Host "Uploading to https://$StorageAccountName.blob.core.windows.net/$ContainerName/$blobPrefix/"

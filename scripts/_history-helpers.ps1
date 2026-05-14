@@ -3,8 +3,10 @@
 #   . "$PSScriptRoot/_history-helpers.ps1"
 # Then call Get-HistoryCells / Get-Median / Get-HistoryPrefix.
 #
-# The leading underscore signals "internal helper, not a top-level CLI" so it
-# stands apart in directory listings.
+# Generic helpers (storage key, percentile, error exit) live in _helpers.ps1 —
+# pulled in here so callers only have to dot-source one file.
+
+. "$PSScriptRoot/_helpers.ps1"
 
 function Get-HistoryPrefix {
     param (
@@ -42,18 +44,9 @@ function Get-HistoryCells {
         [string]$Sampler
     )
 
-    # Uses account-key auth: the caller needs Storage Account Contributor (or any
-    # role with Microsoft.Storage/storageAccounts/listKeys/action) on the SA so
-    # `az storage account keys list` works. The pipeline SP already has this;
-    # local dev users with Reader+ on the subscription typically do too.
-
     $prefix = Get-HistoryPrefix -Scenario $Scenario -Major $Major
 
-    $storageKey = az storage account keys list -n $StorageAccountName -g $HistoryResourceGroup --query "[0].value" -o tsv
-    if (-not $storageKey) {
-        Write-Error "Could not read storage key for '$StorageAccountName' in '$HistoryResourceGroup'."
-        exit 1
-    }
+    $storageKey = Get-StorageAccountKey -StorageAccountName $StorageAccountName -ResourceGroupName $HistoryResourceGroup
 
     Write-Host "Listing blobs under $prefix..."
     $listJson = az storage blob list `
