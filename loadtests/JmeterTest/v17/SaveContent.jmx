@@ -71,7 +71,7 @@
         <boolProp name="CacheManager.controlledByThread">false</boolProp>
       </CacheManager>
       <hashTree/>
-      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree">
         <boolProp name="ResultCollector.error_logging">false</boolProp>
         <objProp>
           <name>saveConfig</name>
@@ -106,7 +106,7 @@
         <stringProp name="filename"></stringProp>
       </ResultCollector>
       <hashTree/>
-      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report" enabled="true">
+      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report">
         <boolProp name="ResultCollector.error_logging">false</boolProp>
         <objProp>
           <name>saveConfig</name>
@@ -149,7 +149,7 @@
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
-        <stringProp name="ThreadGroup.on_sample_error">stopthread</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
           <intProp name="LoopController.loops">-1</intProp>
           <boolProp name="LoopController.continue_forever">false</boolProp>
@@ -919,19 +919,25 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def id = items[new Random().nextInt(items.size()-4)].id.toString()
+        def item = items[new Random().nextInt(items.size()-4)]
+        def id = item.id.toString()
+        def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
+        def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
         vars.put(&quot;root_content_id&quot;, id)
         // Set as target_document_id fallback – will be overridden if deeper levels exist
         vars.put(&quot;target_document_id&quot;, id)
-        log.info(&quot;root_content_id=&quot; + id)
+        vars.put(&quot;published_root&quot;, published)
+        log.info(&quot;root_content_id=&quot; + id + &quot; published_root=&quot; + published + &quot; state=&quot; + firstVariantState)
     } else {
         vars.put(&quot;root_content_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
         vars.put(&quot;target_document_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
+        vars.put(&quot;published_root&quot;, &quot;false&quot;)
         log.error(&quot;No items in root tree response&quot;)
     }
 } catch(Exception e) {
     vars.put(&quot;root_content_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
     vars.put(&quot;target_document_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
+    vars.put(&quot;published_root&quot;, &quot;false&quot;)
     log.error(&quot;Extract root_content_id failed: &quot; + e.getMessage())
 }
               </stringProp>
@@ -939,13 +945,13 @@ try {
             <hashTree/>
           </hashTree>
         </hashTree>
-        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="04. Open an existing content" enabled="true">
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="04. Open an existing content">
           <boolProp name="TransactionController.parent">true</boolProp>
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
         <hashTree>
-          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found" enabled="true">
-            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)}</stringProp>
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published">
+            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_root&quot;) == &quot;true&quot;)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
             <boolProp name="IfController.useExpression">true</boolProp>
           </IfController>
@@ -1015,25 +1021,31 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def id = items[new Random().nextInt(items.size())].id.toString()
+        def item = items[new Random().nextInt(items.size())]
+        def id = item.id.toString()
+        def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
+        def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
         vars.put(&quot;node_id_l1&quot;, id)
         // Update target_document_id – will be overridden if deeper levels exist
         vars.put(&quot;target_document_id&quot;, id)
-        log.info(&quot;node_id_l1=&quot; + id)
+        vars.put(&quot;published_l1&quot;, published)
+        log.info(&quot;node_id_l1=&quot; + id + &quot; published_l1=&quot; + published + &quot; state=&quot; + firstVariantState)
     } else {
         vars.put(&quot;node_id_l1&quot;, &quot;NODE_ID_L1_NOT_FOUND&quot;)
+        vars.put(&quot;published_l1&quot;, &quot;false&quot;)
         log.warn(&quot;L1: no children found under root_content_id=&quot; + vars.get(&quot;root_content_id&quot;))
     }
 } catch(Exception e) {
     vars.put(&quot;node_id_l1&quot;, &quot;NODE_ID_L1_NOT_FOUND&quot;)
+    vars.put(&quot;published_l1&quot;, &quot;false&quot;)
     log.error(&quot;Extract node_id_l1 failed: &quot; + e.getMessage())
 }
                 </stringProp>
               </JSR223PostProcessor>
               <hashTree/>
             </hashTree>
-            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l1 found" enabled="true">
-              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_ID_L1_NOT_FOUND&quot;)}</stringProp>
+            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l1 found and published">
+              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_ID_L1_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l1&quot;) == &quot;true&quot;)}</stringProp>
               <boolProp name="IfController.evaluateAll">false</boolProp>
               <boolProp name="IfController.useExpression">true</boolProp>
             </IfController>
@@ -1103,25 +1115,31 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def id = items[new Random().nextInt(items.size())].id.toString()
+        def item = items[new Random().nextInt(items.size())]
+        def id = item.id.toString()
+        def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
+        def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
         vars.put(&quot;node_id_l2&quot;, id)
         // Update target_document_id – will be overridden if deeper levels exist
         vars.put(&quot;target_document_id&quot;, id)
-        log.info(&quot;node_id_l2=&quot; + id)
+        vars.put(&quot;published_l2&quot;, published)
+        log.info(&quot;node_id_l2=&quot; + id + &quot; published_l2=&quot; + published + &quot; state=&quot; + firstVariantState)
     } else {
         vars.put(&quot;node_id_l2&quot;, &quot;NODE_ID_L2_NOT_FOUND&quot;)
+        vars.put(&quot;published_l2&quot;, &quot;false&quot;)
         log.warn(&quot;L2: no children - target_document_id stays at L1=&quot; + vars.get(&quot;target_document_id&quot;))
     }
 } catch(Exception e) {
     vars.put(&quot;node_id_l2&quot;, &quot;NODE_ID_L2_NOT_FOUND&quot;)
+    vars.put(&quot;published_l2&quot;, &quot;false&quot;)
     log.error(&quot;Extract node_id_l2 failed: &quot; + e.getMessage())
 }
                   </stringProp>
                 </JSR223PostProcessor>
                 <hashTree/>
               </hashTree>
-              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l2 found" enabled="true">
-                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_ID_L2_NOT_FOUND&quot;)}</stringProp>
+              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l2 found and published">
+                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_ID_L2_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l2&quot;) == &quot;true&quot;)}</stringProp>
                 <boolProp name="IfController.evaluateAll">false</boolProp>
                 <boolProp name="IfController.useExpression">true</boolProp>
               </IfController>
@@ -1191,14 +1209,23 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def id = items[new Random().nextInt(items.size())].id.toString()
+        def item = items[new Random().nextInt(items.size())]
+        def id = item.id.toString()
+        def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
+        def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
         // Update target_document_id to deepest found level
+        vars.put(&quot;node_id_l3&quot;, id)
         vars.put(&quot;target_document_id&quot;, id)
-        log.info(&quot;target_document_id=&quot; + id)
+        vars.put(&quot;published_l3&quot;, published)
+        log.info(&quot;target_document_id=&quot; + id + &quot; published_l3=&quot; + published + &quot; state=&quot; + firstVariantState)
     } else {
+        vars.put(&quot;node_id_l3&quot;, &quot;NODE_ID_L3_NOT_FOUND&quot;)
+        vars.put(&quot;published_l3&quot;, &quot;false&quot;)
         log.warn(&quot;No items at level 4 – target_document_id stays at level 3&quot;)
     }
 } catch(Exception e) {
+    vars.put(&quot;node_id_l3&quot;, &quot;NODE_ID_L3_NOT_FOUND&quot;)
+    vars.put(&quot;published_l3&quot;, &quot;false&quot;)
     log.error(&quot;Extract target_document_id failed: &quot; + e.getMessage())
 }
                     </stringProp>
@@ -1272,7 +1299,7 @@ import java.util.Date
 def responseBody = prev.getResponseDataAsString()
 try {
     def doc = new JsonSlurper().parseText(responseBody)
-    def newName = &apos;LoadTestContent_&apos; + new SimpleDateFormat(&quot;yyyyMMdd_HHmmss&quot;).format(new Date())
+    def newName = &apos;LoadTest_&apos; + new SimpleDateFormat(&quot;yyyyMMdd_HHmmss&quot;).format(new Date())
     def cultures = []
     if (doc.variants) {
         doc.variants.each { v -&gt;
