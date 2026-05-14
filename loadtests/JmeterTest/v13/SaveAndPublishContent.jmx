@@ -71,7 +71,7 @@
         <boolProp name="CacheManager.controlledByThread">false</boolProp>
       </CacheManager>
       <hashTree/>
-      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree">
         <boolProp name="ResultCollector.error_logging">false</boolProp>
         <objProp>
           <name>saveConfig</name>
@@ -149,7 +149,7 @@
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
-        <stringProp name="ThreadGroup.on_sample_error">stopthread</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
           <intProp name="LoopController.loops">-1</intProp>
           <boolProp name="LoopController.continue_forever">false</boolProp>
@@ -456,35 +456,6 @@
               </collectionProp>
             </HeaderManager>
             <hashTree/>
-            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Pick random root_content_id (Groovy)" enabled="true">
-              <stringProp name="scriptLanguage">groovy</stringProp>
-              <stringProp name="filename"></stringProp>
-              <stringProp name="parameters"></stringProp>
-              <boolProp name="resetInterpreter">false</boolProp>
-              <stringProp name="script">
-import groovy.json.JsonSlurper
-def raw = prev.getResponseDataAsString()
-// Strip Umbraco XSSI prefix &quot;)]}&apos;,\n&quot; if present
-def body = raw.startsWith(&quot;)]}&apos;,&quot;) ? raw.substring(raw.indexOf(&apos;\n&apos;) + 1) : raw
-try {
-    def json = new JsonSlurper().parseText(body)
-    def nodes = json.children?.findAll { it.id != &quot;-20&quot; }
-    if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def id = nodes[new Random().nextInt(nodes.size())].id.toString()
-        vars.put(&quot;root_content_id&quot;, id)
-        log.info(&quot;root_content_id=&quot; + id)
-    } else {
-        vars.put(&quot;root_content_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
-        log.warn(&quot;No children found under root&quot;)
-    }
-} catch(Exception e) {
-    vars.put(&quot;root_content_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
-    log.error(&quot;Extract root_content_id failed: &quot; + e.getMessage())
-}
-              </stringProp>
-              <stringProp name="cacheKey">false</stringProp>
-            </JSR223PostProcessor>
-            <hashTree/>
           </hashTree>
         </hashTree>
         <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="03. Open Content section" enabled="true">
@@ -582,18 +553,30 @@ try {
     def json = new JsonSlurper().parseText(body)
     def nodes = json.children?.findAll { it.id != &quot;-20&quot; }
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def id = nodes[new Random().nextInt(nodes.size()-4)].id.toString()
+        def node = nodes[new Random().nextInt(nodes.size()-4)]
+        def id = node.id.toString()
+        def cssClasses = node.cssClasses
+        def isNotPublished = false
+        if (cssClasses instanceof List) {
+            isNotPublished = cssClasses.any { it?.toString()?.contains(&quot;not-published&quot;) }
+        } else if (cssClasses != null) {
+            isNotPublished = cssClasses.toString().contains(&quot;not-published&quot;)
+        }
+        def published = isNotPublished ? &quot;false&quot; : &quot;true&quot;
         vars.put(&quot;root_content_id&quot;, id)
         vars.put(&quot;target_document_id&quot;, id)
-        log.info(&quot;root_content_id=&quot; + id)
+        vars.put(&quot;published_root&quot;, published)
+        log.info(&quot;root_content_id=&quot; + id + &quot; published_root=&quot; + published + &quot; cssClasses=&quot; + cssClasses)
     } else {
         vars.put(&quot;root_content_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
         vars.put(&quot;target_document_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
+        vars.put(&quot;published_root&quot;, &quot;false&quot;)
         log.warn(&quot;No children found under root&quot;)
     }
 } catch(Exception e) {
     vars.put(&quot;root_content_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
     vars.put(&quot;target_document_id&quot;, &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)
+    vars.put(&quot;published_root&quot;, &quot;false&quot;)
     log.error(&quot;Extract root_content_id failed: &quot; + e.getMessage())
 }
               </stringProp>
@@ -761,8 +744,8 @@ try {
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
         <hashTree>
-          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found" enabled="true">
-            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)}</stringProp>
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published">
+            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_root&quot;) == &quot;true&quot;)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
             <boolProp name="IfController.useExpression">true</boolProp>
           </IfController>
@@ -903,13 +886,17 @@ try {
     def parsed = body?.trim() ? new JsonSlurper().parseText(body) : null
     def nodes = asNodeList(parsed)
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def id = nodes[new Random().nextInt(nodes.size())].id.toString()
+        def node = nodes[new Random().nextInt(nodes.size())]
+        def id = node.id.toString()
+        def published = (node.published != null) ? node.published.toString() : &quot;false&quot;
         vars.put(&quot;node_id_l1&quot;, id)
         vars.put(&quot;target_document_id&quot;, id)
         vars.put(&quot;parent_target_document_id&quot;, vars.get(&quot;root_content_id&quot;))
-        log.info(&quot;node_id_l1=&quot; + id + &quot; (of &quot; + nodes.size() + &quot; candidates)&quot;)
+        vars.put(&quot;published_l1&quot;, published)
+        log.info(&quot;node_id_l1=&quot; + id + &quot; published_l1=&quot; + published + &quot; (of &quot; + nodes.size() + &quot; candidates)&quot;)
     } else {
         vars.put(&quot;node_id_l1&quot;, &quot;NODE_L1_NOT_FOUND&quot;)
+        vars.put(&quot;published_l1&quot;, &quot;false&quot;)
         if (!vars.get(&quot;target_document_id&quot;)) {
             vars.put(&quot;target_document_id&quot;, vars.get(&quot;root_content_id&quot;) ?: &quot;&quot;)
         }
@@ -918,6 +905,7 @@ try {
     }
 } catch(Exception e) {
     vars.put(&quot;node_id_l1&quot;, &quot;NODE_L1_NOT_FOUND&quot;)
+    vars.put(&quot;published_l1&quot;, &quot;false&quot;)
     if (!vars.get(&quot;target_document_id&quot;)) {
         vars.put(&quot;target_document_id&quot;, vars.get(&quot;root_content_id&quot;) ?: &quot;&quot;)
     }
@@ -929,8 +917,8 @@ try {
               </JSR223PostProcessor>
               <hashTree/>
             </hashTree>
-            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l1 found" enabled="true">
-              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_L1_NOT_FOUND&quot;)}</stringProp>
+            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l1 found and published">
+              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_L1_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l1&quot;) == &quot;true&quot;)}</stringProp>
               <boolProp name="IfController.evaluateAll">false</boolProp>
               <boolProp name="IfController.useExpression">true</boolProp>
             </IfController>
@@ -1071,17 +1059,22 @@ try {
     def parsed = body?.trim() ? new JsonSlurper().parseText(body) : null
     def nodes = asNodeList(parsed)
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def id = nodes[new Random().nextInt(nodes.size())].id.toString()
+        def node = nodes[new Random().nextInt(nodes.size())]
+        def id = node.id.toString()
+        def published = (node.published != null) ? node.published.toString() : &quot;false&quot;
         vars.put(&quot;node_id_l2&quot;, id)
         vars.put(&quot;target_document_id&quot;, id)
         vars.put(&quot;parent_target_document_id&quot;, vars.get(&quot;node_id_l1&quot;))
-        log.info(&quot;node_id_l2=&quot; + id + &quot; (of &quot; + nodes.size() + &quot; candidates)&quot;)
+        vars.put(&quot;published_l2&quot;, published)
+        log.info(&quot;node_id_l2=&quot; + id + &quot; published_l2=&quot; + published + &quot; (of &quot; + nodes.size() + &quot; candidates)&quot;)
     } else {
         vars.put(&quot;node_id_l2&quot;, &quot;NODE_L2_NOT_FOUND&quot;)
+        vars.put(&quot;published_l2&quot;, &quot;false&quot;)
         log.warn(&quot;L2: no items - target_document_id stays at L1=&quot; + vars.get(&quot;target_document_id&quot;))
     }
 } catch(Exception e) {
     vars.put(&quot;node_id_l2&quot;, &quot;NODE_L2_NOT_FOUND&quot;)
+    vars.put(&quot;published_l2&quot;, &quot;false&quot;)
     log.error(&quot;Extract node_id_l2 failed: &quot; + e.getMessage(), e)
 }
 </stringProp>
@@ -1089,10 +1082,10 @@ try {
                 </JSR223PostProcessor>
                 <hashTree/>
               </hashTree>
-              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l2 found" enabled="true">
-                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_L2_NOT_FOUND&quot;)}</stringProp>
+              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l2 found and published">
+                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_L2_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l2&quot;) == &quot;true&quot;)}</stringProp>
                 <boolProp name="IfController.evaluateAll">false</boolProp>
-                <boolProp name="IfController.useExpression">false</boolProp>
+                <boolProp name="IfController.useExpression">true</boolProp>
               </IfController>
               <hashTree>
                 <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/backoffice/umbracoapi/content/GetChildren (L3)" enabled="true">
@@ -1231,14 +1224,22 @@ try {
     def parsed = body?.trim() ? new JsonSlurper().parseText(body) : null
     def nodes = asNodeList(parsed)
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def id = nodes[new Random().nextInt(nodes.size())].id.toString()
+        def node = nodes[new Random().nextInt(nodes.size())]
+        def id = node.id.toString()
+        def published = (node.published != null) ? node.published.toString() : &quot;false&quot;
+        vars.put(&quot;node_id_l3&quot;, id)
         vars.put(&quot;target_document_id&quot;, id)
         vars.put(&quot;parent_target_document_id&quot;, vars.get(&quot;node_id_l2&quot;))
-        log.info(&quot;target_document_id (L3)=&quot; + id + &quot; (of &quot; + nodes.size() + &quot; candidates)&quot;)
+        vars.put(&quot;published_l3&quot;, published)
+        log.info(&quot;target_document_id (L3)=&quot; + id + &quot; published_l3=&quot; + published + &quot; (of &quot; + nodes.size() + &quot; candidates)&quot;)
     } else {
+        vars.put(&quot;node_id_l3&quot;, &quot;NODE_L3_NOT_FOUND&quot;)
+        vars.put(&quot;published_l3&quot;, &quot;false&quot;)
         log.warn(&quot;L3: no items - target_document_id stays at L2=&quot; + vars.get(&quot;target_document_id&quot;))
     }
 } catch(Exception e) {
+    vars.put(&quot;node_id_l3&quot;, &quot;NODE_L3_NOT_FOUND&quot;)
+    vars.put(&quot;published_l3&quot;, &quot;false&quot;)
     log.error(&quot;L3 failed: &quot; + e.getMessage(), e)
 }
 </stringProp>
@@ -1249,7 +1250,7 @@ try {
               </hashTree>
             </hashTree>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/backoffice/umbracoapi/content/GetById" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/backoffice/umbracoapi/content/GetById">
             <stringProp name="HTTPSampler.path">/umbraco/backoffice/umbracoapi/content/GetById</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
@@ -1328,9 +1329,7 @@ try {
             } ?: []
         } ?: []
 
-        def variantName = (idx == 0)
-            ? (variant.name ?: &quot;Content&quot;) + &quot;_&quot; + ts
-            : variant.name
+        def variantName = (idx == 0) ? (&quot;LoadTest_&quot; + ts) : variant.name
 
         [
             name       : variantName,
