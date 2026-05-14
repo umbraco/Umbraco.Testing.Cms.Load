@@ -201,6 +201,16 @@ if ($env:ARM_OIDC_TOKEN) {
     az login --service-principal --username $env:ARM_CLIENT_ID --password $env:ARM_CLIENT_SECRET --tenant $env:ARM_TENANT_ID | Out-Null
 }
 
+# Pin the subscription explicitly — `az login` defaults to whichever sub the SP
+# happens to land on, which for multi-sub SPs is not necessarily the one Terraform
+# just provisioned the App Service in. ARM_SUBSCRIPTION_ID is set by the pipeline
+# and inherits into this local-exec process.
+if ($env:ARM_SUBSCRIPTION_ID) {
+    az account set --subscription $env:ARM_SUBSCRIPTION_ID
+} else {
+    Write-Warning "ARM_SUBSCRIPTION_ID not set; deploy will target the SP's default subscription."
+}
+
 Write-Host "Deploying to App Service: $AppServiceName..."
 az webapp deployment source config-zip --src $cachedZip -n $AppServiceName -g $ResourceGroupName
 

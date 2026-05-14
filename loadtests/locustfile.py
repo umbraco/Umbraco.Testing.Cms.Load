@@ -10,8 +10,10 @@ pick a random URL from their bucket. Weights skew toward deep reads
 hits are absorbed by output cache and don't differentiate tiers.
 
 If the inventory endpoint is unreachable (seeder didn't run, scenario
-overlay disabled it), every task falls back to the homepage so the run
-still produces stats — just without the differentiating signal.
+overlay disabled it), bucket-dependent tasks raise (visible as 100%-error
+samplers in the run). Loud failure beats silent homepage-only fallback —
+a misconfigured seeder is something you want to see, not something that
+quietly produces "successful" runs with the wrong traffic shape.
 
 The locustfile also probes the Umbraco Content Delivery API at start.
 If it responds (i.e. the scenario overlay enabled it — see DeliveryApi
@@ -56,11 +58,13 @@ def fetch_inventory(environment, **_):
         response.raise_for_status()
         data = response.json()
     except (requests.RequestException, ValueError) as ex:
-        logger.warning(f"Inventory fetch failed ({ex}); falling back to homepage-only")
+        # Buckets stay empty; _hit then raises per-call so the run shows up
+        # as 100%-error on the affected tasks rather than silently homepage-only.
+        logger.error(f"Inventory fetch failed ({ex}); bucket-dependent tasks will fail")
         return
 
     if not isinstance(data, dict):
-        logger.warning(f"Inventory endpoint returned non-object JSON ({type(data).__name__}); falling back to homepage-only")
+        logger.error(f"Inventory endpoint returned non-object JSON ({type(data).__name__}); bucket-dependent tasks will fail")
         return
 
     # Defensive filter: each sample should be a dict with 'url' and 'docType' but
@@ -88,11 +92,12 @@ class CmsBrowsingUser(FastHttpUser):
     wait_time = between(1, 3)
 
     def _hit(self, bucket: str, name: str) -> None:
-        """Pick a random URL from a pre-built bucket; fall back to homepage if empty."""
+        """Pick a random URL from a pre-built bucket. Raises on empty bucket so a failed
+        inventory probe / unseeded scenario surfaces loudly instead of silently shifting
+        all traffic to the homepage."""
         urls = self.environment.inventory.get(bucket)
         if not urls:
-            self.client.get("/", name="Homepage (fallback)")
-            return
+            raise RuntimeError(f"Bucket '{bucket}' is empty — inventory probe failed or seeder didn't seed it")
         self.client.get(random.choice(urls), name=name)
 
     @task(5)
@@ -174,37 +179,62 @@ def _delivery_item(user):
 
 @events.test_start.add_listener
 def configure_delivery_api(environment, **_):
-    """Probe the Delivery API; if reachable, splice its tasks into the workload."""
+    """Probe the Delivery API; if reachable, splice its tasks into the workload.
+
+    Pages through the full set (in 100-item batches up to a safety cap) so
+    _delivery_item picks from every seeded item, not a 50-item slice that would
+    sit hot in cache and make the test measure cache lookup rather than query
+    work. The safety cap is in place so a future seeder bug yielding millions
+    of items doesn't stall test_start.
+    """
+    PAGE_SIZE = 100
+    MAX_ITEMS = 5000   # safety cap; current Massive preset is ~10k docs
+
     environment.delivery_inventory = {"ids": []}
     if not environment.host:
         return
 
-    probe_url = environment.host.rstrip("/") + DELIVERY_API_LIST_PATH + "?take=50"
-    try:
-        response = requests.get(probe_url, timeout=DELIVERY_API_PROBE_TIMEOUT_SEC)
-    except requests.RequestException as ex:
-        logger.info(f"Delivery API probe failed ({ex}); Delivery API tasks disabled")
-        return
+    base = environment.host.rstrip("/") + DELIVERY_API_LIST_PATH
+    ids = []
+    skip = 0
+    while len(ids) < MAX_ITEMS:
+        try:
+            response = requests.get(
+                f"{base}?skip={skip}&take={PAGE_SIZE}",
+                timeout=DELIVERY_API_PROBE_TIMEOUT_SEC,
+            )
+        except requests.RequestException as ex:
+            logger.info(f"Delivery API probe failed at skip={skip} ({ex}); Delivery API tasks disabled")
+            break
 
-    if response.status_code != 200:
-        logger.info(
-            f"Delivery API probe returned {response.status_code}; "
-            f"Delivery API tasks disabled (expected for non-DeliveryApi scenarios)"
-        )
-        return
+        if response.status_code != 200:
+            if skip == 0:
+                logger.info(
+                    f"Delivery API probe returned {response.status_code}; "
+                    f"Delivery API tasks disabled (expected for non-DeliveryApi scenarios)"
+                )
+            break
 
-    try:
-        body = response.json()
-    except ValueError:
-        logger.warning("Delivery API probe returned 200 but body was not JSON")
-        return
+        try:
+            body = response.json()
+        except ValueError:
+            logger.warning(f"Delivery API probe at skip={skip} returned 200 but body was not JSON")
+            break
 
-    if not isinstance(body, dict):
-        logger.warning(f"Delivery API probe returned non-object JSON ({type(body).__name__}); tasks disabled")
-        return
+        if not isinstance(body, dict):
+            logger.warning(f"Delivery API probe at skip={skip} returned non-object JSON ({type(body).__name__})")
+            break
 
-    items = body.get("items", [])
-    ids = [item["id"] for item in items if isinstance(item, dict) and "id" in item]
+        page = [item["id"] for item in body.get("items", []) if isinstance(item, dict) and "id" in item]
+        if not page:
+            break  # ran past the end
+        ids.extend(page)
+        if len(page) < PAGE_SIZE:
+            break  # last page
+        skip += PAGE_SIZE
+
+    if not ids:
+        return
     environment.delivery_inventory = {"ids": ids}
 
     # Mutating CmsBrowsingUser.tasks at test_start is safe: Locust resolves the

@@ -418,11 +418,15 @@ stages:
               scriptLocation: inlineScript
               # Under WIF, $idToken is set and $servicePrincipalKey is empty.
               # Under client-secret auth, the opposite. issecret=true masks all.
+              # Subscription ID isn't surfaced by addSpnToEnvironment, so read it
+              # explicitly — install-umbraco-cms-on-appservice.ps1 pins `az account`
+              # to it after `az login` to avoid multi-sub default-routing surprises.
               inlineScript: |
                 echo "##vso[task.setvariable variable=ARM_CLIENT_ID;issecret=true]$servicePrincipalId"
                 echo "##vso[task.setvariable variable=ARM_TENANT_ID;issecret=true]$tenantId"
                 echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;issecret=true]$servicePrincipalKey"
                 echo "##vso[task.setvariable variable=ARM_OIDC_TOKEN;issecret=true]$idToken"
+                echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
               addSpnToEnvironment: true
 
           - task: TerraformTaskV4@4
@@ -431,10 +435,11 @@ stages:
             # inheritance. Kept out of terraform variables (which would suppress local-exec
             # output) and out of the local-exec `environment` block (same reason).
             env:
-              ARM_CLIENT_ID:     $(ARM_CLIENT_ID)
-              ARM_CLIENT_SECRET: $(ARM_CLIENT_SECRET)
-              ARM_TENANT_ID:     $(ARM_TENANT_ID)
-              ARM_OIDC_TOKEN:    $(ARM_OIDC_TOKEN)
+              ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID:       $(ARM_TENANT_ID)
+              ARM_OIDC_TOKEN:      $(ARM_OIDC_TOKEN)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
             inputs:
               provider: 'azurerm'
               command: 'apply'
@@ -661,11 +666,12 @@ stages:
           - runLoadTests
           - testSummary
           - regressionCheck
-        # apply in dependsOn ensures the cleanup chain still fires on apply-failure
-        # (apply Failed is a definite state; the others would be Skipped). regressionCheck
-        # added to the chain so cleanup waits for the gate to finish; cleanup uses
-        # succeededOrFailed() so a regression-fail still triggers RG teardown.
-        condition: succeededOrFailed()
+        # `always()` covers every outcome including pipeline cancel — `succeededOrFailed()`
+        # would skip cleanup when the user cancels mid-run, orphaning the ephemeral RG
+        # until someone manually deletes it. apply in dependsOn ensures the chain fires
+        # on apply-failure (apply Failed is a definite state; the others would be Skipped).
+        # regressionCheck in dependsOn so cleanup waits for the gate to finish.
+        condition: always()
         displayName: Check resource group for cleanup
         steps:
           - task: AzureCLI@2

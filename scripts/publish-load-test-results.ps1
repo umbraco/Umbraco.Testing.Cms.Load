@@ -216,7 +216,7 @@ if ($engineFiles.Count -gt 0) {
                 $elapsed = 0
                 if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
                 $label   = $cols[2]
-                $success = $cols[7] -eq 'TRUE' -or $cols[7] -eq 'true'
+                $success = $cols[7] -ieq 'true'
 
                 $bucket = $byLabel[$label]
                 if (-not $bucket) {
@@ -357,7 +357,10 @@ else {
 
 # Always emit at least the metadata so the run is searchable. Downstream queries
 # can filter on parse_status to distinguish real metric rows from placeholder rows.
+# If a parser branch ran but produced zero rows (CSVs present but empty / malformed),
+# downgrade parse_status so the fallback row doesn't claim "ok" with no data.
 if ($rows.Count -eq 0) {
+    if ($metadata.parse_status -eq "ok") { $metadata.parse_status = "ok_no_samples" }
     $rows = @([pscustomobject]$metadata)
 }
 

@@ -131,7 +131,8 @@ function Get-RunStats {
             $elapsed = 0
             if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
             $label   = $cols[2]
-            $success = $cols[7] -eq 'TRUE'
+            # JMeter format from ALT often writes lowercase 'true'; older formats use 'TRUE'.
+            $success = $cols[7] -ieq 'true'
 
             $totalRows++
             if (-not $success) { $totalErrors++ }

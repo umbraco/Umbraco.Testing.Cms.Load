@@ -91,9 +91,9 @@ function Read-ScenarioYaml {
     return $result
 }
 
-# Levenshtein distance; case-sensitive (chars compared by ordinal).
-# Uses a jagged array - the int[,] subscript syntax is parser-flaky across
-# PowerShell versions, jagged is portable.
+# Levenshtein distance; case-insensitive via PowerShell's default -eq comparison
+# (we want typos like 'default' → 'Default' to match). Jagged array because
+# the int[,] subscript syntax is parser-flaky across PowerShell versions.
 function Get-LevenshteinDistance {
     param([string] $a, [string] $b)
     if (-not $a) { return $b.Length }
