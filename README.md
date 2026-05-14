@@ -15,7 +15,9 @@ Thresholds (fail-the-pipeline gates) are intentionally **deferred** until baseli
 
 This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs Locust load tests via Azure Load Testing service.
 
-**Supported Umbraco versions: v17 and newer.** Older majors (v13–v16) are rejected at validation time — the seeder package doesn't yet have a release train for them.
+**Supported Umbraco versions: v13–v18.** Each major maps to a specific .NET runtime (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map) below). A run for a major that doesn't yet have a `Umbraco.Cms.TestDataSeeder` package build fails fast at install time with a clear message — update the per-major map in `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` when a new seeder version ships.
+
+The `DeliveryApi` scenario is **v17+ only** — its `Program.cs` overlay uses v17's builder shape. The validator rejects the `DeliveryApi` + < v17 combination before provisioning. Use the `Default` scenario for older majors.
 
 Locust tests execute on Azure Load Testing's managed infrastructure (dedicated Standard_D4d_v4 VMs), not on the pipeline agent. This ensures consistent, reliable performance measurements.
 
@@ -67,7 +69,6 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 
 ```
 ├── azure-pipeline.yml           # Main load test pipeline (manual queue)
-├── pr-validation.yml            # PR-time static checks (terraform/PS/Python/YAML lint, no Azure)
 ├── README.md
 │
 ├── dashboards/
@@ -134,7 +135,7 @@ The queue UI splits into three concerns: **what to test**, **which tiers to test
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator enforces v17+ and a recognisable `X.Y.Z[-suffix]` shape; the major segment maps to the .NET runtime automatically. | 17.0.0 | free text |
+| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator enforces v13+ and a recognisable `X.Y.Z[-suffix]` shape; the major segment maps to the .NET runtime automatically (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map)). | 17.0.0 | free text |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
 
 **Which tiers:**
@@ -157,7 +158,22 @@ At least one tier must be selected — the validator fails the run if all three 
 
 The profile only encodes load intensity — the same profile can drive any combination of tiers. Tuning a profile is a single-place edit to the inline `switch` in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step.
 
-**.NET runtime is derived, not selected.** The prep step maps the Umbraco major version → required .NET runtime (currently 17+→.NET 10; older majors are rejected by the validator and unreachable here). Extend the mapping when a future Umbraco version bumps the target framework.
+#### Umbraco-major → .NET-runtime map
+
+**.NET runtime is derived, not selected.** The prep step maps the Umbraco major version → required .NET runtime. The mapping is in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step:
+
+| Umbraco major | .NET runtime |
+|---|---|
+| 13 | .NET 8 |
+| 14 | .NET 8 |
+| 15 | .NET 9 |
+| 16 | .NET 9 |
+| 17 | .NET 10 |
+| 18 | .NET 10 |
+
+Majors below 13 are rejected by the validator. Majors above 18 fail the prep step with "unsupported Umbraco major" until the switch is extended — bump the map (and the seeder-package map in `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1`) when a future Umbraco release ships.
+
+A run for a major whose `Umbraco.Cms.TestDataSeeder` slot is still `$null` in the seeder map fails fast at install time. v17 currently ships with `17.0.0-beta.2`; v13–v16 and v18 are awaiting seeder builds — update the per-major map when each becomes available.
 
 **For multi-version comparisons in a single queue** (e.g. 17.0.0 vs 17.0.1 on the same tier): queue the pipeline twice — once per version. The ALT Compare runs view aggregates across pipeline runs anyway (testId is per-scenario, not per-pipeline-run), so two queues end up in the same comparison view.
 
@@ -770,6 +786,16 @@ These need Azure Monitor diagnostic settings on the App Service or the App Servi
 ### Thresholds
 
 `check-regression.ps1` is wired into the pipeline as a post-load-test job (`regressionCheck`). It runs after every load-test run and either passes (no regressions or insufficient baseline) or fails the pipeline (real regression detected). The mechanism is **always on** but starts permissive: each (scenario × version × tier × sampler) cell needs ≥ 3 prior runs before it gates — until then, the cell is reported as "insufficient baseline" and contributes no fails. As baselines accrue per the "Establishing a baseline" protocol, the gate activates per-cell automatically. The post-run `regression-report` build artifact captures the full per-cell breakdown.
+
+## Pitfalls
+
+Things that have bitten contributors and aren't obvious from reading the code:
+
+- **Approved cleanup keeps the RG.** The validation step is a deliberate hold: "Reject" runs the cleanup, "Approve" keeps the ephemeral RG (and all its premium-SKU billing) until you delete it manually. The button is labelled positively because you typically want to keep resources for inspection — but the cost trade-off is the opposite of what the label implies. Default `validationTimeoutMinutes=60`; bump cautiously.
+- **The unattended user is hardcoded.** `install-umbraco-cms-on-appservice.ps1` seeds the same backoffice email/password on every site so the seeder can authenticate over HTTP. These credentials are not secret — anyone with the App Service URL can log in to the backoffice as that user. Acceptable because the ephemeral RG is short-lived and behind no public DNS, but **never repoint this infra at a production-shaped domain or extend its lifetime indefinitely**.
+- **Scenario overlays can clobber unattended setup.** `appsettings.json` overlays merge on top of the base config and overlay keys win. A scenario that sets `Umbraco__CMS__Unattended__*` or `Umbraco.Cms.TestDataSeeder__Options__Preset` will silently break install or override the run-level preset. Keep overlays focused on the feature they enable.
+- **Massive preset is a 30–60 minute hold.** A `Massive` seed against the default `S1`/`S2` SQL SKU will routinely timeout, lock the DB log, or saturate DTU for the entire run window — and then the *load test starts*. Bump `sqlSkuOverride` to `S3` (or higher in `tiers.json`) and lift `sql_max_size_gb` accordingly before queueing Massive.
+- **`DeliveryApi` is v17-only.** Its `Program.cs` overlay calls into v17's builder shape and won't compile against older majors. The validator rejects this combination, but the failure is at validation time, not at queue time — expect to see it in the pipeline log, not the queue UI.
 
 ## Troubleshooting
 
