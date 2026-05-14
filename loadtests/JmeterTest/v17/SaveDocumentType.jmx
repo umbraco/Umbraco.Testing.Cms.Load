@@ -1705,8 +1705,8 @@ import groovy.json.JsonOutput
 
 def body = prev.getResponseDataAsString()
 def json = new JsonSlurper().parseText(body)
-// new name = old name + timestamp
-json.name = json.name + &quot; &quot; + System.currentTimeMillis()
+// new name = 'LoadTest_' + timestamp
+json.name = &quot;LoadTest_&quot; + System.currentTimeMillis()
 vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
             </JSR223PostProcessor>
             <hashTree/>

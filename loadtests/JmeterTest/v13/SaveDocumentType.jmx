@@ -1735,7 +1735,7 @@ try {
 
     // ---- bump name -----------------------------------------------------
     def ts = new SimpleDateFormat(&apos;yyyyMMdd_HHmmss&apos;).format(new Date())
-    def newName = (src.name ?: &apos;&apos;).toString() + &apos; &apos; + ts
+    def newName = &apos;LoadTest_&apos; + ts
 
     // ---- build the slim body in roughly the same field order the UI uses
     def body = [
