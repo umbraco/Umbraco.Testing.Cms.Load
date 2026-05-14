@@ -36,10 +36,25 @@ if (-not $env:ARM_CLIENT_SECRET -and -not $env:ARM_OIDC_TOKEN) {
     exit 1
 }
 
-# Pinned to a specific prerelease for now — bump when a new prerelease/stable
-# ships. Once 17.x has a stable release, switch to floating "17.*" and drop --prerelease.
-# Baked into the cache key below so a version bump auto-invalidates stale builds.
-$seederPackageVersion = "17.0.0-beta.2"
+# Umbraco.Cms.TestDataSeeder package version per Umbraco major. Update an entry
+# here when a new seeder build ships; null means the seeder isn't available yet
+# for that major and the run will fail-fast below with a clear message.
+# The version is baked into the build cache key, so bumps auto-invalidate stale builds.
+$seederPackageVersions = @{
+    13 = $null              # TBD: v13 seeder build pending
+    14 = $null              # TBD: v14 seeder build pending
+    15 = $null              # TBD: v15 seeder build pending
+    16 = $null              # TBD: v16 seeder build pending
+    17 = "17.0.0-beta.2"
+    18 = $null              # TBD: v18 seeder build pending
+}
+
+$umbracoMajor = [int](($UmbracoVersion -split '\.')[0])
+$seederPackageVersion = $seederPackageVersions[$umbracoMajor]
+if (-not $seederPackageVersion) {
+    Write-Error "No Umbraco.Cms.TestDataSeeder version mapped for Umbraco $UmbracoVersion (major $umbracoMajor). Add an entry to `$seederPackageVersions in this script when the package ships for that major."
+    exit 1
+}
 
 # Captured before Set-Location so finally{} can restore cwd on failure.
 $terraformCwd = (Get-Location).Path

@@ -186,14 +186,25 @@ foreach ($case in $cases) {
         }
     }
 
-    # Umbraco.Cms.TestDataSeeder targets v17+ only.
+    # Supported range is v13–v18. The .NET runtime map (in azure-pipeline.yml's
+    # resolver) and the seeder-package-version map (in install-umbraco-cms-on-appservice.ps1)
+    # must know each major; resolver catches new majors with an explicit error.
+    # Here we just enforce the lower bound + parse.
     $umbracoMajorRaw = ([string]$case.umbraco).Split('.')[0]
     $umbracoMajor    = 0
     if (-not [int]::TryParse($umbracoMajorRaw, [ref]$umbracoMajor)) {
         Fail "case ${caseIndex}: cannot parse umbraco version '$($case.umbraco)' (expected X.Y.Z)"
     }
-    if ($umbracoMajor -lt 17) {
-        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is unsupported (this pipeline targets v17+)"
+    if ($umbracoMajor -lt 13) {
+        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is unsupported (this pipeline targets v13+)"
+    }
+
+    # Scenarios with v17-only code overlays (e.g. DeliveryApi's Program.cs uses
+    # v17's builder shape). Reject the combination here so the run fails fast
+    # instead of breaking at dotnet build inside the install script.
+    $v17OnlyScenarios = @('DeliveryApi')
+    if ($v17OnlyScenarios -contains $case.scenario -and $umbracoMajor -lt 17) {
+        Fail "case ${caseIndex}: scenario '$($case.scenario)' requires Umbraco 17+ (got '$($case.umbraco)'). Use the Default scenario for older majors."
     }
 
     $hasTiers = $case.PSObject.Properties.Name -contains 'tiers'

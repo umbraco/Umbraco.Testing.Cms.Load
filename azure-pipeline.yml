@@ -183,11 +183,12 @@ stages:
                     }
                 }
 
-                # Derive the .NET runtime from the Umbraco major version. Keeps the queue
-                # UX simpler (you don't pick .NET separately when it's a function of the
-                # CMS version anyway). The validator already rejects v17- runs, so only
-                # v17+ branches are reachable here. Extend the table when a future Umbraco
-                # version bumps the target framework.
+                # Each Umbraco major mapped explicitly (not by range) so a future major
+                # without a known TFM hits default and errors, rather than silently
+                # inheriting an older mapping. Verify against Umbraco release notes
+                # before adding a new branch.
+                # dotnetVersion = App Service framework_version ('vX.0');
+                # sdkVersion    = SDK feed selector for UseDotNet@2 ('X.x').
                 $umbracoMajorRaw = ($env:UMBRACO_VERSION -split '\.')[0]
                 $umbracoMajor = 0
                 if (-not [int]::TryParse($umbracoMajorRaw, [ref]$umbracoMajor)) {
@@ -195,12 +196,19 @@ stages:
                     exit 1
                 }
                 $dotnetVersion = switch ($umbracoMajor) {
-                    { $_ -ge 17 } { 'v10.0' }
-                    default {
-                        Write-Error "Umbraco $env:UMBRACO_VERSION is unsupported (this pipeline targets v17+)."
-                        exit 1
-                    }
+                    13      { 'v8.0' }
+                    14      { 'v8.0' }
+                    15      { 'v9.0' }
+                    16      { 'v9.0' }
+                    17      { 'v10.0' }
+                    18      { 'v10.0' }   # verify against v18 release notes
+                    default { $null }
                 }
+                if (-not $dotnetVersion) {
+                    Write-Error "Umbraco $env:UMBRACO_VERSION is unsupported (this pipeline targets v13–v18). Extend the major→runtime map when a new major is supported."
+                    exit 1
+                }
+                $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 
                 # 'Auto' is the queue-time signal for "use the tier's built-in SQL pairing".
                 # Terraform expects an empty string for that case.
@@ -221,6 +229,7 @@ stages:
 
                 # Surface profile-derived config to downstream stages via output vars.
                 Write-Host "##vso[task.setvariable variable=resolvedDotnetVersion;isOutput=true]$dotnetVersion"
+                Write-Host "##vso[task.setvariable variable=resolvedSdkVersion;isOutput=true]$sdkVersion"
                 Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$preset"
                 Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
                 Write-Host "##vso[task.setvariable variable=resolvedSqlSkuOverride;isOutput=true]$sqlSkuOverride"
@@ -320,6 +329,7 @@ stages:
       resolvedSeederPreset:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedEngineInstances:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
       resolvedSqlSkuOverride:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSqlSkuOverride'] ]
+      resolvedSdkVersion:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkVersion'] ]
       monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
       monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
       monitoringStreamName:     $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
@@ -395,6 +405,12 @@ stages:
             displayName: Install Terraform
             inputs:
               terraformVersion: '1.13.3'
+
+          - task: UseDotNet@2
+            displayName: 'Install .NET SDK $(resolvedSdkVersion)'
+            inputs:
+              packageType: sdk
+              version: '$(resolvedSdkVersion)'
 
           - task: PowerShell@2
             displayName: Terraform Init
