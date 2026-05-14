@@ -110,40 +110,10 @@ if ($isHistoryMode) {
 function Get-RunStats {
     param ([string]$Path)
 
-    # Stream-parse to keep memory bounded on Massive runs.
-    $byLabel = @{}
-    $allElapsed = New-Object 'System.Collections.Generic.List[int]'
-    $totalRows = 0
-    $totalErrors = 0
-
-    $reader = [System.IO.StreamReader]::new($Path)
-    try {
-        $reader.ReadLine() | Out-Null  # discard header
-        while ($null -ne ($line = $reader.ReadLine())) {
-            $cols = $line.Split(',')
-            if ($cols.Length -lt 8) { continue }
-            $elapsed = 0
-            if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
-            $label   = $cols[2]
-            # JMeter format from ALT often writes lowercase 'true'; older formats use 'TRUE'.
-            $success = $cols[7] -ieq 'true'
-
-            $totalRows++
-            if (-not $success) { $totalErrors++ }
-            $allElapsed.Add($elapsed)
-
-            $bucket = $byLabel[$label]
-            if (-not $bucket) {
-                $bucket = @{ Samples = (New-Object 'System.Collections.Generic.List[int]'); Errors = 0 }
-                $byLabel[$label] = $bucket
-            }
-            $bucket.Samples.Add($elapsed)
-            if (-not $success) { $bucket.Errors++ }
-        }
-    }
-    finally { $reader.Dispose() }
-
-    # Get-Pct is provided by _helpers.ps1 (dot-sourced near the top).
+    # Parser is shared with publish-load-test-results.ps1 — see Parse-JmeterCsv
+    # in _helpers.ps1. -BuildAggregate keeps the per-CSV all-samples list so we
+    # can compute a true aggregate percentile (which history mode can't).
+    $parsed = Parse-JmeterCsv -Path $Path -BuildAggregate
 
     function Get-Stats ($samples, $errors) {
         $sorted = ($samples | Sort-Object)
@@ -160,12 +130,12 @@ function Get-RunStats {
     }
 
     $perLabel = @{}
-    foreach ($kv in $byLabel.GetEnumerator()) {
+    foreach ($kv in $parsed.ByLabel.GetEnumerator()) {
         $perLabel[$kv.Key] = Get-Stats $kv.Value.Samples $kv.Value.Errors
     }
 
     return [PSCustomObject]@{
-        Aggregate = Get-Stats $allElapsed $totalErrors
+        Aggregate = Get-Stats $parsed.AllElapsed $parsed.TotalErrors
         ByLabel   = $perLabel
         Runs      = @()  # CSV mode doesn't track run identifiers
     }

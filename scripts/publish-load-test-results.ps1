@@ -147,8 +147,10 @@ $appMetrics = Get-MetricSummary `
 foreach ($k in $appMetrics.Keys) { $metadata["app_$k"] = $appMetrics[$k] }
 
 # ALT emits engine{N}_results.csv (JMeter format) — raw per-request data, one
-# row per HTTP call. Multi-engine runs produce one CSV per engine; we aggregate
-# across all of them. Get-Pct is provided by _helpers.ps1.
+# row per HTTP call. Header: timeStamp, elapsed, label, responseCode,
+# responseMessage, threadName, dataType, success, failureMessage, ...
+# Multi-engine runs produce one CSV per engine; we aggregate across all of them.
+# Get-Pct and Parse-JmeterCsv are provided by _helpers.ps1.
 
 $rows = @()
 
@@ -172,34 +174,24 @@ if ($engineFiles.Count -gt 0) {
     $engineFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
     $metadata.parse_status = "ok"
 
-    # Stream-parse each engine CSV, bucketing samples by Locust task name (column 2).
-    # Memory-bounded — we keep the per-task sample list, not the whole file.
+    # Parse each engine CSV via the shared parser (Parse-JmeterCsv in _helpers.ps1);
+    # merge the per-label buckets across engines. Single-engine runs trivially
+    # become one parse call; multi-engine runs concatenate samples per label.
     $byLabel = @{}
     foreach ($file in $engineFiles) {
-        $reader = [System.IO.StreamReader]::new($file.FullName)
-        try {
-            $reader.ReadLine() | Out-Null  # discard header
-            while ($null -ne ($line = $reader.ReadLine())) {
-                $cols = $line.Split(',')
-                if ($cols.Length -lt 8) { continue }
-                $elapsed = 0
-                if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
-                $label   = $cols[2]
-                $success = $cols[7] -ieq 'true'
-
-                $bucket = $byLabel[$label]
-                if (-not $bucket) {
-                    $bucket = @{
-                        Samples = (New-Object 'System.Collections.Generic.List[int]')
-                        Errors  = 0
-                    }
-                    $byLabel[$label] = $bucket
+        $parsed = Parse-JmeterCsv -Path $file.FullName
+        foreach ($kv in $parsed.ByLabel.GetEnumerator()) {
+            $merged = $byLabel[$kv.Key]
+            if (-not $merged) {
+                $merged = @{
+                    Samples = (New-Object 'System.Collections.Generic.List[int]')
+                    Errors  = 0
                 }
-                $bucket.Samples.Add($elapsed)
-                if (-not $success) { $bucket.Errors++ }
+                $byLabel[$kv.Key] = $merged
             }
+            $merged.Samples.AddRange($kv.Value.Samples)
+            $merged.Errors += $kv.Value.Errors
         }
-        finally { $reader.Dispose() }
     }
 
     $testDurationSec = [double]$DurationSeconds
@@ -254,8 +246,7 @@ $pipelineStarted = [DateTime]::Parse($RunStartedAt, [System.Globalization.Cultur
 $datePart        = $pipelineStarted.ToString("yyyy-MM-dd", [System.Globalization.CultureInfo]::InvariantCulture)
 
 # Major = first dot-segment (e.g. '17' for '17.0.0' and '17.0.0-rc.1').
-$majorVersion = ($UmbracoVersion -split '\.')[0]
-if ([string]::IsNullOrWhiteSpace($majorVersion)) { $majorVersion = 'unknown' }
+$majorVersion = (Get-UmbracoMajor $UmbracoVersion).ToString()
 
 $blobPrefix = "$Scenario/$majorVersion/$UmbracoVersion/$Tier/${datePart}_$BuildId"
 # Write the summary OUTSIDE $ResultsDir so the upload-batch below (which uploads

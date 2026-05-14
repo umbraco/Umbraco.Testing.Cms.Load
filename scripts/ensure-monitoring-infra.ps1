@@ -69,7 +69,6 @@ $columns = @(
     @{ name = "engine_count";                           type = "int"      }
     @{ name = "error_rate";                             type = "real"     }
     @{ name = "avg_ms";                                 type = "real"     }
-    @{ name = "median_ms";                              type = "real"     }
     @{ name = "p50_ms";                                 type = "real"     }
     @{ name = "p90_ms";                                 type = "real"     }
     @{ name = "p95_ms";                                 type = "real"     }

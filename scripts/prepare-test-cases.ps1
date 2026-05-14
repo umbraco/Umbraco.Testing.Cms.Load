@@ -232,16 +232,19 @@ foreach ($case in $cases) {
     }
     $scenarioDir = Join-Path $scenariosRoot $case.scenario
     $appSettingsFile = Join-Path $scenarioDir 'AdditionalSetup/appsettings.json'
-    if (-not (Test-Path $appSettingsFile)) {
-        Fail "case ${caseIndex}: scenario '$($case.scenario)' missing AdditionalSetup/appsettings.json"
+    # AdditionalSetup/appsettings.json is optional — a scenario with no Umbraco
+    # config overlay can omit the file (or ship `{}`). When present, it must
+    # be valid JSON.
+    if (Test-Path $appSettingsFile) {
+        try {
+            $appsettingsObj = Get-Content -Raw $appSettingsFile | ConvertFrom-Json
+        } catch {
+            Fail "case ${caseIndex}: scenario '$($case.scenario)' has invalid appsettings.json: $($_.Exception.Message)"
+        }
+        $overlay = ConvertTo-FlatAppSettings -Node $appsettingsObj
+    } else {
+        $overlay = @{}
     }
-
-    try {
-        $appsettingsObj = Get-Content -Raw $appSettingsFile | ConvertFrom-Json
-    } catch {
-        Fail "case ${caseIndex}: scenario '$($case.scenario)' has invalid appsettings.json: $($_.Exception.Message)"
-    }
-    $overlay = ConvertTo-FlatAppSettings -Node $appsettingsObj
 
     # Resolve load profile: scenario.yaml overrides win over pipeline defaults.
     $effUsers    = $UserAmount
