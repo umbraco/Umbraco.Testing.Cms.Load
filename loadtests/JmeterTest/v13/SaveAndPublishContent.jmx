@@ -106,7 +106,7 @@
         <stringProp name="filename"></stringProp>
       </ResultCollector>
       <hashTree/>
-      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report" enabled="true">
+      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report">
         <boolProp name="ResultCollector.error_logging">false</boolProp>
         <objProp>
           <name>saveConfig</name>
@@ -744,7 +744,7 @@ try {
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
         <hashTree>
-          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published">
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published" enabled="true">
             <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_root&quot;) == &quot;true&quot;)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
             <boolProp name="IfController.useExpression">true</boolProp>
@@ -917,7 +917,7 @@ try {
               </JSR223PostProcessor>
               <hashTree/>
             </hashTree>
-            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l1 found and published">
+            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l1 found and published" enabled="true">
               <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_L1_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l1&quot;) == &quot;true&quot;)}</stringProp>
               <boolProp name="IfController.evaluateAll">false</boolProp>
               <boolProp name="IfController.useExpression">true</boolProp>
@@ -1082,7 +1082,7 @@ try {
                 </JSR223PostProcessor>
                 <hashTree/>
               </hashTree>
-              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l2 found and published">
+              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l2 found and published" enabled="true">
                 <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_L2_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l2&quot;) == &quot;true&quot;)}</stringProp>
                 <boolProp name="IfController.evaluateAll">false</boolProp>
                 <boolProp name="IfController.useExpression">true</boolProp>
@@ -1250,7 +1250,7 @@ try {
               </hashTree>
             </hashTree>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/backoffice/umbracoapi/content/GetById">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/backoffice/umbracoapi/content/GetById" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/backoffice/umbracoapi/content/GetById</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
@@ -1621,6 +1621,42 @@ try {
               </collectionProp>
             </HeaderManager>
             <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Extract content_url (en-US)">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <boolProp name="resetInterpreter">false</boolProp>
+              <stringProp name="script">import groovy.json.JsonSlurper
+def raw = prev.getResponseDataAsString()
+def body = raw.startsWith(&quot;)]}&apos;,&quot;) ? raw.substring(raw.indexOf(&apos;\n&apos;) + 1) : raw
+try {
+    def json = new JsonSlurper().parseText(body)
+    def urls = json?.urls ?: []
+    def enUrl = urls.find { it?.culture == &apos;en-US&apos; &amp;&amp; it?.isUrl == true }
+    if (enUrl) {
+        def fullUrl = enUrl.text?.toString() ?: &quot;&quot;
+        def path = fullUrl
+        def schemeIdx = fullUrl.indexOf(&quot;://&quot;)
+        if (schemeIdx &gt;= 0) {
+            def afterScheme = fullUrl.substring(schemeIdx + 3)
+            def slashIdx = afterScheme.indexOf(&quot;/&quot;)
+            path = (slashIdx &gt;= 0) ? afterScheme.substring(slashIdx) : &quot;/&quot;
+        }
+        if (!path.startsWith(&quot;/&quot;)) path = &quot;/&quot; + path
+        vars.put(&quot;content_url&quot;, path)
+        log.info(&quot;content_url=&quot; + path + &quot; (from &quot; + fullUrl + &quot;)&quot;)
+    } else {
+        vars.put(&quot;content_url&quot;, &quot;CONTENT_URL_NOT_FOUND&quot;)
+        log.warn(&quot;No en-US URL with isUrl=true found in PostSave response&quot;)
+    }
+} catch(Exception e) {
+    vars.put(&quot;content_url&quot;, &quot;CONTENT_URL_NOT_FOUND&quot;)
+    log.error(&quot;Extract content_url failed: &quot; + e.getMessage())
+}
+              </stringProp>
+              <stringProp name="cacheKey">false</stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/backoffice/umbracotrees/contenttree/GetNodes (refresh)" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/backoffice/umbracotrees/contenttree/GetNodes</stringProp>
@@ -1763,7 +1799,46 @@ try {
             <hashTree/>
           </hashTree>
         </hashTree>
-        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="06. Logout" enabled="true">
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="06. View page after publishing">
+          <boolProp name="TransactionController.parent">true</boolProp>
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+        </TransactionController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET ${content_url}">
+            <stringProp name="HTTPSampler.path">${content_url}</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Accept" elementType="Header">
+                  <stringProp name="Header.name">Accept</stringProp>
+                  <stringProp name="Header.value">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</stringProp>
+                </elementProp>
+                <elementProp name="User-Agent" elementType="Header">
+                  <stringProp name="Header.name">User-Agent</stringProp>
+                  <stringProp name="Header.value">Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0</stringProp>
+                </elementProp>
+                <elementProp name="Accept-Language" elementType="Header">
+                  <stringProp name="Header.name">Accept-Language</stringProp>
+                  <stringProp name="Header.value">en-US,en;q=0.9</stringProp>
+                </elementProp>
+                <elementProp name="Accept-Encoding" elementType="Header">
+                  <stringProp name="Header.name">Accept-Encoding</stringProp>
+                  <stringProp name="Header.value">gzip, deflate, br, zstd</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="07. Logout" enabled="true">
           <boolProp name="TransactionController.parent">true</boolProp>
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>

@@ -49,7 +49,7 @@
         </collectionProp>
       </Arguments>
       <hashTree/>
-      <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults">
+      <ConfigTestElement guiclass="HttpDefaultsGui" testclass="ConfigTestElement" testname="HTTP Request Defaults" enabled="true">
         <stringProp name="HTTPSampler.domain">${server}</stringProp>
         <stringProp name="HTTPSampler.port">${port}</stringProp>
         <stringProp name="HTTPSampler.protocol">${protocol}</stringProp>
@@ -71,7 +71,7 @@
         <boolProp name="CacheManager.controlledByThread">false</boolProp>
       </CacheManager>
       <hashTree/>
-      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree">
+      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
         <boolProp name="ResultCollector.error_logging">false</boolProp>
         <objProp>
           <name>saveConfig</name>
@@ -143,7 +143,7 @@
         <stringProp name="filename"></stringProp>
       </ResultCollector>
       <hashTree/>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Save and Publish existing content">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Save and Publish existing content" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
@@ -949,7 +949,7 @@ try {
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
         <hashTree>
-          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published">
+          <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published" enabled="true">
             <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_root&quot;) == &quot;true&quot;)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
             <boolProp name="IfController.useExpression">true</boolProp>
@@ -1042,7 +1042,7 @@ try {
               </JSR223PostProcessor>
               <hashTree/>
             </hashTree>
-            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l1 found and published">
+            <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l1 found and published" enabled="true">
               <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_ID_L1_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l1&quot;) == &quot;true&quot;)}</stringProp>
               <boolProp name="IfController.evaluateAll">false</boolProp>
               <boolProp name="IfController.useExpression">true</boolProp>
@@ -1136,7 +1136,7 @@ try {
                 </JSR223PostProcessor>
                 <hashTree/>
               </hashTree>
-              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l2 found and published">
+              <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l2 found and published" enabled="true">
                 <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_ID_L2_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l2&quot;) == &quot;true&quot;)}</stringProp>
                 <boolProp name="IfController.evaluateAll">false</boolProp>
                 <boolProp name="IfController.useExpression">true</boolProp>
@@ -1635,7 +1635,113 @@ try {
             <hashTree/>
           </hashTree>
         </hashTree>
-        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="06. Logout" enabled="true">
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="06. View page after publishing">
+          <boolProp name="TransactionController.parent">true</boolProp>
+          <boolProp name="TransactionController.includeTimers">false</boolProp>
+        </TransactionController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/document/urls" enabled="true">
+            <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/document/urls</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="id" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.name">id</stringProp>
+                  <stringProp name="Argument.value">${target_document_id}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                  <boolProp name="HTTPArgument.use_equals">true</boolProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="authorization" elementType="Header">
+                  <stringProp name="Header.name">authorization</stringProp>
+                  <stringProp name="Header.value">Bearer ${access_token}</stringProp>
+                </elementProp>
+                <elementProp name="Accept" elementType="Header">
+                  <stringProp name="Header.name">Accept</stringProp>
+                  <stringProp name="Header.value">*/*</stringProp>
+                </elementProp>
+                <elementProp name="User-Agent" elementType="Header">
+                  <stringProp name="Header.name">User-Agent</stringProp>
+                  <stringProp name="Header.value">Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Extract content_url (urlInfos[0].url)">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="script">import groovy.json.JsonSlurper
+def body = prev.getResponseDataAsString()
+try {
+    def json = new JsonSlurper().parseText(body)
+    def first = (json instanceof List) ? (json ? json[0] : null) : json
+    def urlInfos = first?.urlInfos
+    if (urlInfos &amp;&amp; urlInfos.size() &gt; 0) {
+        def fullUrl = urlInfos[0].url?.toString() ?: &quot;&quot;
+        def path = fullUrl
+        def schemeIdx = fullUrl.indexOf(&quot;://&quot;)
+        if (schemeIdx &gt;= 0) {
+            def afterScheme = fullUrl.substring(schemeIdx + 3)
+            def slashIdx = afterScheme.indexOf(&quot;/&quot;)
+            path = (slashIdx &gt;= 0) ? afterScheme.substring(slashIdx) : &quot;/&quot;
+        }
+        if (!path.startsWith(&quot;/&quot;)) path = &quot;/&quot; + path
+        vars.put(&quot;content_url&quot;, path)
+        log.info(&quot;content_url=&quot; + path + &quot; (from &quot; + fullUrl + &quot;)&quot;)
+    } else {
+        vars.put(&quot;content_url&quot;, &quot;CONTENT_URL_NOT_FOUND&quot;)
+        log.warn(&quot;No urlInfos found in document/urls response&quot;)
+    }
+} catch(Exception e) {
+    vars.put(&quot;content_url&quot;, &quot;CONTENT_URL_NOT_FOUND&quot;)
+    log.error(&quot;Extract content_url failed: &quot; + e.getMessage())
+}
+              </stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET ${content_url}" enabled="true">
+            <stringProp name="HTTPSampler.path">${content_url}</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="HTTP Header Manager" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="Accept" elementType="Header">
+                  <stringProp name="Header.name">Accept</stringProp>
+                  <stringProp name="Header.value">text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8</stringProp>
+                </elementProp>
+                <elementProp name="User-Agent" elementType="Header">
+                  <stringProp name="Header.name">User-Agent</stringProp>
+                  <stringProp name="Header.value">Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:149.0) Gecko/20100101 Firefox/149.0</stringProp>
+                </elementProp>
+                <elementProp name="Accept-Language" elementType="Header">
+                  <stringProp name="Header.name">Accept-Language</stringProp>
+                  <stringProp name="Header.value">en-US,en;q=0.9</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+        <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="07. Logout">
           <boolProp name="TransactionController.parent">true</boolProp>
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
