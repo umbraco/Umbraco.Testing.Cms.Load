@@ -513,7 +513,7 @@ The long-lived RG is provisioned idempotently at the start of every pipeline run
 
 ## Pipeline Workflow
 
-The pipeline runs in six stages. Stage boundaries are visible in the AzDO run summary so failures isolate cleanly: a failed `provision` stage tells you Terraform broke; a failed `loadTest` stage tells you the test itself broke. The `cleanup` stage runs on `always()` so the ephemeral RG gets torn down (or offered for manual keep) on every outcome — including pipeline cancellation.
+The pipeline runs in seven stages. Stage boundaries are visible in the AzDO run summary so failures isolate cleanly: a failed `provision` stage tells you Terraform broke; a failed `loadTest` stage tells you the test itself broke. The `cleanup` stage runs on `always()` so the ephemeral RG gets torn down (or offered for manual keep) on every outcome — including pipeline cancellation.
 
 ```
 validateTestCases    Validate testCases JSON, read scenario folders, resolve load profile
@@ -522,13 +522,16 @@ validateTestCases    Validate testCases JSON, read scenario folders, resolve loa
 ensureHistoryInfra   Idempotent: shared Azure Load Testing resource + storage + container.
                      First run creates; subsequent runs no-op.
 
+ensureMonitoringInfra Idempotent: Log Analytics workspace + custom table + DCR/DCE + Workbook.
+                     Exposes the Logs Ingestion target as cross-stage variables.
+
 provision            checkResourceGroup → setup (init + validate + plan) → apply.
                      Provisions one App Service Plan per used tier, plus per-case App Services
                      and SQL DBs. Emits test_case_outputs map.
 
 loadTest             verifyDeployments (only when skipLoadTests=true) OR runLoadTests.
                      Each case warms up, runs Locust on ALT, publishes results to
-                     history storage and the build artifact.
+                     history storage, the build artifact, and Log Analytics.
 
 regression           Compare candidate run against baseline-median; fail the pipeline when a
                      cell exceeds threshold AND has ≥3 prior runs. Skipped when
