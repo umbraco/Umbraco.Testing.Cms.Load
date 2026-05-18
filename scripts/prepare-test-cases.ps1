@@ -201,6 +201,16 @@ foreach ($case in $cases) {
         Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is unsupported (this pipeline targets v13+)"
     }
 
+    # Mirror of $seederPackageVersions in
+    # Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1.
+    # Listed here so a major without a published seeder build fails at minute 0
+    # (validator) instead of minute ~10 (install). Update both sites in lockstep
+    # when a new seeder ships.
+    $seederShippedMajors = @(17)
+    if ($seederShippedMajors -notcontains $umbracoMajor) {
+        Fail "case ${caseIndex}: Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet. Today only v17 has a published seeder. Update the maps in scripts/prepare-test-cases.ps1 + Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 once the package ships."
+    }
+
     # Scenarios with v17-only code overlays (e.g. DeliveryApi's Program.cs uses
     # v17's builder shape). Reject the combination here so the run fails fast
     # instead of breaking at dotnet build inside the install script.
