@@ -39,7 +39,7 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 - Azure DevOps organization with:
   - Service connection to Azure (`terraform-umbraco-load-testing-az-connection`)
   - Variable group `umbraco-loadtest-history` with at minimum: `historyResourceGroup`, `historyLocation`, `historyLoadTestName`, `historyStorageAccount` (override the placeholder `loadtestchangeme` with a globally-unique 3-24 lowercase alphanumeric value), `historyContainer`.
-- Terraform >= 1.3.9
+- Terraform >= 1.13.3 (pinned at 1.13.3 in CI; pipelines install via TerraformInstaller@0)
 - PowerShell Core (pwsh) 7.3+ — earlier versions silently swallow native command failures (`dotnet build` errors etc.) because `$ErrorActionPreference = "Stop"` doesn't apply to native exit codes; 7.3 introduced `$PSNativeCommandUseErrorActionPreference` which the install script sets.
 
 ## First-time setup
@@ -187,6 +187,7 @@ A run for a major whose `Umbraco.Cms.TestDataSeeder` slot is still `$null` in th
 | `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 | `sqlSkuOverride` | Force every case onto a specific SQL SKU (decouples DB sizing from tier) | Auto | Auto, S0, S1, S2, S3 |
+| `forceCleanup` | Force-delete a stuck ephemeral RG before provisioning (only set true when recovering from a known-failed run) | false | true, false |
 
 **SQL SKU override.** When set to a value other than `Auto`, every test case in the run uses the same SQL DB SKU regardless of the tier's nominal pairing — useful for cross-checking whether SQL is actually the bottleneck. Default pairings are Starter→S1, Standard→S2, Pro→S3 (see `tiers.json`); since all three tiers share the same App Service SKU today, the override is mainly for "is the app saturating before SQL does?" experiments. The `sql_max_size_gb` cap stays at the tier default (5/10/20 GB) — manually edit `tiers.json` if a larger cap is needed alongside an SKU bump.
 
@@ -372,7 +373,7 @@ Set `coldStart: true` to skip the warmup. The load test then hits a freshly-star
 
 The pipeline writes results to four places:
 
-- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The Azure Load Testing resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one load test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} #{buildId}`.
+- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The Azure Load Testing resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one load test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} {sqlSku} #{buildId}` — the SQL SKU is in the name so override runs (e.g. `Standard S3`) are distinguishable from default-pairing runs (`Standard S2`) in the portal's Compare view.
 - **Pipeline artifacts**: per-case ZIP under `loadtest-results-{sanitised-testCaseId}` on the build, useful for forensic deep-dives. Expires with the pipeline's build retention policy.
 - **History storage account** (long-lived): per-case NDJSON summary at `{scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/summary.ndjson` plus the raw artifact dump under `raw/`. Scenario is top-level because it defines what's *comparable* — different scenarios hit different endpoints / seed different data, so their numbers can't be compared directly. Within a scenario, prefix-listing maps to the natural pivots: `Default/17/` trends a major, `Default/17/17.0.0/` is all tiers in one build, `Default/17/*/Starter/` sweeps versions on one tier. Each row carries the full run metadata (commit, version, tier, scenario, SKUs, seeder preset, user count), so cross-run queries don't need joins.
 - **Log Analytics workspace** (long-lived): the same NDJSON rows mirrored into the `LoadTestSummary_CL` custom table for KQL querying. The Workbook (see "Dashboard" below) reads from here. Blob storage remains source of truth — Log Analytics is a queryable mirror.
@@ -510,10 +511,9 @@ The long-lived RG is provisioned idempotently at the start of every pipeline run
 5.  Terraform Apply              -> Provision App Service Plans (one per tier), per-case App Services + SQL DBs
 6.  Verify Deployments           -> Smoke-check each site (only when skipLoadTests=true)
 7.  Run Load Tests               -> Sequential per-case Locust tests (on Azure Load Testing infra)
-8.  Test Summary                 -> Print run-level + per-case config
-9.  Regression Check             -> Compare published runs vs baseline-median; fail on regression
-10. Manual Validation            -> Configurable window to keep resources (default 60 min)
-11. Cleanup                      -> Delete resource group if rejected/cancelled/expired
+8.  Regression Check             -> Compare published runs vs baseline-median; fail on regression
+9.  Manual Validation            -> Configurable window to keep resources (default 60 min)
+10. Cleanup                      -> Delete resource group if rejected/cancelled/expired
 ```
 
 ## Data Seeder Presets
@@ -653,14 +653,15 @@ The `regression-report` artifact + the per-sampler table from `compare-runs.ps1`
 
 ## Dashboard
 
-`dashboards/loadtest.workbook.json` is an Azure Workbook that queries `LoadTestSummary_CL` in Log Analytics and offers four views:
+`dashboards/loadtest.workbook.json` is an Azure Workbook that queries `LoadTestSummary_CL` in Log Analytics and offers five views:
 
-- **Trends** — time-series chart of the chosen metric (p95 / p99 / avg / error rate), one line per `(scenario × version × tier)`; matrix table below with median ±stddev per cell.
+- **Trends** — chronological per-run chart of the chosen metric (p95 / p99 / avg / error rate / RPS / server CPU peak / DB load peak), one line per `(scenario × version × tier)`; matrix table below with median ±stddev per cell.
 - **Tiers** — pick scenario + version, see latest run per tier as a bar chart + table with conditional-formatted Plan CPU / SQL DTU / error % cells. Answers "what do I get for upgrading the tier?"
+- **Versions** — pick scenario + tier, see per-sampler median latency grouped by Umbraco version. Answers "did this version regress on this tier?"
 - **Compare** — pick two runs + Δ% threshold; per-sampler delta table with red/green conditional formatting; server-side delta block.
-- **Runs** — filtered run list; type a run ID into the drill field to see per-sampler detail.
+- **Runs** — filtered run list with a regression-verdict column; type a run ID into the drill field to see per-sampler detail.
 
-Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Trends / Compare / Runs (Tiers ignores it deliberately — it's the cross-tier view). Workbook URLs encode the filter state, so links are shareable.
+Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Trends / Compare / Runs. Tiers and Versions have their own scoped pickers (Tiers is the cross-tier view, Versions is the cross-version view). Workbook URLs encode the filter state, so links are shareable.
 
 Auth piggybacks on Azure RBAC: anyone with **Reader** on the Log Analytics workspace (or its parent RG) can view the Workbook. No separate identity to manage.
 
@@ -823,7 +824,12 @@ Things that have bitten contributors and aren't obvious from reading the code:
 ```bash
 cd Terraform && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
 Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+python -m py_compile loadtests/locustfile.py
+yamllint -d "{rules: {document-start: disable, line-length: disable, truthy: disable}}" loadtests/scenarios/
+git ls-files '*.json' | ForEach-Object { Get-Content -LiteralPath $_ -Raw | ConvertFrom-Json | Out-Null }
 ```
+
+These mirror the four `pr-validation.yml` jobs (terraform / powershell / python / yaml / json). Running them locally before queueing catches the common typos (trailing commas in the Workbook JSON, unescaped `$` in PowerShell, indentation in scenario yaml) without burning a pipeline run.
 
 ## Azure resource tagging
 
