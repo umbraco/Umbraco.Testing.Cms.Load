@@ -271,7 +271,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Tiers\nCompare tiers for one `(scenario, version)` combination. Answers \"what do I get for upgrading the tier?\" Pick the scenario and version below; the tables and chart show the latest run on each tier side-by-side. When the global filter at the top is narrowed, the pickers default to the matching scenario/version automatically."
+        "json": "## Tiers\nCompare tiers for one `(scenario, version)` combination. Answers \"what do I get for upgrading the tier?\" Pick the scenario and version below; the tables and chart aggregate across every matching run — medians for latency/throughput, plus a worst-case column on each resource peak so a single saturated run still flags Saturated. The **Runs** column shows how many runs back each median; cells with 1 run are single-run snapshots, 3+ runs is statistically meaningful. When the global filter at the top is narrowed, the pickers default to the matching scenario/version automatically."
       },
       "name": "tiers-header",
       "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
@@ -327,25 +327,32 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Resource metrics (plan_*, sql_*) are duplicated across all per-sampler\n// rows of the same run by the publish script, so arg_max by infra_tier\n// returns valid run-level values regardless of which sampler row wins.\n// Requests/sec is similarly run-scoped on each row.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| project Tier = infra_tier,\n          ['Run #']             = run_id,\n          ['Requests/sec']      = round(todouble(requests_per_sec), 1),\n          ['Server CPU avg %']    = round(plan_CpuPercentage_avg, 1),\n          ['Server CPU peak %']    = round(plan_CpuPercentage_max, 1),\n          ['Server memory peak %'] = round(plan_MemoryPercentage_max, 1),\n          ['Database load avg %']     = round(sql_dtu_consumption_percent_avg, 1),\n          ['Database load peak %']     = round(sql_dtu_consumption_percent_max, 1),\n          ['Database CPU peak %']     = round(sql_cpu_percent_max, 1),\n          ['Database physical reads peak %'] = round(sql_physical_data_read_percent_max, 1),\n          ['Error %']             = round(run_error_rate * 100, 2),\n          ['Capacity status'] = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK'),\n          Headroom = round(100 - max_of(plan_CpuPercentage_max, plan_MemoryPercentage_max, sql_dtu_consumption_percent_max, sql_cpu_percent_max), 0)\n| order by Tier asc",
+        "query": "// Resource metrics (plan_*, sql_*) and requests_per_sec are duplicated across\n// every per-sampler row of the same run by the publish script. To avoid double-\n// counting them in the across-runs summarize, first reduce to one row per\n// (tier, run_id), then aggregate by tier.\n//\n// Peaks get two columns: median (typical run) and worst (max across runs).\n// Capacity status + Headroom derive from the worst-case so a single saturated\n// run still flags the tier.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, run_id\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| summarize\n    Runs                                          = count(),\n    ['Requests/sec']                              = round(percentile(todouble(requests_per_sec), 50), 1),\n    ['Server CPU avg %']                          = round(percentile(plan_CpuPercentage_avg, 50), 1),\n    ['Server CPU peak % (median)']                = round(percentile(plan_CpuPercentage_max, 50), 1),\n    ['Server CPU peak % (worst)']                 = round(max(plan_CpuPercentage_max), 1),\n    ['Server memory peak % (median)']             = round(percentile(plan_MemoryPercentage_max, 50), 1),\n    ['Server memory peak % (worst)']              = round(max(plan_MemoryPercentage_max), 1),\n    ['Database load avg %']                       = round(percentile(sql_dtu_consumption_percent_avg, 50), 1),\n    ['Database load peak % (median)']             = round(percentile(sql_dtu_consumption_percent_max, 50), 1),\n    ['Database load peak % (worst)']              = round(max(sql_dtu_consumption_percent_max), 1),\n    ['Database CPU peak % (median)']              = round(percentile(sql_cpu_percent_max, 50), 1),\n    ['Database CPU peak % (worst)']               = round(max(sql_cpu_percent_max), 1),\n    ['Database physical reads peak % (median)']   = round(percentile(sql_physical_data_read_percent_max, 50), 1),\n    ['Database physical reads peak % (worst)']    = round(max(sql_physical_data_read_percent_max), 1),\n    ['Error % (median)']                          = round(percentile(run_error_rate, 50) * 100, 2),\n    ['Error % (worst)']                           = round(max(run_error_rate) * 100, 2),\n    cpu_worst    = max(plan_CpuPercentage_max),\n    mem_worst    = max(plan_MemoryPercentage_max),\n    sqldtu_worst = max(sql_dtu_consumption_percent_max),\n    sqlcpu_worst = max(sql_cpu_percent_max),\n    err_worst    = max(run_error_rate)\n    by Tier = infra_tier\n| extend ['Capacity status'] = case(\n    err_worst >= 0.01\n      or cpu_worst    >= 95\n      or mem_worst    >= 95\n      or sqldtu_worst >= 95\n      or sqlcpu_worst >= 95, 'Saturated',\n    cpu_worst    >= 85\n      or mem_worst    >= 85\n      or sqldtu_worst >= 85\n      or sqlcpu_worst >= 85, 'Stressed',\n    'OK')\n| extend Headroom = round(100 - max_of(cpu_worst, mem_worst, sqldtu_worst, sqlcpu_worst), 0)\n| project-away cpu_worst, mem_worst, sqldtu_worst, sqlcpu_worst, err_worst\n| order by Tier asc",
         "size": 0,
-        "title": "Capacity verdict per tier. Requests/sec = how much traffic the tier handled. Headroom = how much room was left before any resource (CPU / memory / database) hit 100%. Higher Headroom = the tier had more capacity to spare.",
+        "title": "Capacity verdict per tier — aggregated across all matching runs. Peak columns show median (typical run) and worst (max across runs). Capacity status + Headroom use the worst-case, so one saturated run flags the tier.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
+            { "columnMatch": "Runs",              "formatter": 8, "formatOptions": { "palette": "blue",              "min": 1, "max": 10 } },
             { "columnMatch": "Requests/sec",      "formatter": 8, "formatOptions": { "palette": "blue",              "min": 0, "max": 500 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server CPU avg %",    "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server CPU peak %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server memory peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database load avg %",     "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database load peak %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database CPU peak %",     "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database physical reads peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Error %",             "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
-            { "columnMatch": "Headroom", "formatter": 8, "formatOptions": { "palette": "redToGreen", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } },
+            { "columnMatch": "Server CPU avg %",                          "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU peak % (median)",                "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU peak % (worst)",                 "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server memory peak % (median)",             "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server memory peak % (worst)",              "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load avg %",                       "formatter": 8, "formatOptions": { "palette": "yellow",           "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load peak % (median)",             "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load peak % (worst)",              "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database CPU peak % (median)",              "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database CPU peak % (worst)",               "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database physical reads peak % (median)",   "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database physical reads peak % (worst)",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Error % (median)",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
+            { "columnMatch": "Error % (worst)",   "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
+            { "columnMatch": "Headroom",          "formatter": 8, "formatOptions": { "palette": "redToGreen",      "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } },
             { "columnMatch": "Capacity status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
               { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
               { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
@@ -361,9 +368,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Long-form (Sampler, Tier, value) + `group: Tier` in chartSettings.\n// Pivoted-wide-form bars stack by default in Workbook; the explicit group\n// column renders them side-by-side.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| extend ['{TiersMetric}'] = case(\n    '{TiersMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{TiersMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{TiersMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| project Sampler = scenario_name, Tier = infra_tier, ['{TiersMetric}']\n| order by Sampler asc, Tier asc",
+        "query": "// Long-form (Sampler, Tier, value) + `group: Tier` in chartSettings.\n// Pivoted-wide-form bars stack by default in Workbook; the explicit group\n// column renders them side-by-side. Median across all matching runs per\n// (sampler, tier).\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend value = case(\n    '{TiersMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{TiersMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{TiersMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| where isnotnull(value)\n| summarize ['{TiersMetric}'] = round(percentile(value, 50), 0) by Sampler = scenario_name, Tier = infra_tier\n| order by Sampler asc, Tier asc",
         "size": 0,
-        "title": "Latest run per tier — {TiersMetric} per sampler, one bar per tier",
+        "title": "Median {TiersMetric} per sampler — one bar per tier",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
@@ -382,21 +389,24 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Per-sampler detail. The run-level resource metrics (Server CPU peak,\n// Database load peak) are NOT shown here — they're identical for every\n// sampler in the same run, so they'd just repeat the same number on every\n// row. Those values live in the Capacity verdict table above.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize arg_max(TimeGenerated, *) by infra_tier, scenario_name\n| project Sampler = scenario_name, Tier = infra_tier,\n          ['Run #']         = run_id,\n          Requests          = toint(request_count),\n          ['Requests/sec']  = round(todouble(requests_per_sec), 1),\n          ['avg (ms)']      = round(avg_ms, 0),\n          ['p95 (ms)']      = round(p95_ms, 0),\n          ['p99 (ms)']      = round(p99_ms, 0),\n          ['max (ms)']      = round(max_ms, 0),\n          ['Error %']       = round(error_rate * 100, 2)\n| order by Sampler asc, Tier asc",
+        "query": "// Per-sampler detail aggregated across runs. Run-level resource metrics\n// (Server CPU peak, Database load peak) are NOT shown here — they're\n// identical for every sampler in the same run, so they'd just repeat the\n// same number on every row. Those values live in the Capacity verdict\n// table above. median + p95 spread (stdev) give the typical reading and\n// how much the runs disagree; worst Error % surfaces a single bad run that\n// the median would otherwise hide.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| summarize\n    Runs                  = count(),\n    Requests              = toint(percentile(request_count, 50)),\n    ['Requests/sec']      = round(percentile(todouble(requests_per_sec), 50), 1),\n    ['avg (ms)']          = round(percentile(avg_ms, 50), 0),\n    ['p95 (ms)']          = round(percentile(p95_ms, 50), 0),\n    ['p95 spread (ms)']   = round(stdev(p95_ms), 0),\n    ['p99 (ms)']          = round(percentile(p99_ms, 50), 0),\n    ['max (ms)']          = round(max(max_ms), 0),\n    ['median Error %']    = round(percentile(error_rate, 50) * 100, 2),\n    ['worst Error %']     = round(max(error_rate) * 100, 2)\n    by Sampler = scenario_name, Tier = infra_tier\n| order by Sampler asc, Tier asc",
         "size": 0,
-        "title": "Per-sampler detail per tier — every row is one sampler's stats from that tier's latest run.",
+        "title": "Per-sampler detail per tier — medians across all matching runs.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": ["{Workspace}"],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Requests",      "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 10000 } },
-            { "columnMatch": "Requests/sec",  "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "p95 (ms)",      "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 2000 } },
-            { "columnMatch": "p99 (ms)",      "formatter": 8, "formatOptions": { "palette": "orange",          "min": 0, "max": 2000 } },
-            { "columnMatch": "max (ms)",      "formatter": 8, "formatOptions": { "palette": "redBright",       "min": 0, "max": 10000 } },
-            { "columnMatch": "Error %",       "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } }
+            { "columnMatch": "Runs",            "formatter": 8, "formatOptions": { "palette": "blue",            "min": 1, "max": 10 } },
+            { "columnMatch": "Requests",        "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 10000 } },
+            { "columnMatch": "Requests/sec",    "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "p95 (ms)",        "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 2000 } },
+            { "columnMatch": "p95 spread (ms)", "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 500 } },
+            { "columnMatch": "p99 (ms)",        "formatter": 8, "formatOptions": { "palette": "orange",          "min": 0, "max": 2000 } },
+            { "columnMatch": "max (ms)",        "formatter": 8, "formatOptions": { "palette": "redBright",       "min": 0, "max": 10000 } },
+            { "columnMatch": "median Error %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 },  "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
+            { "columnMatch": "worst Error %",   "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 25 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } }
           ]
         }
       },
@@ -822,7 +832,10 @@
         }
       },
       "name": "runs-detail",
-      "conditionalVisibility": { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+      "conditionalVisibilities": [
+        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
+        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+      ]
     }
   ],
   "fallbackResourceIds": [],

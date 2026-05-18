@@ -276,7 +276,7 @@ stages:
         dependsOn: checkResourceGroup
         displayName: Terraform Setup
         steps:
-          - task: TerraformInstaller@0
+          - task: TerraformInstaller@1
             displayName: Install Terraform
             inputs:
               terraformVersion: '1.13.3'
@@ -311,7 +311,7 @@ stages:
         # Massive preset can take ~120 min per case; budget generously.
         timeoutInMinutes: 720
         steps:
-          - task: TerraformInstaller@0
+          - task: TerraformInstaller@1
             displayName: Install Terraform
             inputs:
               terraformVersion: '1.13.3'
