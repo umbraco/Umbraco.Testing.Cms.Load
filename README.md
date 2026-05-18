@@ -880,7 +880,7 @@ yamllint -d "{rules: {document-start: disable, line-length: disable, truthy: dis
 git ls-files '*.json' | ForEach-Object { Get-Content -LiteralPath $_ -Raw | ConvertFrom-Json | Out-Null }
 ```
 
-There's no PR-triggered CI today, so these are the queueing self-checks: terraform / powershell / python / yaml / json. Running them locally catches the common typos (trailing commas in the Workbook JSON, unescaped `$` in PowerShell, indentation in scenario yaml) without burning a pipeline run.
+Running these locally catches the common typos (trailing commas in the Workbook JSON, unescaped `$` in PowerShell, indentation in scenario yaml) without burning a pipeline run.
 
 ## Azure resource tagging
 
