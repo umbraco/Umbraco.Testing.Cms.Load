@@ -872,12 +872,12 @@ Practical guidance: use Massive when you specifically need the data volume. For 
 ```bash
 cd Terraform && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
 Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
-python -m py_compile loadtests/locustfile.py
+git ls-files 'loadtests/**/locustfile.py' 'loadtests/_helpers.py' | ForEach-Object { python -m py_compile $_ }
 yamllint -d "{rules: {document-start: disable, line-length: disable, truthy: disable}}" loadtests/scenarios/
 git ls-files '*.json' | ForEach-Object { Get-Content -LiteralPath $_ -Raw | ConvertFrom-Json | Out-Null }
 ```
 
-These mirror the four `pr-validation.yml` jobs (terraform / powershell / python / yaml / json). Running them locally before queueing catches the common typos (trailing commas in the Workbook JSON, unescaped `$` in PowerShell, indentation in scenario yaml) without burning a pipeline run.
+There's no PR-triggered CI today, so these are the queueing self-checks: terraform / powershell / python / yaml / json. Running them locally catches the common typos (trailing commas in the Workbook JSON, unescaped `$` in PowerShell, indentation in scenario yaml) without burning a pipeline run.
 
 ## Azure resource tagging
 
