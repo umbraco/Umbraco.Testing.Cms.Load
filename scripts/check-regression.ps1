@@ -138,7 +138,11 @@ foreach ($cellKey in $cells.Keys) {
     $priorRuns     = @($sorted | Select-Object -Skip 1 -First $BaselineWindow)
     $priorRunCount = $priorRuns.Count
 
-    $parts   = $cellKey -split '__'
+    # Limit 3 so sampler names that legally contain '__' (e.g. a future
+    # task like 'Backoffice__SavePublish') don't get truncated into a wrong
+    # cell. _history-helpers.ps1's cellKey builder uses three fields and
+    # Get-HistoryStats also splits with -split '__', 3 — match that.
+    $parts   = $cellKey -split '__', 3
     $version = $parts[0]
     $tier    = $parts[1]
     $samp    = $parts[2]
@@ -281,7 +285,7 @@ if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStrea
         $sorted    = $cells[$cellKey] |
             Sort-Object { Get-RunDate $_ } -Descending
         $candidate = $sorted[0]
-        $parts     = $cellKey -split '__'
+        $parts     = $cellKey -split '__', 3
         $version   = $parts[0]
         $tier      = $parts[1]
         $samp      = $parts[2]
