@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Compare the most recent run for each (version, tier, sampler) cell against the
 # median of the previous N runs and flag regressions exceeding configurable
 # thresholds. Exits non-zero when any cell regresses (default), making this safe
@@ -44,9 +46,11 @@ param (
     # to recent state — old runs from a different code era shouldn't anchor today).
     [int]$BaselineWindow = 5,
 
-    # Set to $false to render the report without failing the script even when
-    # regressions are found (useful for "show me what would break").
-    [bool]$FailOnRegression = $true,
+    # Set the switch to render the report without failing the script even when
+    # regressions are found (useful for "show me what would break"). The default
+    # behaviour is to fail on regression; using a [switch] avoids a footgun where
+    # passing -FailOnRegression "false" as a string is silently truthy.
+    [switch]$NoFailOnRegression,
 
     # Optional Logs Ingestion API target. When all three are provided, the
     # script POSTs one status row per (run_id × scenario × version × tier) to
@@ -91,6 +95,34 @@ history and the gate will activate per cell as baselines accrue.
     exit 0
 }
 
+# Defensively drop rows whose run_started_at won't parse, using Get-RunDate
+# from _history-helpers.ps1 (dot-sourced above). A single corrupt timestamp
+# would otherwise throw under $ErrorActionPreference="Stop" during the
+# Sort-Object below and brick every future regression check until the bad
+# blob is manually pruned.
+$droppedRows = 0
+# Snapshot keys via @(...) so $cells.Remove() inside the loop doesn't mutate
+# the enumerator we're iterating.
+foreach ($cellKey in @($cells.Keys)) {
+    $valid = @($cells[$cellKey] | Where-Object { $null -ne (Get-RunDate $_) })
+    $droppedRows += ($cells[$cellKey].Count - $valid.Count)
+    if ($valid.Count -eq 0) {
+        $cells.Remove($cellKey)
+    } else {
+        $cells[$cellKey] = $valid
+    }
+}
+if ($droppedRows -gt 0) {
+    Write-Warning "Dropped $droppedRows row(s) with unparseable run_started_at from history (kept the rest)."
+}
+if ($cells.Count -eq 0) {
+    # Don't fall through to the "PASS - 0 stable, 0 improvements" report; that
+    # would silently green-light a run whose entire history is corrupt. Distinguish
+    # from the empty-history case above (which exits 0) because that's a legitimate
+    # first-ever-run state, but ALL rows failing to parse is data corruption.
+    Write-PipelineError "Every history row failed to parse (dropped $droppedRows row(s)). Manual storage cleanup required before regression check can resume."
+}
+
 # --- Compare latest vs baseline-median per cell ---
 
 $regressions  = @()
@@ -100,7 +132,7 @@ $insufficient = @()
 
 foreach ($cellKey in $cells.Keys) {
     $sorted = $cells[$cellKey] |
-        Sort-Object { [datetime]::Parse($_.run_started_at, [System.Globalization.CultureInfo]::InvariantCulture) } -Descending
+        Sort-Object { Get-RunDate $_ } -Descending
 
     $candidate     = $sorted[0]
     $priorRuns     = @($sorted | Select-Object -Skip 1 -First $BaselineWindow)
@@ -219,7 +251,7 @@ if ($regressions.Count -gt 0) {
     Write-Host ""
     Write-Host $report
     Write-Host "##vso[task.logissue type=error]$($regressions.Count) regression(s) detected against baseline."
-    $exitOnRegression = $FailOnRegression
+    $exitOnRegression = -not $NoFailOnRegression
 } else {
     Write-Host ""
     Write-Host "PASS - no regressions ($($stable.Count) stable, $($improvements.Count) improvements, $($insufficient.Count) cells skipped for insufficient baseline)."
@@ -247,7 +279,7 @@ if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStrea
     $statusByGroup = @{}   # key: run_id|scenario|version|tier
     foreach ($cellKey in $cells.Keys) {
         $sorted    = $cells[$cellKey] |
-            Sort-Object { [datetime]::Parse($_.run_started_at, [System.Globalization.CultureInfo]::InvariantCulture) } -Descending
+            Sort-Object { Get-RunDate $_ } -Descending
         $candidate = $sorted[0]
         $parts     = $cellKey -split '__'
         $version   = $parts[0]

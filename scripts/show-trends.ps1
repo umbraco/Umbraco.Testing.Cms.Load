@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Print a (version × tier) matrix of p95/p99/error% for one scenario by reading
 # every summary.ndjson under that scenario's history-storage prefix.
 #

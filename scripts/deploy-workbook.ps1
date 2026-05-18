@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Deploy the load-test Workbook to Azure. Idempotent: re-running with the same
 # -WorkbookId updates in place; changing -WorkbookId creates a new Workbook
 # (and orphans the previous one).

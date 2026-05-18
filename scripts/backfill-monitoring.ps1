@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Backfill summary rows from blob storage to the Log Analytics custom table.
 # Useful when:
 #   - Migrating from a blob-only setup to the Workbook (one-shot fill of

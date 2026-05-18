@@ -484,7 +484,7 @@ Defaults:
 
 Cells with fewer than `-MinBaselineRuns` prior runs are reported as "insufficient baseline" and **never** trigger a fail — you can't regress against nothing. This means turning the gate on doesn't break the first few runs of a brand-new scenario or tier; the gate activates per-cell as baselines accrue.
 
-Pass `-FailOnRegression $false` to render the report without failing (useful for "show me what would break if I turned this on").
+Pass `-NoFailOnRegression` to render the report without failing (useful for "show me what would break if I turned this on").
 
 The script is wired into the pipeline as the `regressionCheck` job after `runLoadTests`. It's permissive by default (cells with < `MinBaselineRuns` prior runs report "insufficient baseline" and exit 0), so it's safe to leave on from day one — the gate activates per-cell as baselines accrue.
 

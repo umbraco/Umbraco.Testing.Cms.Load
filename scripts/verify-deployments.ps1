@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Smoke-verify deployed App Services on a skipLoadTests=true run.
 # For each case: start, poll homepage for 200, check seeder status, stop.
 # Exits non-zero if any case fails.

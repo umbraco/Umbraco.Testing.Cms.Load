@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Compare two Locust runs and emit a markdown report with per-sampler deltas.
 # Two modes:
 #
@@ -7,11 +9,13 @@
 #   # version vs version on a fixed tier
 #   ./scripts/compare-runs.ps1 -Scenario Default -Tier Standard `
 #       -BaselineVersion 17.0.0 -CandidateVersion 17.0.1 `
+#       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history
 #
 #   # tier vs tier on a fixed version
 #   ./scripts/compare-runs.ps1 -Scenario Default -Version 17.0.0 `
 #       -BaselineTier Starter -CandidateTier Pro `
+#       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history
 #
 #   Aggregate mode: 'latest' (default) takes the most recent run per cell;
@@ -35,6 +39,7 @@ param (
 
     # History mode (provide -Scenario + storage + EITHER version-vs-version OR tier-vs-tier)
     [string]$Scenario,
+    [string]$HistoryResourceGroup,
     [string]$StorageAccountName,
     [string]$ContainerName,
     [string]$Major,
@@ -68,13 +73,13 @@ $PSNativeCommandUseErrorActionPreference = $true
 # --- Mode detection + validation ---
 
 $isCsvMode     = $BaselinePath -or $CandidatePath
-$isHistoryMode = $Scenario -or $StorageAccountName -or $ContainerName
+$isHistoryMode = $Scenario -or $HistoryResourceGroup -or $StorageAccountName -or $ContainerName
 
 if ($isCsvMode -and $isHistoryMode) {
-    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-StorageAccountName/-ContainerName) — not both."
+    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-HistoryResourceGroup/-StorageAccountName/-ContainerName) — not both."
 }
 if (-not ($isCsvMode -or $isHistoryMode)) {
-    Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -StorageAccountName + -ContainerName + version/tier coordinates)."
+    Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -HistoryResourceGroup + -StorageAccountName + -ContainerName + version/tier coordinates)."
 }
 
 if ($isCsvMode) {
@@ -86,8 +91,8 @@ if ($isCsvMode) {
 }
 
 if ($isHistoryMode) {
-    if (-not ($Scenario -and $StorageAccountName -and $ContainerName)) {
-        Write-PipelineError "History mode requires -Scenario, -StorageAccountName, and -ContainerName."
+    if (-not ($Scenario -and $HistoryResourceGroup -and $StorageAccountName -and $ContainerName)) {
+        Write-PipelineError "History mode requires -Scenario, -HistoryResourceGroup, -StorageAccountName, and -ContainerName."
     }
     $isVersionPair = $BaselineVersion -and $CandidateVersion
     $isTierPair    = $BaselineTier -and $CandidateTier
@@ -159,9 +164,11 @@ function Get-HistoryStats {
 
     foreach ($cellKey in $relevantKeys) {
         $sampler = ($cellKey -split '__', 3)[2]
-        $runs = @($Cells[$cellKey] | Sort-Object {
-            [datetime]::Parse($_.run_started_at, [System.Globalization.CultureInfo]::InvariantCulture)
-        } -Descending)
+        # Get-RunDate (from _history-helpers.ps1, dot-sourced before this function
+        # runs) tolerates unparseable timestamps so one corrupt history blob
+        # doesn't throw under $ErrorActionPreference="Stop". $null-valued sort
+        # keys sort to the end; downstream Take-N logic still picks valid rows.
+        $runs = @($Cells[$cellKey] | Sort-Object { Get-RunDate $_ } -Descending)
         if ($runs.Count -eq 0) { continue }
 
         $picked = if ($Aggregate -eq 'latest') { @($runs[0]) } else { @($runs | Select-Object -First 5) }
@@ -188,7 +195,7 @@ function Get-HistoryStats {
         Aggregate = $null  # NDJSON has per-sampler aggregates only — no faithful way to
                            # reconstruct true aggregate percentiles (would need raw samples).
         ByLabel   = $perLabel
-        Runs      = @($matchedRuns.Values | Sort-Object { [datetime]::Parse($_.run_started_at, [System.Globalization.CultureInfo]::InvariantCulture) })
+        Runs      = @($matchedRuns.Values | Sort-Object { Get-RunDate $_ })
     }
 }
 
@@ -230,9 +237,10 @@ if ($isHistoryMode) {
 
     $cells = Get-HistoryCells `
         -Scenario $Scenario `
-        -Major $Major `
+        -HistoryResourceGroup $HistoryResourceGroup `
         -StorageAccountName $StorageAccountName `
-        -ContainerName $ContainerName
+        -ContainerName $ContainerName `
+        -Major $Major
 
     if ($cells.Count -eq 0) {
         Write-PipelineError "No history rows found for scenario '$Scenario'$(if ($Major) { " (major $Major)" }). Nothing to compare."

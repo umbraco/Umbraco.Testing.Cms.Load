@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Build, publish, and zip-deploy a fresh Umbraco CMS project to the target App
 # Service, then poll the seeder status endpoint until seeding completes.
 # Invoked from terraform's null_resource.deploy_umbraco local-exec; expects SP

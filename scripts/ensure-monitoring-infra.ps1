@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Idempotently ensure the long-lived "monitoring" infra exists: a Log Analytics
 # workspace, a custom table for load-test summary rows, a Data Collection
 # Endpoint + Rule for the Logs Ingestion API, and a role assignment so the

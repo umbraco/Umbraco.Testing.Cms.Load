@@ -213,6 +213,13 @@ def configure_delivery_api(environment, **_):
                     f"Delivery API probe returned {response.status_code}; "
                     f"Delivery API tasks disabled (expected for non-DeliveryApi scenarios)"
                 )
+            else:
+                # Mid-pagination failure is unexpected — surface it so a partial
+                # inventory doesn't silently shrink the workload coverage.
+                logger.warning(
+                    f"Delivery API probe at skip={skip} returned {response.status_code}; "
+                    f"truncating inventory at {len(ids)} item(s)"
+                )
             break
 
         try:

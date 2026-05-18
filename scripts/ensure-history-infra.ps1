@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Idempotently ensure the long-lived "history" infra exists: RG, Azure Load Testing, storage, container.
 # First run creates; subsequent runs no-op. Account-key auth avoids RBAC propagation delays.
 
@@ -165,7 +167,11 @@ try {
         --account-name $StorageAccountName `
         -g $HistoryResourceGroup `
         --policy "@$policyFile" | Out-Null
-    Write-Host "   set (Cool after $LifecycleCoolAfterDays days, Archive after $LifecycleArchiveAfterDays days)"
+    $transitions = @()
+    if ($LifecycleCoolAfterDays    -gt 0) { $transitions += "Cool after $LifecycleCoolAfterDays days" }
+    if ($LifecycleArchiveAfterDays -gt 0) { $transitions += "Archive after $LifecycleArchiveAfterDays days" }
+    $summary = if ($transitions) { "set ($($transitions -join ', '))" } else { "set (no transitions enabled)" }
+    Write-Host "   $summary"
 }
 finally {
     Remove-Item $policyFile -Force -ErrorAction SilentlyContinue
