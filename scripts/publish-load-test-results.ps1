@@ -39,7 +39,15 @@ param(
     [Parameter(Mandatory = $true)] [string]$LoadTestEndTime,
     [Parameter(Mandatory = $true)] [string]$AppServiceResourceId,
     [Parameter(Mandatory = $true)] [string]$AppServicePlanResourceId,
-    [Parameter(Mandatory = $true)] [string]$SqlDatabaseResourceId
+    [Parameter(Mandatory = $true)] [string]$SqlDatabaseResourceId,
+
+    # Optional Logs Ingestion API target. When all three are provided, the
+    # script POSTs each row to a Log Analytics custom table in addition to the
+    # blob upload (the Workbook reads from there). Provisioned by
+    # scripts/ensure-monitoring-infra.ps1 — that script prints these three values.
+    [string]$LogAnalyticsDceUri,
+    [string]$LogAnalyticsDcrImmutableId,
+    [string]$LogAnalyticsStreamName
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,11 +57,6 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_helpers.ps1"
-
-if (-not (Test-Path $ResultsDir)) {
-    Write-Warning "Results dir '$ResultsDir' not found - nothing to publish."
-    exit 0
-}
 
 # Carried into every row so cross-run queries don't need joins.
 $metadata = [ordered]@{
@@ -126,26 +129,74 @@ function Get-MetricSummary {
     return $result
 }
 
-Write-Host ""
-Write-Host "Querying Azure Monitor for server-side metrics over [$LoadTestStartTime, $LoadTestEndTime]..."
+# Parse the load-test window into a length in seconds. Returns 0 if either
+# timestamp is missing or unparseable — callers compare against a minimum
+# threshold to decide whether the window is usable for Azure Monitor queries.
+# Tolerant by design: an ALT fast-failure produces empty timestamps; we want
+# the caller's "window unusable" branch, not a hard throw.
+function Get-WindowSeconds {
+    param(
+        [Parameter(Mandatory)] [string]$StartTime,
+        [Parameter(Mandatory)] [string]$EndTime
+    )
+    try {
+        $start = [datetime]::Parse($StartTime, [System.Globalization.CultureInfo]::InvariantCulture)
+        $end   = [datetime]::Parse($EndTime,   [System.Globalization.CultureInfo]::InvariantCulture)
+        return ($end - $start).TotalSeconds
+    } catch {
+        Write-Verbose "Failed to parse load-test window: $($_.Exception.Message)"
+        return 0
+    }
+}
 
-$planMetrics = Get-MetricSummary `
-    -ResourceId $AppServicePlanResourceId `
-    -Metrics @("CpuPercentage", "MemoryPercentage") `
-    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-foreach ($k in $planMetrics.Keys) { $metadata["plan_$k"] = $planMetrics[$k] }
+# Logs Ingestion API mirror. Used for both happy-path rows and the early-exit
+# no_results_dir case below; keeping it as a function avoids duplicating the
+# token/POST/error-handling boilerplate in two places.
+function Send-RowsToLogAnalytics {
+    param([Parameter(Mandatory)] [object[]]$Rows)
+    if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStreamName)) {
+        return
+    }
+    Write-Host ""
+    Write-Host "Posting $($Rows.Count) row(s) to Log Analytics ($LogAnalyticsStreamName)"
+    try {
+        $token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
+        # The DCR expects TimeGenerated on every row; carry the run start time so
+        # all per-sampler rows of one run share a single point on the time axis.
+        $ingestRows = $Rows | ForEach-Object {
+            $row = $_ | Select-Object *
+            $row | Add-Member -NotePropertyName TimeGenerated -NotePropertyValue $RunStartedAt -Force
+            $row
+        }
+        # -AsArray forces array shape even for a single row; the Logs Ingestion API
+        # rejects a bare JSON object.
+        $body = ConvertTo-Json -InputObject @($ingestRows) -Depth 5 -Compress -AsArray
+        $url  = "$LogAnalyticsDceUri/dataCollectionRules/$LogAnalyticsDcrImmutableId/streams/${LogAnalyticsStreamName}?api-version=2023-01-01"
+        Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" `
+            -Headers @{ Authorization = "Bearer $token" } | Out-Null
+        Write-Host "   ok"
+    }
+    catch {
+        # Surface to BOTH the task log and the AzDO summary panel so a stretch
+        # of silent partial-publish failures actually gets noticed before the
+        # Workbook starts looking stale. Pipeline still succeeds (continueOnError
+        # on the publish task) — the issue surfaces as a warning, not a fail.
+        $msg = "Log Analytics ingestion failed: $($_.Exception.Message). Blob upload (if any) remains the source of truth."
+        Write-Warning $msg
+        Write-Host "##vso[task.logissue type=warning]$msg"
+    }
+}
 
-$sqlMetrics = Get-MetricSummary `
-    -ResourceId $SqlDatabaseResourceId `
-    -Metrics @("dtu_consumption_percent", "cpu_percent", "log_write_percent", "physical_data_read_percent") `
-    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-foreach ($k in $sqlMetrics.Keys) { $metadata["sql_$k"] = $sqlMetrics[$k] }
-
-$appMetrics = Get-MetricSummary `
-    -ResourceId $AppServiceResourceId `
-    -Metrics @("Http5xx", "Http4xx") `
-    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-foreach ($k in $appMetrics.Keys) { $metadata["app_$k"] = $appMetrics[$k] }
+# Bail out if there's no results dir at all. Still emit a metadata-only row to
+# Log Analytics so the run is visible in the Workbook (rather than vanishing
+# entirely and leaving downstream regression-check comparing against stale
+# baselines without anyone noticing).
+if (-not (Test-Path $ResultsDir)) {
+    Write-Warning "Results dir '$ResultsDir' not found - emitting metadata-only Log Analytics row and exiting."
+    $metadata.parse_status = "no_results_dir"
+    Send-RowsToLogAnalytics -Rows @([pscustomobject]$metadata)
+    exit 0
+}
 
 # ALT emits engine{N}_results.csv (JMeter format) — raw per-request data, one
 # row per HTTP call. Header: timeStamp, elapsed, label, responseCode,
