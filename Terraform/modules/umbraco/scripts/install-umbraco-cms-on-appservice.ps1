@@ -43,12 +43,15 @@ if (-not $env:ARM_CLIENT_SECRET -and -not $env:ARM_OIDC_TOKEN) {
 # for that major and the run will fail-fast below with a clear message.
 # The version is baked into the build cache key, so bumps auto-invalidate stale builds.
 $seederPackageVersions = @{
-    13 = $null              # TBD: v13 seeder build pending
-    14 = $null              # TBD: v14 seeder build pending
-    15 = $null              # TBD: v15 seeder build pending
-    16 = $null              # TBD: v16 seeder build pending
+    13 = "13.0.0"
+    14 = "14.0.0"
+    15 = "15.0.0"
+    16 = "16.0.0"
     17 = "17.0.0-beta.2"
-    18 = $null              # TBD: v18 seeder build pending
+    # No dedicated v18 build yet; v17 seeder works on v18 (the seeder's surface
+    # area is stable across the v17→v18 jump). Bump to a v18 build if/when one
+    # ships and the v17 fallback drifts.
+    18 = "17.0.0-beta.2"
 }
 
 $umbracoMajor = [int](($UmbracoVersion -split '\.')[0])

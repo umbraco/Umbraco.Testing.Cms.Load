@@ -69,7 +69,7 @@ $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 # Listed here so a major without a published seeder build fails at validation
 # (minute 0) instead of install (minute ~10). Update both sites in lockstep
 # when a new seeder ships.
-$seederShippedMajors = @(17)
+$seederShippedMajors = @(13, 14, 15, 16, 17, 18)
 if ($seederShippedMajors -notcontains $umbracoMajor) {
     Write-PipelineError "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet. Today only v17 has a published seeder. Update the maps in resolve-run-config.ps1 + Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 once the package ships."
 }
