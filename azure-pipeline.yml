@@ -185,6 +185,58 @@ stages:
                 -StorageAccountName "$(historyStorageAccount)"
                 -ContainerName "$(historyContainer)"
 
+  - stage: ensureMonitoringInfra
+    displayName: Ensure monitoring infrastructure
+    dependsOn: ensureHistoryInfra
+    jobs:
+      - job: ensure
+        displayName: Ensure Log Analytics + custom table + DCR + Workbook
+        steps:
+          - task: AzureCLI@2
+            name: ensureMon
+            displayName: Ensure monitoring infra (workspace, table, DCR, role grant)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              # addSpnToEnvironment exposes the service connection's app ID via
+              # $env:servicePrincipalId; we resolve the SP's *object* ID from
+              # that for the role assignment.
+              addSpnToEnvironment: true
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                $PSNativeCommandUseErrorActionPreference = $true
+
+                if ([string]::IsNullOrWhiteSpace($env:servicePrincipalId)) {
+                    Write-Error "servicePrincipalId env var not set. Verify addSpnToEnvironment: true on this task."
+                    exit 1
+                }
+                $spObjectId = az ad sp show --id $env:servicePrincipalId --query id -o tsv
+                if ([string]::IsNullOrWhiteSpace($spObjectId)) {
+                    Write-Error "Couldn't resolve SP object ID from app ID $env:servicePrincipalId. Tenant may require explicit Directory Readers role on the SP."
+                    exit 1
+                }
+                & "$(System.DefaultWorkingDirectory)/scripts/ensure-monitoring-infra.ps1" `
+                    -HistoryResourceGroup "$(historyResourceGroup)" `
+                    -HistoryLocation "$(historyLocation)" `
+                    -WorkspaceName "$(historyWorkspaceName)" `
+                    -DceName "$(historyDceName)" `
+                    -DcrName "$(historyDcrName)" `
+                    -IngestPrincipalId $spObjectId `
+                    -EmitPipelineVars
+
+          - task: AzureCLI@2
+            displayName: Deploy Workbook (idempotent — re-applies dashboards/loadtest.workbook.json)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/deploy-workbook.ps1'
+              arguments: >
+                -HistoryResourceGroup "$(historyResourceGroup)"
+                -HistoryLocation "$(historyLocation)"
+                -WorkspaceName "$(historyWorkspaceName)"
+
   - stage: provision
     displayName: Provision infrastructure
     dependsOn:
@@ -331,6 +383,7 @@ stages:
     displayName: Run load tests
     dependsOn:
       - validateTestCases
+      - ensureMonitoringInfra
       - provision
     # Only run if provision completed; if provision failed we skip straight to cleanup.
     condition: succeeded('provision')
@@ -342,6 +395,9 @@ stages:
       resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
+      monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringStreamName:     $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
     jobs:
       # Smoke check, only when skipLoadTests=true. Load tests do their own warm-up.
       - job: verifyDeployments
@@ -380,6 +436,9 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
           - ${{ if eq(parameters.runStandard, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -388,6 +447,9 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
           - ${{ if eq(parameters.runPro, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -396,6 +458,9 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
           - ${{ if eq(parameters.runEnterprise, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -404,6 +469,9 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
 
           # Stop all apps so none run idle during the manual validation window.
           - task: AzureCLI@2
@@ -426,8 +494,14 @@ stages:
   # baselines accrue per (version, tier, sampler), this becomes a real gate.
   - stage: regression
     displayName: Regression check
-    dependsOn: loadTest
+    dependsOn:
+      - ensureMonitoringInfra
+      - loadTest
     condition: and(succeeded('loadTest'), eq('${{ parameters.skipLoadTests }}', 'False'))
+    variables:
+      monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringStreamName:     $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
     jobs:
       - job: regressionCheck
         displayName: Regression check

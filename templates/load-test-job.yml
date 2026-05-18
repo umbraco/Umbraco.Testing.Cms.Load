@@ -16,6 +16,19 @@ parameters:
   - name: skipWarmup
     type: boolean
     default: false
+  # Logs Ingestion API target (Log Analytics custom table). When all three are
+  # non-empty, publish-load-test-results.ps1 mirrors each summary row to the
+  # custom table so the Workbook can read it. Empty defaults keep the template
+  # backward-compatible if invoked outside the main pipeline.
+  - name: logAnalyticsDceUri
+    type: string
+    default: ''
+  - name: logAnalyticsDcrImmutableId
+    type: string
+    default: ''
+  - name: logAnalyticsStreamName
+    type: string
+    default: ''
 
 steps:
   - task: PowerShell@2
