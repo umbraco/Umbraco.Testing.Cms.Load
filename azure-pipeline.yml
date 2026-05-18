@@ -579,7 +579,12 @@ stages:
         dependsOn:
           - apply
           - runLoadTests
-        condition: and(succeeded('runLoadTests'), eq('${{ parameters.skipLoadTests }}', 'False'))
+        # `succeeded('runLoadTests')` returns true when runLoadTests is *Skipped*
+        # (which happens when `apply` fails and the load-test job's `succeeded()`
+        # condition skips). That would run the regression check against absent
+        # terraform outputs and produce noisy failures. Gate on runLoadTests's
+        # explicit result instead so an apply-failure cleanly skips this job.
+        condition: and(in(dependencies.runLoadTests.result, 'Succeeded'), eq('${{ parameters.skipLoadTests }}', 'False'))
         displayName: Regression check
         steps:
           - task: AzureCLI@2
