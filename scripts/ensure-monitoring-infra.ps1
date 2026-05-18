@@ -48,6 +48,11 @@ $tags = @("project=umbraco-loadtest", "managed_by=ensure-script")
 # in the publisher without a matching column here are dropped at ingestion.
 $columns = @(
     @{ name = "TimeGenerated";                          type = "datetime" }
+    # Same wall-clock value as TimeGenerated today (both sourced from
+    # $(System.PipelineStartTime)) but kept distinct so the original run
+    # time survives any future re-ingest or backfill that would otherwise
+    # overwrite TimeGenerated with the ingest moment.
+    @{ name = "run_started_at";                         type = "datetime" }
     @{ name = "run_id";                                 type = "string"   }
     @{ name = "test_case_id";                           type = "string"   }
     @{ name = "commit";                                 type = "string"   }
