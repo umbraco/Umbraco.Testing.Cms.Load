@@ -61,6 +61,10 @@ $columns = @(
     @{ name = "dotnet_version";                         type = "string"   }
     @{ name = "app_service_sku";                        type = "string"   }
     @{ name = "sql_sku";                                type = "string"   }
+    # pool_dtu_max replaces sql_sku in the Elastic Pool model (per-DB DTU cap).
+    # sql_sku is kept as a column so any historical rows from before the rename
+    # remain queryable; new rows write pool_dtu_max and leave sql_sku empty.
+    @{ name = "pool_dtu_max";                           type = "int"      }
     @{ name = "seeder_preset";                          type = "string"   }
     @{ name = "infra_tier";                             type = "string"   }
     @{ name = "scenario";                               type = "string"   }
