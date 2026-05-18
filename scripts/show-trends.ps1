@@ -83,7 +83,14 @@ if ($cells.Count -eq 0) {
 
 # --- Discover dimensions from the data ---
 
-$versions = @($cells.Values | ForEach-Object { $_[0].umbraco_version } | Sort-Object -Unique)
+# Version-aware sort: lexicographic ordering puts 17.0.10 before 17.0.2 and
+# scrambles prereleases ('17.0.0-rc.1' before '17.0.0') — both wrong. Sort by
+# (release-version, prerelease-suffix), using '~' as the sentinel for an empty
+# suffix so release versions sort AFTER their prereleases (SemVer 2.0.0). The
+# try/catch falls back to a neutral version for anything [version] can't parse.
+$versions = @($cells.Values | ForEach-Object { $_[0].umbraco_version } | Sort-Object -Unique -Property `
+    @{ Expression = { try { [version](($_ -split '-', 2)[0]) } catch { [version]'0.0.0' } } },
+    @{ Expression = { $p = $_ -split '-', 2; if ($p.Count -lt 2) { '~' } else { $p[1] } } })
 $tiers    = @($cells.Values | ForEach-Object { $_[0].infra_tier      } | Sort-Object -Unique)
 $samplers = @($cells.Values | ForEach-Object { $_[0].scenario_name   } | Sort-Object -Unique)
 
