@@ -118,3 +118,39 @@ stages:
                 # Loose style: only complain about syntax errors, not stylistic preferences.
                 yamllint -d "{rules: {document-start: disable, line-length: disable, truthy: disable}}" loadtests/scenarios/
                 Write-Host "scenarios/ yaml lint OK."
+
+      - job: json
+        displayName: JSON syntax check
+        steps:
+          - task: PowerShell@2
+            displayName: ConvertFrom-Json over tracked .json files
+            inputs:
+              targetType: inline
+              pwsh: true
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+              script: |
+                $ErrorActionPreference = "Stop"
+                # Parses every tracked .json — Workbook, scenarios/*/appsettings.json,
+                # tiers.json — to catch trailing-comma typos at PR time instead of at
+                # workbook-deploy / terraform-plan time. Tracked-only (git ls-files)
+                # so .terraform/ and __pycache__/ don't sneak in.
+                $files = git ls-files '*.json'
+                if (-not $files) {
+                    Write-Host "No tracked .json files found."
+                    exit 0
+                }
+                $bad = @()
+                foreach ($f in $files) {
+                    try {
+                        Get-Content -LiteralPath $f -Raw -Encoding utf8 | ConvertFrom-Json -ErrorAction Stop | Out-Null
+                        Write-Host "OK   $f"
+                    } catch {
+                        Write-Host "FAIL $f -- $($_.Exception.Message)"
+                        $bad += $f
+                    }
+                }
+                if ($bad.Count -gt 0) {
+                    Write-Host "##vso[task.logissue type=error]Invalid JSON in $($bad.Count) file(s): $($bad -join ', ')"
+                    exit 1
+                }
+                Write-Host "All $($files.Count) JSON file(s) parsed cleanly."
