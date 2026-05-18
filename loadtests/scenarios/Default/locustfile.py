@@ -20,7 +20,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from locust import FastHttpUser, between, task
 
-from _helpers import pick_url, register_inventory_probe
+from _helpers import pick_url, post_contact_form, register_inventory_probe
 
 register_inventory_probe()
 
@@ -62,13 +62,4 @@ class FrontEndUser(FastHttpUser):
     # Write path - each call creates an Umbraco content node → ~10-15 SQL inserts.
     @task(8)
     def submit_contact_form(self):
-        self.client.post(
-            "/umbraco/api/contactform/submit",
-            json={
-                "name": "LoadTest VU",
-                "email": "loadtest@example.com",
-                "subject": "Locust submission",
-                "message": "Auto-generated submission from the Umbraco load-test locustfile.",
-            },
-            name="ContactFormSubmit",
-        )
+        post_contact_form(self)

@@ -24,6 +24,7 @@ runs for a given scenario is fully visible in that scenario's locustfile.
 
 import logging
 import random
+import uuid
 import requests
 from locust import events
 
@@ -130,3 +131,46 @@ def pick_url(user, bucket: str, name: str) -> None:
     if not urls:
         raise RuntimeError(f"Bucket '{bucket}' is empty - inventory probe failed or seeder didn't seed it")
     user.client.get(random.choice(urls), name=name)
+
+
+def post_contact_form(user, name: str = "ContactFormSubmit") -> None:
+    """Submit a contact form with a randomised payload, asserting on the body.
+
+    Per-call uuid so DB unique-constraints (if added) and SQL Server's plan/page
+    cache can't short-circuit the write path — an identical payload every call
+    masks real insert pressure and undercounts the tier-differentiating SQL load.
+
+    catch_response so a 200 OK carrying validation errors (e.g. {"success":
+    false, "errors": [...]}) isn't silently counted as a successful write. The
+    endpoint normally returns either a JSON success payload or a 4xx — anything
+    else (including 2xx with an error body) is treated as a failure.
+    """
+    token = uuid.uuid4().hex
+    payload = {
+        "name": f"LoadTest VU {token[:8]}",
+        "email": f"loadtest+{token}@example.com",
+        "subject": f"Locust submission {token[:8]}",
+        "message": "Auto-generated submission from the Umbraco load-test locustfile.",
+    }
+    with user.client.post(
+        "/umbraco/api/contactform/submit",
+        json=payload,
+        name=name,
+        catch_response=True,
+    ) as response:
+        if response.status_code >= 400:
+            response.failure(f"HTTP {response.status_code}")
+            return
+        try:
+            body = response.json()
+        except ValueError:
+            if response.text:
+                response.failure("non-JSON body")
+            return
+        if isinstance(body, dict):
+            if body.get("success") is False:
+                response.failure(f"success=false: {body.get('errors') or body}")
+                return
+            errors = body.get("errors") or body.get("Errors")
+            if errors:
+                response.failure(f"errors in body: {errors}")
