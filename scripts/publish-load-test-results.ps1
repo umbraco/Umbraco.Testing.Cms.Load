@@ -103,10 +103,14 @@ function Get-MetricSummary {
         $data = $json | ConvertFrom-Json
         foreach ($metric in $data.value) {
             $name = $metric.name.value
-            $points = @()
-            if ($metric.timeseries.Count -gt 0) {
-                $points = @($metric.timeseries[0].data | Where-Object { $null -ne $_.average })
-            }
+            # Flatten across every timeseries entry, not just [0]. Azure Monitor
+            # emits one timeseries per dimensioned instance — e.g. a P1v3 plan
+            # with worker_count > 1, or a SQL DB with read replicas — and reading
+            # only [0] under-samples by (N-1)/N. _avg is the mean across all
+            # (instance × minute) points; _max is the peak load on any instance
+            # at any minute (the saturation lens).
+            $points = @($metric.timeseries | ForEach-Object { $_.data } |
+                Where-Object { $null -ne $_.average })
             if ($points.Count -eq 0) {
                 $result["${name}_avg"] = $null
                 $result["${name}_max"] = $null
