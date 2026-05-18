@@ -64,6 +64,16 @@ if (-not $dotnetVersion) {
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 
+# Mirror of $seederPackageVersions in
+# Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1.
+# Listed here so a major without a published seeder build fails at validation
+# (minute 0) instead of install (minute ~10). Update both sites in lockstep
+# when a new seeder ships.
+$seederShippedMajors = @(17)
+if ($seederShippedMajors -notcontains $umbracoMajor) {
+    Write-PipelineError "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet. Today only v17 has a published seeder. Update the maps in resolve-run-config.ps1 + Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 once the package ships."
+}
+
 # 'Auto' = Terraform's "use the tier's default" sentinel (0 for DTU, '' for SKU).
 $poolDtuOverrideValue = if ($PoolDtuOverride -eq 'Auto') { '0' } else { $PoolDtuOverride }
 $appSkuOverrideValue  = if ($AppSkuOverride  -eq 'Auto') { ''  } else { $AppSkuOverride  }
