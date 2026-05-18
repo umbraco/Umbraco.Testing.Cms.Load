@@ -170,6 +170,7 @@ if (-not (Test-Path -LiteralPath $scenariosRoot -PathType Container)) {
     Fail "scenarios root folder not found: loadtests/scenarios/"
 }
 $scenarioFolders = @(Get-ChildItem -LiteralPath $scenariosRoot -Directory | ForEach-Object { $_.Name })
+Write-Host "Available scenarios: $($scenarioFolders -join ', ')"
 
 # --- Process each case ---
 
@@ -188,10 +189,10 @@ foreach ($case in $cases) {
         }
     }
 
-    # Supported range is v13–v18. The .NET runtime map (in azure-pipeline.yml's
-    # resolver) and the seeder-package-version map (in install-umbraco-cms-on-appservice.ps1)
-    # must know each major; resolver catches new majors with an explicit error.
-    # Here we just enforce the lower bound + parse.
+    # Supported range is v13–v18. The .NET runtime + seeder package version maps
+    # in resolve-run-config.ps1 and install-umbraco-cms-on-appservice.ps1 must
+    # know each major; resolve-run-config catches new majors with an explicit
+    # error. Here we just enforce the lower bound + parse.
     $umbracoMajorRaw = ([string]$case.umbraco).Split('.')[0]
     $umbracoMajor    = 0
     if (-not [int]::TryParse($umbracoMajorRaw, [ref]$umbracoMajor)) {
@@ -199,16 +200,6 @@ foreach ($case in $cases) {
     }
     if ($umbracoMajor -lt 13) {
         Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is unsupported (this pipeline targets v13+)"
-    }
-
-    # Mirror of $seederPackageVersions in
-    # Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1.
-    # Listed here so a major without a published seeder build fails at minute 0
-    # (validator) instead of minute ~10 (install). Update both sites in lockstep
-    # when a new seeder ships.
-    $seederShippedMajors = @(17)
-    if ($seederShippedMajors -notcontains $umbracoMajor) {
-        Fail "case ${caseIndex}: Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet. Today only v17 has a published seeder. Update the maps in scripts/prepare-test-cases.ps1 + Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 once the package ships."
     }
 
     # Scenarios with v17-only code overlays (e.g. DeliveryApi's Program.cs uses

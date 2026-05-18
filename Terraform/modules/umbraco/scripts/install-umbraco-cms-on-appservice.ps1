@@ -70,7 +70,7 @@ $absoluteBuildDir   = Join-Path $terraformCwd $updatedVersionName
 # Program.cs) invalidates the cache. Manifest is "{relpath}={file-sha}|..."
 # so renames also invalidate. appsettings.json edits invalidate too — slight
 # over-invalidation since appsettings is applied at the App Service level
-# (not baked into the binary), but the extra build is cheap and the simpler
+# (not baked into the binary), but the extra rebuild is quick and the simpler
 # cache key beats teaching the function which files matter.
 function Get-OverlayHash([string] $rootPath) {
     if (-not (Test-Path -LiteralPath $rootPath -PathType Container)) { return "noverlay" }

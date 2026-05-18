@@ -3,8 +3,10 @@
 #   . "$PSScriptRoot/_history-helpers.ps1"
 # Then call Get-HistoryCells / Get-Median / Get-HistoryPrefix.
 #
-# Generic helpers (storage key, percentile, error exit) live in _helpers.ps1 —
-# pulled in here so callers only have to dot-source one file.
+# The leading underscore signals "internal helper, not a top-level CLI" so it
+# stands apart in directory listings. Generic helpers (storage key, percentile,
+# error exit) live in _helpers.ps1 — pulled in here so callers only have to
+# dot-source one file.
 
 . "$PSScriptRoot/_helpers.ps1"
 

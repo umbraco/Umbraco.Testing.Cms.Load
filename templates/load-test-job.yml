@@ -1,10 +1,10 @@
 # Per-case load test step group: read terraform outputs -> start -> warm-up -> load test -> publish.
+#
+# Only the per-tier values are template parameters. Everything else (service
+# connection, history-RG/SA/container/loadtest names) is pipeline-variable scope
+# and referenced as $() directly inside the steps.
 
 parameters:
-  - name: serviceConnection
-    type: string
-  - name: resourceGroupName
-    type: string
   - name: testCaseId
     type: string
   - name: tier
@@ -13,33 +13,9 @@ parameters:
     type: string
   - name: umbracoVersion
     type: string
-  - name: coldStart
+  - name: skipWarmup
     type: boolean
     default: false
-  - name: historyResourceGroup
-    type: string
-  - name: historyLoadTestName
-    type: string
-  - name: historyStorageAccount
-    type: string
-  - name: historyContainer
-    type: string
-  # Logs Ingestion API target (Log Analytics custom table). When all three are
-  # non-empty, publish-load-test-results.ps1 mirrors each summary row to the
-  # custom table so the Workbook can read it. Empty defaults keep the template
-  # backward-compatible if invoked outside the main pipeline.
-  - name: logAnalyticsDceUri
-    type: string
-    default: ''
-  - name: logAnalyticsDcrImmutableId
-    type: string
-    default: ''
-  - name: logAnalyticsStreamName
-    type: string
-    default: ''
-  # engineInstances and seederPreset come in as runtime variables
-  # (resolvedEngineInstances / resolvedSeederPreset) emitted by the validate
-  # stage's profile resolver. They flow through stage-level variable mappings.
 
 steps:
   - task: PowerShell@2
@@ -65,7 +41,7 @@ steps:
         Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
         Write-Host "##vso[task.setvariable variable=appServicePlanId]$($tfOut.app_service_plan_id)"
         Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
-        Write-Host "##vso[task.setvariable variable=sqlSku]$($tfOut.sql_sku)"
+        Write-Host "##vso[task.setvariable variable=poolDtuMax]$($tfOut.pool_dtu_max)"
         Write-Host "##vso[task.setvariable variable=sqlDatabaseName]$($tfOut.sql_database_name)"
         Write-Host "##vso[task.setvariable variable=sqlDatabaseId]$($tfOut.sql_database_id)"
         Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
@@ -84,26 +60,26 @@ steps:
     env:
       TEST_CASE_OUTPUTS: $(testCaseOutputs)
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'scriptPath'
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/stop-all-app-services.ps1'
       arguments: >
-        -ResourceGroupName "${{ parameters.resourceGroupName }}"
+        -ResourceGroupName "$(azureResourceGroup)"
         -ExceptAppService "$(appServiceName)"
 
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
     condition: succeeded()
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |
-        az webapp start -n $(appServiceName) -g ${{ parameters.resourceGroupName }}
+        az webapp start -n $(appServiceName) -g $(azureResourceGroup)
 
-  # Skipped when coldStart=true - so the test hits a freshly started App Service.
-  - ${{ if not(parameters.coldStart) }}:
+  # Skipped when skipWarmup=true — so the test hits a freshly started App Service.
+  - ${{ if not(parameters.skipWarmup) }}:
     - task: PowerShell@2
       displayName: 'Warm up [${{ parameters.testCaseId }}]'
       condition: succeeded()
@@ -137,141 +113,30 @@ steps:
           }
 
   # Load test config is per-case so runs stay distinguishable in the portal.
+  # Generation lives in scripts/generate-loadtest-config.ps1 so it's locally
+  # testable and the template stays scannable.
   - task: AzureCLI@2
     displayName: 'Generate load test config [${{ parameters.testCaseId }}]'
     condition: succeeded()
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
-      scriptLocation: 'inlineScript'
-      inlineScript: |
-        $subscriptionId = az account show --query id -o tsv
-        $appServiceName = "$(appServiceName)"
-        $resourceGroup = "${{ parameters.resourceGroupName }}"
-        $appServiceResourceId = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.Web/sites/$appServiceName"
-
-        # App Service Plan + SQL Database resourceIds, read above.
-        # CpuPercentage/MemoryPercentage live on the Plan (Microsoft.Web/serverfarms),
-        # not on the site (Microsoft.Web/sites) - so we register the plan as its own
-        # appComponent. SQL metrics scope to the database, not the server.
-        $appServicePlanId    = "$(appServicePlanId)"
-        $sqlDatabaseId       = "$(sqlDatabaseId)"
-        $sqlDatabaseName     = "$(sqlDatabaseName)"
-
-        $planComponent = ""
-        if ($appServicePlanId) {
-        $planComponent = @"
-          - resourceId: "$appServicePlanId"
-            resourceName: "$appServiceName-plan"
-            kind: "app"
-            metrics:
-              - name: CpuPercentage
-                namespace: Microsoft.Web/serverfarms
-                aggregation: Average
-              - name: MemoryPercentage
-                namespace: Microsoft.Web/serverfarms
-                aggregation: Average
-        "@
-        }
-
-        $sqlComponent = ""
-        if ($sqlDatabaseId) {
-        $sqlComponent = @"
-          - resourceId: "$sqlDatabaseId"
-            resourceName: "$sqlDatabaseName"
-            kind: "v12.0"
-            metrics:
-              - name: dtu_consumption_percent
-                namespace: Microsoft.Sql/servers/databases
-                aggregation: Average
-              - name: cpu_percent
-                namespace: Microsoft.Sql/servers/databases
-                aggregation: Average
-              - name: physical_data_read_percent
-                namespace: Microsoft.Sql/servers/databases
-                aggregation: Average
-              - name: log_write_percent
-                namespace: Microsoft.Sql/servers/databases
-                aggregation: Average
-              - name: connection_successful
-                namespace: Microsoft.Sql/servers/databases
-                aggregation: Total
-              - name: deadlock
-                namespace: Microsoft.Sql/servers/databases
-                aggregation: Total
-        "@
-        }
-
-        # testId scopes the Azure Load Testing "Compare runs" view: one load test per
-        # scenario, with every (version, tier) run nested under it so the portal lets
-        # you select multiple to overlay. testId pattern is ^[a-z0-9_-]{2,50}$.
-        $rawScenario = '${{ parameters.scenario }}'.ToLowerInvariant()
-        $scenarioSafe = (($rawScenario -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
-        $testId = "umbraco-lt-$scenarioSafe"
-
-        # safeTestCaseId still identifies this specific case for the build artifact + config file.
-        $rawKey = '${{ parameters.testCaseId }}'.ToLowerInvariant()
-        $safeKey = (($rawKey -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
-        if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
-        Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
-
-        $config = @"
-        version: v0.1
-        testId: $testId
-        displayName: Umbraco load test - ${{ parameters.scenario }}
-        testPlan: loadtests/locustfile.py
-        testType: Locust
-        description: Holds all version/tier runs for the '${{ parameters.scenario }}' scenario; pick runs in 'Compare' to overlay.
-        engineInstances: $(resolvedEngineInstances)
-        failureCriteria:
-          - avg(response_time_ms) > 2000
-          - p95(response_time_ms) > 5000
-          - percentage(error) > 5
-        autoStop:
-          errorPercentage: 80
-          timeWindow: 60
-        env:
-          - name: LOCUST_HOST
-            value: "https://$(hostName)"
-          - name: LOCUST_USERS
-            value: "$(userAmount)"
-          - name: LOCUST_SPAWN_RATE
-            value: "$(spawnRate)"
-          - name: LOCUST_RUN_TIME
-            value: "$(testDuration)"
-        appComponents:
-          - resourceId: "$appServiceResourceId"
-            resourceName: "$appServiceName"
-            kind: "app"
-            metrics:
-              - name: HttpResponseTime
-                namespace: Microsoft.Web/sites
-                aggregation: Average
-              - name: Requests
-                namespace: Microsoft.Web/sites
-                aggregation: Total
-              - name: Http5xx
-                namespace: Microsoft.Web/sites
-                aggregation: Total
-              - name: Http4xx
-                namespace: Microsoft.Web/sites
-                aggregation: Total
-        $planComponent
-        $sqlComponent
-        "@
-
-        $configPath = "$(System.DefaultWorkingDirectory)/loadtest-config-$safeKey.yaml"
-        $config | Out-File -FilePath $configPath -Encoding utf8
-        Write-Host "##vso[task.setvariable variable=loadTestConfigPath]$configPath"
-
-        # Surface resource IDs so the publish step can query Azure Monitor for
-        # server-side metrics over the test window.
-        Write-Host "##vso[task.setvariable variable=appServiceResourceId]$appServiceResourceId"
-
-        Write-Host "Generated load test config at: $configPath"
-        Write-Host "App Service:      $appServiceResourceId"
-        if ($appServicePlanId) { Write-Host "App Service Plan: $appServicePlanId" }
-        if ($sqlDatabaseId)    { Write-Host "SQL Database:     $sqlDatabaseId" }
+      scriptLocation: 'scriptPath'
+      scriptPath: '$(System.DefaultWorkingDirectory)/scripts/generate-loadtest-config.ps1'
+      arguments: >
+        -AppServiceName "$(appServiceName)"
+        -ResourceGroupName "$(azureResourceGroup)"
+        -HostName "$(hostName)"
+        -Scenario "${{ parameters.scenario }}"
+        -TestCaseId "${{ parameters.testCaseId }}"
+        -EngineInstances $(resolvedEngineInstances)
+        -UserAmount $(userAmount)
+        -SpawnRate $(spawnRate)
+        -TestDuration $(testDuration)
+        -AppServicePlanId "$(appServicePlanId)"
+        -SqlDatabaseId "$(sqlDatabaseId)"
+        -SqlDatabaseName "$(sqlDatabaseName)"
+        -OutputDir "$(System.DefaultWorkingDirectory)"
 
   # Capture the load-test window in UTC ISO 8601 so the publish step can query
   # Azure Monitor for server-side metrics (CPU, DTU, memory) over the same time
@@ -295,16 +160,16 @@ steps:
     condition: succeeded()
     continueOnError: true
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       loadTestConfigFile: '$(loadTestConfigPath)'
-      resourceGroup: '${{ parameters.historyResourceGroup }}'
-      loadTestResource: '${{ parameters.historyLoadTestName }}'
+      resourceGroup: '$(historyResourceGroup)'
+      loadTestResource: '$(historyLoadTestName)'
       # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
-      # SQL SKU is in the name explicitly — when sqlSkuOverride is set, the run name has to
-      # differentiate (e.g. 'Standard S2' default vs 'Standard S3' override) or you can't tell
-      # override runs apart from default-pairing runs in the portal Compare view.
-      loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(sqlSku) #$(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], app=$(appServiceSku) sql=$(sqlSku), $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
+      # The per-DB DTU cap is in the name explicitly — when poolDtuOverride is set, the run
+      # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
+      # or you can't tell override runs apart from default-pairing runs in the portal Compare view.
+      loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(poolDtuMax)DTU #$(Build.BuildId)'
+      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], app=$(appServiceSku) sql=$(poolDtuMax)DTU, $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
 
   - task: PowerShell@2
     displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
@@ -336,15 +201,15 @@ steps:
     condition: succeededOrFailed()
     continueOnError: true
     inputs:
-      azureSubscription: '${{ parameters.serviceConnection }}'
+      azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'scriptPath'
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-load-test-results.ps1'
       arguments: >
         -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
-        -HistoryResourceGroup "${{ parameters.historyResourceGroup }}"
-        -StorageAccountName "${{ parameters.historyStorageAccount }}"
-        -ContainerName "${{ parameters.historyContainer }}"
+        -HistoryResourceGroup "$(historyResourceGroup)"
+        -StorageAccountName "$(historyStorageAccount)"
+        -ContainerName "$(historyContainer)"
         -BuildId "$(Build.BuildId)"
         -Commit "$(Build.SourceVersion)"
         -Branch "$(Build.SourceBranchName)"
@@ -352,14 +217,14 @@ steps:
         -UmbracoVersion "${{ parameters.umbracoVersion }}"
         -DotNetVersion "$(resolvedDotnetVersion)"
         -AppServiceSku "$(appServiceSku)"
-        -SqlSku "$(sqlSku)"
+        -PoolDtuMax $(poolDtuMax)
         -SeederPreset "$(resolvedSeederPreset)"
         -Tier "${{ parameters.tier }}"
         -Scenario "${{ parameters.scenario }}"
         -UserCount $(userAmount)
         -SpawnRate $(spawnRate)
         -DurationSeconds $(testDuration)
-        -ColdStart "${{ parameters.coldStart }}"
+        -SkipWarmup "${{ parameters.skipWarmup }}"
         -TestCaseId "${{ parameters.testCaseId }}"
         -LoadTestStartTime "$(loadTestStartTime)"
         -LoadTestEndTime "$(loadTestEndTime)"

@@ -23,14 +23,14 @@ param(
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$DotNetVersion,
     [Parameter(Mandatory = $true)] [string]$AppServiceSku,
-    [Parameter(Mandatory = $true)] [string]$SqlSku,
+    [Parameter(Mandatory = $true)] [int]$PoolDtuMax,
     [Parameter(Mandatory = $true)] [string]$SeederPreset,
     [Parameter(Mandatory = $true)] [string]$Tier,
     [Parameter(Mandatory = $true)] [string]$Scenario,
     [Parameter(Mandatory = $true)] [int]$UserCount,
     [Parameter(Mandatory = $true)] [int]$SpawnRate,
     [Parameter(Mandatory = $true)] [int]$DurationSeconds,
-    [Parameter(Mandatory = $true)] [string]$ColdStart,
+    [Parameter(Mandatory = $true)] [string]$SkipWarmup,
     [Parameter(Mandatory = $true)] [string]$TestCaseId,
 
     # Server-side metric query window + resource IDs. Queried via Azure Monitor
@@ -39,15 +39,7 @@ param(
     [Parameter(Mandatory = $true)] [string]$LoadTestEndTime,
     [Parameter(Mandatory = $true)] [string]$AppServiceResourceId,
     [Parameter(Mandatory = $true)] [string]$AppServicePlanResourceId,
-    [Parameter(Mandatory = $true)] [string]$SqlDatabaseResourceId,
-
-    # Optional Logs Ingestion API target. When all three are provided, the
-    # script POSTs each row to a Log Analytics custom table in addition to the
-    # blob upload (the Workbook reads from there). Provisioned by
-    # scripts/ensure-monitoring-infra.ps1 — that script prints these three values.
-    [string]$LogAnalyticsDceUri,
-    [string]$LogAnalyticsDcrImmutableId,
-    [string]$LogAnalyticsStreamName
+    [Parameter(Mandatory = $true)] [string]$SqlDatabaseResourceId
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,6 +49,11 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_helpers.ps1"
+
+if (-not (Test-Path $ResultsDir)) {
+    Write-Warning "Results dir '$ResultsDir' not found - nothing to publish."
+    exit 0
+}
 
 # Carried into every row so cross-run queries don't need joins.
 $metadata = [ordered]@{
@@ -68,14 +65,17 @@ $metadata = [ordered]@{
     umbraco_version  = $UmbracoVersion
     dotnet_version   = $DotNetVersion
     app_service_sku  = $AppServiceSku
-    sql_sku          = $SqlSku
+    pool_dtu_max     = $PoolDtuMax
     seeder_preset    = $SeederPreset
     infra_tier       = $Tier
     scenario         = $Scenario
     user_count       = $UserCount
     spawn_rate       = $SpawnRate
     duration_seconds = $DurationSeconds
-    cold_start       = [bool]::Parse($ColdStart)
+    # Schema name stays `cold_start` — it describes the test condition
+    # (was warmup skipped, i.e. cold-start exercised). $SkipWarmup is the
+    # procedural pipeline-side phrasing; both mean the same boolean.
+    cold_start       = [bool]::Parse($SkipWarmup)
 }
 
 # Server-side metrics from Azure Monitor over the load-test window. Latency-only
@@ -126,74 +126,32 @@ function Get-MetricSummary {
     return $result
 }
 
-# Parse the load-test window into a length in seconds. Returns 0 if either
-# timestamp is missing or unparseable — callers compare against a minimum
-# threshold to decide whether the window is usable for Azure Monitor queries.
-# Tolerant by design: an ALT fast-failure produces empty timestamps; we want
-# the caller's "window unusable" branch, not a hard throw.
-function Get-WindowSeconds {
-    param(
-        [Parameter(Mandatory)] [string]$StartTime,
-        [Parameter(Mandatory)] [string]$EndTime
-    )
-    try {
-        $start = [datetime]::Parse($StartTime, [System.Globalization.CultureInfo]::InvariantCulture)
-        $end   = [datetime]::Parse($EndTime,   [System.Globalization.CultureInfo]::InvariantCulture)
-        return ($end - $start).TotalSeconds
-    } catch {
-        Write-Verbose "Failed to parse load-test window: $($_.Exception.Message)"
-        return 0
-    }
-}
+Write-Host ""
+Write-Host "Querying Azure Monitor for server-side metrics over [$LoadTestStartTime, $LoadTestEndTime]..."
 
-# Logs Ingestion API mirror. Used for both happy-path rows and the early-exit
-# no_results_dir case below; keeping it as a function avoids duplicating the
-# token/POST/error-handling boilerplate in two places.
-function Send-RowsToLogAnalytics {
-    param([Parameter(Mandatory)] [object[]]$Rows)
-    if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStreamName)) {
-        return
-    }
-    Write-Host ""
-    Write-Host "Posting $($Rows.Count) row(s) to Log Analytics ($LogAnalyticsStreamName)"
-    try {
-        $token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
-        # The DCR expects TimeGenerated on every row; carry the run start time so
-        # all per-sampler rows of one run share a single point on the time axis.
-        $ingestRows = $Rows | ForEach-Object {
-            $row = $_ | Select-Object *
-            $row | Add-Member -NotePropertyName TimeGenerated -NotePropertyValue $RunStartedAt -Force
-            $row
-        }
-        # -AsArray forces array shape even for a single row; the Logs Ingestion API
-        # rejects a bare JSON object.
-        $body = ConvertTo-Json -InputObject @($ingestRows) -Depth 5 -Compress -AsArray
-        $url  = "$LogAnalyticsDceUri/dataCollectionRules/$LogAnalyticsDcrImmutableId/streams/${LogAnalyticsStreamName}?api-version=2023-01-01"
-        Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" `
-            -Headers @{ Authorization = "Bearer $token" } | Out-Null
-        Write-Host "   ok"
-    }
-    catch {
-        # Surface to BOTH the task log and the AzDO summary panel so a stretch
-        # of silent partial-publish failures actually gets noticed before the
-        # Workbook starts looking stale. Pipeline still succeeds (continueOnError
-        # on the publish task) — the issue surfaces as a warning, not a fail.
-        $msg = "Log Analytics ingestion failed: $($_.Exception.Message). Blob upload (if any) remains the source of truth."
-        Write-Warning $msg
-        Write-Host "##vso[task.logissue type=warning]$msg"
-    }
-}
+$planMetrics = Get-MetricSummary `
+    -ResourceId $AppServicePlanResourceId `
+    -Metrics @("CpuPercentage", "MemoryPercentage") `
+    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
+foreach ($k in $planMetrics.Keys) { $metadata["plan_$k"] = $planMetrics[$k] }
 
-# Bail out if there's no results dir at all. Still emit a metadata-only row to
-# Log Analytics so the run is visible in the Workbook (rather than vanishing
-# entirely and leaving downstream regression-check comparing against stale
-# baselines without anyone noticing).
-if (-not (Test-Path $ResultsDir)) {
-    Write-Warning "Results dir '$ResultsDir' not found - emitting metadata-only Log Analytics row and exiting."
-    $metadata.parse_status = "no_results_dir"
-    Send-RowsToLogAnalytics -Rows @([pscustomobject]$metadata)
-    exit 0
-}
+$sqlMetrics = Get-MetricSummary `
+    -ResourceId $SqlDatabaseResourceId `
+    -Metrics @("dtu_consumption_percent", "cpu_percent", "log_write_percent", "physical_data_read_percent") `
+    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
+foreach ($k in $sqlMetrics.Keys) { $metadata["sql_$k"] = $sqlMetrics[$k] }
+
+$appMetrics = Get-MetricSummary `
+    -ResourceId $AppServiceResourceId `
+    -Metrics @("Http5xx", "Http4xx") `
+    -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
+foreach ($k in $appMetrics.Keys) { $metadata["app_$k"] = $appMetrics[$k] }
+
+# ALT emits engine{N}_results.csv (JMeter format) — raw per-request data, one
+# row per HTTP call. Header: timeStamp, elapsed, label, responseCode,
+# responseMessage, threadName, dataType, success, failureMessage, ...
+# Multi-engine runs produce one CSV per engine; we aggregate across all of them.
+# Get-Pct and Parse-JmeterCsv are provided by _helpers.ps1.
 
 # Window guard. AzureLoadTest@1 has continueOnError: true; on a fast failure
 # (engine provisioning, auth) the captured window is just seconds, and querying
@@ -238,35 +196,21 @@ else {
 
 $rows = @()
 
-# Azure Load Testing's task downloads its artifacts as results.zip (and
-# report.zip) but doesn't unpack them. The engine*_results.csv we scan for
-# below lives INSIDE results.zip, so without this expansion every run produces
-# a metadata-only row (parse_status="no_metrics") and the Workbook filters it
-# out as missing real metrics.
-#
-# Extract OUTSIDE $ResultsDir (to a temp dir) so the upload-batch below doesn't
-# end up duplicating the extracted contents alongside the original zip under
-# the /raw prefix. Engine-file search then walks both $ResultsDir (for any
-# loose CSVs) and the temp extraction dirs.
-$engineSearchPaths = @($ResultsDir)
+# Azure Load Testing's task downloads run artifacts as results.zip (and
+# report.zip) and doesn't unpack them. The engine*_results.csv we scan for
+# below lives INSIDE results.zip, so without this expansion every run
+# would silently fall through to parse_status="no_metrics" and produce a
+# metadata-only NDJSON row with no latency data.
 $resultsZips = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "results.zip" -File -ErrorAction SilentlyContinue)
 foreach ($zip in $resultsZips) {
-    $dest = Join-Path ([IO.Path]::GetTempPath()) "loadtest-extract-$BuildId-$([Guid]::NewGuid())"
-    try {
+    $dest = Join-Path $zip.Directory.FullName ($zip.BaseName + "-extracted")
+    if (-not (Test-Path $dest)) {
         Expand-Archive -Path $zip.FullName -DestinationPath $dest -Force
-        $engineSearchPaths += $dest
         Write-Host "Extracted $($zip.Name) to $dest"
-    } catch {
-        # Don't fail the publish — fall through to "no engine files" with a
-        # warning, so the run still produces a metadata-only row.
-        Write-Warning "Failed to extract $($zip.FullName): $($_.Exception.Message) - engine CSV inside may be unreachable."
     }
 }
 
-$engineFiles = @()
-foreach ($searchPath in $engineSearchPaths) {
-    $engineFiles += @(Get-ChildItem -Path $searchPath -Recurse -Filter "engine*_results.csv" -File -ErrorAction SilentlyContinue)
-}
+$engineFiles = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "engine*_results.csv" -File -ErrorAction SilentlyContinue)
 if ($engineFiles.Count -gt 0) {
     Write-Host "Parsing $($engineFiles.Count) engine result file(s) (JMeter format):"
     $engineFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }

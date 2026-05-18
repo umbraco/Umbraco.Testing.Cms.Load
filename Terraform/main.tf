@@ -34,10 +34,11 @@ module "umbraco" {
   resource_group_name     = var.resource_group_name
   resource_group_location = var.resource_group_location
 
-  tier_specs       = local.tier_specs
-  test_cases       = var.test_cases
-  seeder_preset    = var.seeder_preset
-  sql_sku_override = var.sql_sku_override
+  tier_specs        = local.tier_specs
+  test_cases        = var.test_cases
+  seeder_preset     = var.seeder_preset
+  pool_dtu_override = var.pool_dtu_override
+  app_sku_override  = var.app_sku_override
 
   budget_alert_amount        = var.budget_alert_amount
   budget_alert_threshold_pct = var.budget_alert_threshold_pct

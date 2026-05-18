@@ -76,10 +76,10 @@ $isCsvMode     = $BaselinePath -or $CandidatePath
 $isHistoryMode = $Scenario -or $HistoryResourceGroup -or $StorageAccountName -or $ContainerName
 
 if ($isCsvMode -and $isHistoryMode) {
-    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-HistoryResourceGroup/-StorageAccountName/-ContainerName) — not both."
+    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-StorageAccountName/-ContainerName) — not both."
 }
 if (-not ($isCsvMode -or $isHistoryMode)) {
-    Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -HistoryResourceGroup + -StorageAccountName + -ContainerName + version/tier coordinates)."
+    Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -StorageAccountName + -ContainerName + version/tier coordinates)."
 }
 
 if ($isCsvMode) {
@@ -91,8 +91,8 @@ if ($isCsvMode) {
 }
 
 if ($isHistoryMode) {
-    if (-not ($Scenario -and $HistoryResourceGroup -and $StorageAccountName -and $ContainerName)) {
-        Write-PipelineError "History mode requires -Scenario, -HistoryResourceGroup, -StorageAccountName, and -ContainerName."
+    if (-not ($Scenario -and $StorageAccountName -and $ContainerName)) {
+        Write-PipelineError "History mode requires -Scenario, -StorageAccountName, and -ContainerName."
     }
     $isVersionPair = $BaselineVersion -and $CandidateVersion
     $isTierPair    = $BaselineTier -and $CandidateTier

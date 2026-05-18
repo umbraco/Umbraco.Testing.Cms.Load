@@ -13,41 +13,25 @@ locals {
   })
 
   # Hash the scenario AdditionalSetup tree so deploy_umbraco re-runs on any overlay edit.
+  # The validator allows scenarios to omit the folder entirely; try() returns []
+  # when the directory doesn't exist, producing a stable empty-set hash.
   scenario_overlay_dir   = "${path.root}/../loadtests/scenarios/${var.scenario}/AdditionalSetup"
-  scenario_overlay_files = sort(tolist(fileset(local.scenario_overlay_dir, "**")))
+  scenario_overlay_files = try(sort(tolist(fileset(local.scenario_overlay_dir, "**"))), [])
   scenario_overlay_hash = sha256(join("|", [
     for f in local.scenario_overlay_files : "${f}=${filesha256("${local.scenario_overlay_dir}/${f}")}"
   ]))
 }
 
-# SQL server
-resource "azurerm_mssql_server" "sql_server" {
-  name                         = "${var.resource_name_prefix}-sqlserver-${local.case_suffix}"
-  resource_group_name          = var.resource_group_name
-  location                     = var.resource_group_location
-  version                      = "12.0"
-  administrator_login          = var.admin_login
-  administrator_login_password = var.admin_password
-  minimum_tls_version          = "1.2"
-  tags                         = local.case_tags
-}
-
-# Allow all Azure services to access the SQL server.
-resource "azurerm_mssql_firewall_rule" "allow_azure_services" {
-  name             = "AllowAzureServices-${local.case_suffix}"
-  server_id        = azurerm_mssql_server.sql_server.id
-  start_ip_address = "0.0.0.0"
-  end_ip_address   = "0.0.0.0"
-}
-
-# Database
+# Database - joins the per-tier Elastic Pool. The Cloud model is one shared
+# pool per plan; per-DB DTU cap is enforced by the pool's per_database_settings.
+# Setting sku_name = "ElasticPool" is the documented way to attach to a pool.
 resource "azurerm_mssql_database" "database" {
-  name        = "${var.resource_name_prefix}-db-${local.case_suffix}"
-  server_id   = azurerm_mssql_server.sql_server.id
-  collation   = "SQL_Latin1_General_CP1_CI_AS"
-  max_size_gb = var.sql_max_size_gb
-  sku_name    = var.sql_sku
-  tags        = local.case_tags
+  name            = "${var.resource_name_prefix}-db-${local.case_suffix}"
+  server_id       = var.sql_server_id
+  collation       = "SQL_Latin1_General_CP1_CI_AS"
+  sku_name        = "ElasticPool"
+  elastic_pool_id = var.elastic_pool_id
+  tags            = local.case_tags
 }
 
 # App Service
@@ -111,11 +95,11 @@ resource "azurerm_windows_web_app" "app_service" {
     name = "umbracoDbDSN"
     type = "SQLAzure"
     value = join(";", [
-      "Server=tcp:${azurerm_mssql_server.sql_server.fully_qualified_domain_name},1433",
+      "Server=tcp:${var.sql_server_fqdn},1433",
       "Initial Catalog=${azurerm_mssql_database.database.name}",
       "Persist Security Info=False",
-      "User ID=${azurerm_mssql_server.sql_server.administrator_login}@${azurerm_mssql_server.sql_server.name}",
-      "Password=${azurerm_mssql_server.sql_server.administrator_login_password}",
+      "User ID=${var.admin_login}@${var.sql_server_name}",
+      "Password=${var.admin_password}",
       "MultipleActiveResultSets=False",
       "Encrypt=True",
       "TrustServerCertificate=False",
@@ -131,6 +115,9 @@ resource "null_resource" "deploy_umbraco" {
     app_service_id        = azurerm_windows_web_app.app_service.id
     scenario              = var.scenario
     scenario_overlay_hash = local.scenario_overlay_hash
+    # Referenced here purely to establish the implicit dependency on the
+    # parent module's firewall rule (Umbraco hits SQL on first boot).
+    firewall_rule_id = var.sql_firewall_rule_dependency
   }
 
   provisioner "local-exec" {
@@ -142,9 +129,8 @@ resource "null_resource" "deploy_umbraco" {
     interpreter = ["pwsh", "-Command"]
   }
 
-  # Umbraco hits SQL on first boot; firewall rule must exist first.
   depends_on = [
     azurerm_windows_web_app.app_service,
-    azurerm_mssql_firewall_rule.allow_azure_services,
+    azurerm_mssql_database.database,
   ]
 }

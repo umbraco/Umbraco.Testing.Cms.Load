@@ -95,7 +95,7 @@ $tiers    = @($cells.Values | ForEach-Object { $_[0].infra_tier      } | Sort-Ob
 $samplers = @($cells.Values | ForEach-Object { $_[0].scenario_name   } | Sort-Object -Unique)
 
 # Stable tier ordering: known tiers first in their natural order, then anything else.
-$tierOrder = @('Starter', 'Standard', 'Pro')
+$tierOrder = @('Starter', 'Standard', 'Pro', 'Enterprise')
 $tiers = @($tierOrder | Where-Object { $tiers -contains $_ }) +
          @($tiers | Where-Object { $tierOrder -notcontains $_ })
 
