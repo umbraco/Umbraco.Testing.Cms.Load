@@ -41,6 +41,12 @@ param(
     [Parameter(Mandatory = $true)] [string]$AppServicePlanResourceId,
     [Parameter(Mandatory = $true)] [string]$SqlDatabaseResourceId,
 
+    # Seeder duration in seconds, captured by install-umbraco-cms-on-appservice.ps1
+    # and surfaced via the load-test-job template. Optional — empty/blank means
+    # the seeder didn't complete (Skipped, Failed, TimedOut, or pre-feature run);
+    # the field is then omitted from the row instead of being written as 0.
+    [string]$SeederDurationSeconds = "",
+
     # Optional Logs Ingestion API target. When all three are provided, the
     # script POSTs each row to a Log Analytics custom table in addition to the
     # blob upload (the Workbook reads from there). Provisioned by
@@ -71,6 +77,10 @@ $metadata = [ordered]@{
     pool_dtu_max     = $PoolDtuMax
     seeder_preset    = $SeederPreset
     infra_tier       = $Tier
+    # Null (rather than 0) when the seeder didn't complete (Skipped, Failed,
+    # TimedOut, or pre-feature run) — KQL percentile/avg ignore nulls, so
+    # Skipped/Failed runs don't drag the median toward 0.
+    seeder_duration_seconds = $(if ([string]::IsNullOrWhiteSpace($SeederDurationSeconds)) { $null } else { [double]$SeederDurationSeconds })
     scenario         = $Scenario
     user_count       = $UserCount
     spawn_rate       = $SpawnRate

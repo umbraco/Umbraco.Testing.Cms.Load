@@ -66,6 +66,7 @@ $columns = @(
     # remain queryable; new rows write pool_dtu_max and leave sql_sku empty.
     @{ name = "pool_dtu_max";                           type = "int"      }
     @{ name = "seeder_preset";                          type = "string"   }
+    @{ name = "seeder_duration_seconds";                type = "real"     }
     @{ name = "infra_tier";                             type = "string"   }
     @{ name = "scenario";                               type = "string"   }
     @{ name = "scenario_name";                          type = "string"   }

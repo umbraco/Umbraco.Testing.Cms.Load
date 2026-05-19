@@ -14,7 +14,11 @@ param (
     [Parameter(Mandatory = $true)] [string]$AppServiceHostname,
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$Scenario,
-    [Parameter(Mandatory = $true)] [string]$SeederPreset
+    [Parameter(Mandatory = $true)] [string]$SeederPreset,
+    # File the script writes once the seeder finishes — the load-test job
+    # reads it to surface seeder_duration_seconds in the published metrics.
+    # On Skipped/Failed seeder, duration_seconds is written as null.
+    [Parameter(Mandatory = $true)] [string]$SeederResultPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -234,6 +238,22 @@ if ($env:ARM_SUBSCRIPTION_ID) {
 Write-Host "Deploying to App Service: $AppServiceName..."
 az webapp deployment source config-zip --src $cachedZip -n $AppServiceName -g $ResourceGroupName
 
+function Write-SeederResult {
+    param(
+        [Parameter(Mandatory)] [string]$Status,
+        [Nullable[double]]$DurationSeconds = $null
+    )
+    $payload = [ordered]@{
+        status           = $Status
+        duration_seconds = $DurationSeconds
+    }
+    $dir = Split-Path -Parent $SeederResultPath
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $payload | ConvertTo-Json -Compress | Set-Content -Path $SeederResultPath -Encoding utf8
+}
+
 # Wait for the data seeder to finish. The polling doubles as App Service warm-up.
 $seederStatusUrl = "https://$AppServiceHostname/umbraco/api/seederstatus/status"
 $maxAttemptsByPreset = @{ Small = 60; Medium = 180; Large = 360; Massive = 720 }   # 10/30/60/120 min at 10s cadence
@@ -261,6 +281,7 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
             Write-Host ""
             if ($responseBody.Status -eq "Skipped") {
                 Write-Host "Data seeder was disabled in scenario config - skipping wait." -ForegroundColor Green
+                Write-SeederResult -Status "Skipped"
             } else {
                 $elapsedSeconds = [math]::Round($responseBody.ElapsedMs / 1000, 2)
                 $verb = ($responseBody.Status -eq "CompletedWithErrors") ? "completed with errors" : "completed successfully"
@@ -268,6 +289,7 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
                 Write-Host "  Duration: $elapsedSeconds seconds"
                 Write-Host "  Executed: $($responseBody.ExecutedCount)"
                 Write-Host "  Failed: $($responseBody.FailedCount)"
+                Write-SeederResult -Status $responseBody.Status -DurationSeconds $elapsedSeconds
             }
             $seederComplete = $true
             $seederSuccess = $true
@@ -275,6 +297,7 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         elseif ($seederStatusCode -eq 503) {
             Write-Host ""
             Write-Host "ERROR: Seeder reported failure - $($responseBody.ErrorMessage)" -ForegroundColor Red
+            Write-SeederResult -Status "Failed"
             $seederComplete = $true
         }
         else {
@@ -290,6 +313,10 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
 if (-not $seederSuccess) {
     Write-Host ""
     Write-Host "Seeder did not complete - stopping App Service and exiting non-zero" -ForegroundColor Red
+    # 503 path already wrote 'Failed'; this catches the loop-timeout case.
+    if (-not (Test-Path $SeederResultPath)) {
+        Write-SeederResult -Status "TimedOut"
+    }
     az webapp stop -n $AppServiceName -g $ResourceGroupName
     exit 1
 }
