@@ -47,13 +47,19 @@ param(
     # the field is then omitted from the row instead of being written as 0.
     [string]$SeederDurationSeconds = "",
 
-    # Optional Logs Ingestion API target. When all three are provided, the
-    # script POSTs each row to a Log Analytics custom table in addition to the
-    # blob upload (the Workbook reads from there). Provisioned by
-    # scripts/ensure-monitoring-infra.ps1 — that script prints these three values.
+    # Optional Logs Ingestion API target. When DceUri + DcrImmutableId + the
+    # SUMMARY stream name are provided, the script POSTs each summary row to
+    # the Log Analytics custom table in addition to the blob upload (the
+    # Workbook reads from there). Provisioned by ensure-monitoring-infra.ps1 —
+    # that script prints all four values.
     [string]$LogAnalyticsDceUri,
     [string]$LogAnalyticsDcrImmutableId,
-    [string]$LogAnalyticsStreamName
+    [string]$LogAnalyticsStreamName,
+    # When also set, per-minute Azure Monitor datapoints (plan CPU/memory, SQL
+    # DTU/CPU/log-write/physical-reads, HTTP 4xx/5xx) are POSTed to a second LA
+    # custom table (LoadTestSeries_CL) for the dashboard's per-run drill-down.
+    # Empty (default) skips the series mirror but keeps the summary mirror.
+    [string]$LogAnalyticsSeriesStreamName
 )
 
 $ErrorActionPreference = "Stop"
@@ -101,9 +107,15 @@ function Get-MetricSummary {
         [Parameter(Mandatory)] [string]$ResourceId,
         [Parameter(Mandatory)] [string[]]$Metrics,
         [Parameter(Mandatory)] [string]$StartTime,
-        [Parameter(Mandatory)] [string]$EndTime
+        [Parameter(Mandatory)] [string]$EndTime,
+        # Optional prefix on returned series metric_name (e.g. 'plan' →
+        # 'plan_CpuPercentage'). Summary keys still come back unprefixed so the
+        # caller does its own `plan_*` prefixing of $metadata, matching prior
+        # behaviour and the DCR column names on LoadTestSummary_CL.
+        [string]$Prefix = ''
     )
-    $result = @{}
+    $summary = @{}
+    $series  = New-Object System.Collections.Generic.List[object]
     try {
         $json = az monitor metrics list `
             --resource $ResourceId `
@@ -116,6 +128,7 @@ function Get-MetricSummary {
         $data = $json | ConvertFrom-Json
         foreach ($metric in $data.value) {
             $name = $metric.name.value
+            $prefixedName = if ($Prefix) { "${Prefix}_${name}" } else { $name }
             # Flatten across every timeseries entry, not just [0]. Azure Monitor
             # emits one timeseries per dimensioned instance — e.g. a P1v3 plan
             # with worker_count > 1, or a SQL DB with read replicas — and reading
@@ -125,18 +138,28 @@ function Get-MetricSummary {
             $points = @($metric.timeseries | ForEach-Object { $_.data } |
                 Where-Object { $null -ne $_.average })
             if ($points.Count -eq 0) {
-                $result["${name}_avg"] = $null
-                $result["${name}_max"] = $null
+                $summary["${name}_avg"] = $null
+                $summary["${name}_max"] = $null
                 continue
             }
+            # Per-minute points retained for LoadTestSeries_CL. The summary
+            # scalars (avg/max) are still computed for LoadTestSummary_CL so
+            # both views stay populated even on a series-ingest failure.
+            foreach ($p in $points) {
+                $series.Add([pscustomobject]@{
+                    TimeGenerated = [string]$p.timeStamp
+                    metric_name   = $prefixedName
+                    value         = [double]$p.average
+                })
+            }
             $values = @($points | ForEach-Object { [double]$_.average })
-            $result["${name}_avg"] = [math]::Round((($values | Measure-Object -Average).Average), 2)
-            $result["${name}_max"] = [math]::Round((($values | Measure-Object -Maximum).Maximum), 2)
+            $summary["${name}_avg"] = [math]::Round((($values | Measure-Object -Average).Average), 2)
+            $summary["${name}_max"] = [math]::Round((($values | Measure-Object -Maximum).Maximum), 2)
         }
     } catch {
         Write-Warning "Azure Monitor query failed for $ResourceId : $($_.Exception.Message)"
     }
-    return $result
+    return @{ Summary = $summary; Series = $series }
 }
 
 # Parse the load-test window into a length in seconds. Returns 0 if either
@@ -197,6 +220,50 @@ function Send-RowsToLogAnalytics {
     }
 }
 
+# Per-minute time-series sender. Posts one row per (metric × minute) to the
+# companion LoadTestSeries_CL table for the workbook's per-run drill-down.
+# Gated on $LogAnalyticsSeriesStreamName so the summary mirror can be enabled
+# without forcing the series mirror (early adopters, ingestion-cost caution).
+# Same defensive posture as Send-RowsToLogAnalytics: failure warns and continues;
+# the summary scalars (plan_*/sql_*/app_* in LoadTestSummary_CL) remain
+# authoritative for capacity verdicts.
+function Send-SeriesToLogAnalytics {
+    param([Parameter(Mandatory)] [object[]]$Points)
+    if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsSeriesStreamName)) {
+        return
+    }
+    if ($Points.Count -eq 0) { return }
+    Write-Host ""
+    Write-Host "Posting $($Points.Count) per-minute series row(s) to Log Analytics ($LogAnalyticsSeriesStreamName)"
+    try {
+        $token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
+        # Hydrate each point with run-level context. TimeGenerated comes from
+        # the Azure Monitor datapoint timestamp (not the run start) so the
+        # workbook's time-series chart renders true minute-by-minute.
+        $rows = $Points | ForEach-Object {
+            [pscustomobject]@{
+                TimeGenerated   = [string]$_.TimeGenerated
+                run_id          = [string]$BuildId
+                scenario        = [string]$Scenario
+                umbraco_version = [string]$UmbracoVersion
+                infra_tier      = [string]$Tier
+                metric_name     = [string]$_.metric_name
+                value           = [double]$_.value
+            }
+        }
+        $body = ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress -AsArray
+        $url  = "$LogAnalyticsDceUri/dataCollectionRules/$LogAnalyticsDcrImmutableId/streams/${LogAnalyticsSeriesStreamName}?api-version=2023-01-01"
+        Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" `
+            -Headers @{ Authorization = "Bearer $token" } | Out-Null
+        Write-Host "   ok"
+    }
+    catch {
+        $msg = "Log Analytics series ingestion failed: $($_.Exception.Message). Summary scalars (plan_*/sql_*/app_*) are still in LoadTestSummary_CL."
+        Write-Warning $msg
+        Write-Host "##vso[task.logissue type=warning]$msg"
+    }
+}
+
 # Bail out if there's no results dir at all. Still emit a metadata-only row to
 # Log Analytics so the run is visible in the Workbook (rather than vanishing
 # entirely and leaving downstream regression-check comparing against stale
@@ -223,27 +290,37 @@ if (-not (Test-Path $ResultsDir)) {
 $windowSec    = Get-WindowSeconds -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
 $minWindowSec = 30
 
+# Initialised here so the post-loop Send-SeriesToLogAnalytics call always has
+# something to enumerate, even when the window-guard branch skips the queries.
+$seriesPoints = New-Object System.Collections.Generic.List[object]
+
 Write-Host ""
 if ($windowSec -ge $minWindowSec) {
     Write-Host "Querying Azure Monitor for server-side metrics over [$LoadTestStartTime, $LoadTestEndTime] ($([int]$windowSec)s)..."
 
-    $planMetrics = Get-MetricSummary `
+    $planResult = Get-MetricSummary `
         -ResourceId $AppServicePlanResourceId `
         -Metrics @("CpuPercentage", "MemoryPercentage") `
-        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-    foreach ($k in $planMetrics.Keys) { $metadata["plan_$k"] = $planMetrics[$k] }
+        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
+        -Prefix 'plan'
+    foreach ($k in $planResult.Summary.Keys) { $metadata["plan_$k"] = $planResult.Summary[$k] }
+    foreach ($p in $planResult.Series) { $seriesPoints.Add($p) }
 
-    $sqlMetrics = Get-MetricSummary `
+    $sqlResult = Get-MetricSummary `
         -ResourceId $SqlDatabaseResourceId `
         -Metrics @("dtu_consumption_percent", "cpu_percent", "log_write_percent", "physical_data_read_percent") `
-        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-    foreach ($k in $sqlMetrics.Keys) { $metadata["sql_$k"] = $sqlMetrics[$k] }
+        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
+        -Prefix 'sql'
+    foreach ($k in $sqlResult.Summary.Keys) { $metadata["sql_$k"] = $sqlResult.Summary[$k] }
+    foreach ($p in $sqlResult.Series) { $seriesPoints.Add($p) }
 
-    $appMetrics = Get-MetricSummary `
+    $appResult = Get-MetricSummary `
         -ResourceId $AppServiceResourceId `
         -Metrics @("Http5xx", "Http4xx") `
-        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime
-    foreach ($k in $appMetrics.Keys) { $metadata["app_$k"] = $appMetrics[$k] }
+        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
+        -Prefix 'app'
+    foreach ($k in $appResult.Summary.Keys) { $metadata["app_$k"] = $appResult.Summary[$k] }
+    foreach ($p in $appResult.Series) { $seriesPoints.Add($p) }
 }
 else {
     Write-Warning "Test window unusable ($([int]$windowSec)s; start='$LoadTestStartTime', end='$LoadTestEndTime') - skipping Azure Monitor metric query. Most likely cause: AzureLoadTest@1 fast-failed (e.g. engine provisioning, auth)."
@@ -308,7 +385,9 @@ if ($engineFiles.Count -gt 0) {
         $failCount = $bucket.Errors
         $errorRate = if ($reqCount -gt 0) { [math]::Round($failCount / $reqCount, 4) } else { 0 }
         $rps       = if ($testDurationSec -gt 0 -and $reqCount -gt 0) { [math]::Round($reqCount / $testDurationSec, 2) } else { 0 }
-        $avg       = if ($reqCount -gt 0) { [int](($sorted | Measure-Object -Average).Average) } else { 0 }
+        # Round to match the DCR's "real" type on this column; the underlying
+        # JMeter samples are int ms but the mean across them is fractional.
+        $avg       = if ($reqCount -gt 0) { [math]::Round((($sorted | Measure-Object -Average).Average), 2) } else { 0 }
 
         $merged = [ordered]@{}
         foreach ($k in $metadata.Keys) { $merged[$k] = $metadata[$k] }
@@ -386,3 +465,7 @@ Write-Host "Published $($rows.Count) record(s) + raw artifacts."
 # query above — failure warns and continues; the blob upload is the source of
 # truth and recoverable via backfill-monitoring.ps1.
 Send-RowsToLogAnalytics -Rows $rows
+# Per-minute series mirror — additive to the summary, populates the table
+# the workbook's per-run drill-down reads. Empty when the test window was
+# unusable above (no datapoints were retrieved).
+Send-SeriesToLogAnalytics -Points $seriesPoints

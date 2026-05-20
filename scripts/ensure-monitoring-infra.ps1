@@ -28,7 +28,12 @@ param(
     [Parameter(Mandatory = $true)] [string]$DcrName,
     [Parameter(Mandatory = $true)] [string]$IngestPrincipalId,
     [string]$TableName = "LoadTestSummary_CL",
-    # Days the custom table retains data. LA includes 31 days free; beyond
+    # Companion table for per-minute resource-pressure time series. One row per
+    # (run × metric × minute) — populated by publish-load-test-results.ps1 from
+    # the raw Azure Monitor datapoints that Get-MetricSummary today averages
+    # away. The dashboard's per-run drill-down reads from this.
+    [string]$SeriesTableName = "LoadTestSeries_CL",
+    # Days the custom tables retain data. LA includes 31 days free; beyond
     # that is ~$0.12/GB/month. At our row size + cadence this is fractions
     # of a cent per year for 365-day retention. Bumping >2y requires Sentinel
     # or an Auxiliary Logs tier — out of scope here.
@@ -113,13 +118,28 @@ $columns = @(
     @{ name = "regressed_count";                        type = "int"      }
 )
 
-$streamName = "Custom-$TableName"
+# Per-minute time-series schema. Long, narrow, additive — one row per
+# (run × metric × minute). Joined back to LoadTestSummary_CL by run_id when the
+# workbook needs run-level context (scenario / version / tier already replicated
+# here so the panel can render without a join for the common single-run drill).
+$seriesColumns = @(
+    @{ name = "TimeGenerated";   type = "datetime" }
+    @{ name = "run_id";          type = "string"   }
+    @{ name = "scenario";        type = "string"   }
+    @{ name = "umbraco_version"; type = "string"   }
+    @{ name = "infra_tier";      type = "string"   }
+    @{ name = "metric_name";     type = "string"   }
+    @{ name = "value";           type = "real"     }
+)
+
+$streamName       = "Custom-$TableName"
+$seriesStreamName = "Custom-$SeriesTableName"
 
 Write-Host "=== Ensuring monitoring infrastructure ==="
 Write-Host "  RG:               $HistoryResourceGroup"
 Write-Host "  Location:         $HistoryLocation"
 Write-Host "  Workspace:        $WorkspaceName"
-Write-Host "  Custom table:     $TableName (retention $RetentionDays days)"
+Write-Host "  Custom tables:    $TableName, $SeriesTableName (retention $RetentionDays days)"
 Write-Host "  DCE / DCR:        $DceName / $DcrName"
 Write-Host "  Ingest principal: $IngestPrincipalId"
 Write-Host ""
@@ -155,31 +175,39 @@ else {
 }
 $workspaceId = az monitor log-analytics workspace show -n $WorkspaceName -g $HistoryResourceGroup --query id -o tsv
 
-# Custom table. The az CLI's `monitor log-analytics workspace table create` doesn't
+# Custom tables. The az CLI's `monitor log-analytics workspace table create` doesn't
 # expose the DCR-based custom-log path, so call the REST API directly. PUT is
 # idempotent — re-running with the same schema is a no-op; adding columns is
 # accepted as an in-place schema update.
-Write-Host "-> Custom table $TableName"
-$tableBody = @{
-    properties = @{
-        retentionInDays = $RetentionDays
-        schema = @{
-            name    = $TableName
-            columns = $columns
+function Set-CustomTable {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [Parameter(Mandatory)] [object[]]$Columns
+    )
+    Write-Host "-> Custom table $Name"
+    $body = @{
+        properties = @{
+            retentionInDays = $RetentionDays
+            schema = @{
+                name    = $Name
+                columns = $Columns
+            }
         }
+    } | ConvertTo-Json -Depth 6 -Compress
+    $path = "/subscriptions/$subId/resourceGroups/$HistoryResourceGroup/providers/Microsoft.OperationalInsights/workspaces/$WorkspaceName/tables/${Name}?api-version=2022-10-01"
+    $bodyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-table-$([Guid]::NewGuid()).json"
+    try {
+        $body | Out-File -FilePath $bodyFile -Encoding utf8 -NoNewline
+        az rest --method put --url "https://management.azure.com$path" --body "@$bodyFile" --headers "Content-Type=application/json" | Out-Null
+        Write-Host "   created/updated"
     }
-} | ConvertTo-Json -Depth 6 -Compress
+    finally {
+        Remove-Item $bodyFile -Force -ErrorAction SilentlyContinue
+    }
+}
 
-$tablePath = "/subscriptions/$subId/resourceGroups/$HistoryResourceGroup/providers/Microsoft.OperationalInsights/workspaces/$WorkspaceName/tables/${TableName}?api-version=2022-10-01"
-$tableBodyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-table-$([Guid]::NewGuid()).json"
-try {
-    $tableBody | Out-File -FilePath $tableBodyFile -Encoding utf8 -NoNewline
-    az rest --method put --url "https://management.azure.com$tablePath" --body "@$tableBodyFile" --headers "Content-Type=application/json" | Out-Null
-    Write-Host "   created/updated"
-}
-finally {
-    Remove-Item $tableBodyFile -Force -ErrorAction SilentlyContinue
-}
+Set-CustomTable -Name $TableName       -Columns $columns
+Set-CustomTable -Name $SeriesTableName -Columns $seriesColumns
 
 # Data Collection Endpoint
 Write-Host "-> Data Collection Endpoint"
@@ -209,7 +237,8 @@ $dcrBody = @{
     properties = @{
         dataCollectionEndpointId = $dceId
         streamDeclarations       = @{
-            $streamName = @{ columns = $columns }
+            $streamName       = @{ columns = $columns }
+            $seriesStreamName = @{ columns = $seriesColumns }
         }
         destinations             = @{
             logAnalytics = @(
@@ -221,6 +250,12 @@ $dcrBody = @{
                 streams      = @($streamName)
                 destinations = @("loadtest-workspace")
                 outputStream = $streamName
+                transformKql = "source"
+            },
+            @{
+                streams      = @($seriesStreamName)
+                destinations = @("loadtest-workspace")
+                outputStream = $seriesStreamName
                 transformKql = "source"
             }
         )
@@ -317,9 +352,10 @@ Write-Host ""
 Write-Host "Monitoring infrastructure ready."
 Write-Host ""
 Write-Host "Wire these into publish-load-test-results.ps1 (or pass via pipeline variables):"
-Write-Host "  DceUri:         $dceUri"
-Write-Host "  DcrImmutableId: $dcrImmutableId"
-Write-Host "  StreamName:     $streamName"
+Write-Host "  DceUri:           $dceUri"
+Write-Host "  DcrImmutableId:   $dcrImmutableId"
+Write-Host "  StreamName:       $streamName"
+Write-Host "  SeriesStreamName: $seriesStreamName"
 
 if ($EmitPipelineVars) {
     # Azure DevOps logging-command output. isOutput=true is required for these
@@ -328,4 +364,5 @@ if ($EmitPipelineVars) {
     Write-Host "##vso[task.setvariable variable=MonitoringDceUri;isOutput=true]$dceUri"
     Write-Host "##vso[task.setvariable variable=MonitoringDcrImmutableId;isOutput=true]$dcrImmutableId"
     Write-Host "##vso[task.setvariable variable=MonitoringStreamName;isOutput=true]$streamName"
+    Write-Host "##vso[task.setvariable variable=MonitoringSeriesStreamName;isOutput=true]$seriesStreamName"
 }

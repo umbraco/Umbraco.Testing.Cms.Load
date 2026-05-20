@@ -116,6 +116,46 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Deploying Umbraco $UmbracoVersion ($Scenario)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
+# Shared build cache (history-RG storage). The local .build-cache/ folder only
+# survives within a single pipeline run — fresh hosted agents start empty, so
+# every run currently re-runs `dotnet publish` for the first case of each
+# (version, scenario) combination. Promoting cache zips to history storage and
+# downloading them on demand removes that minute-tax across runs. Gated on the
+# three BUILD_CACHE_* env vars (set by the pipeline's Terraform Apply task); a
+# missing env var just falls through to the existing local-cache-only path.
+if (-not (Test-Path -LiteralPath $cachedZip) -and
+    $env:BUILD_CACHE_STORAGE_ACCOUNT -and
+    $env:BUILD_CACHE_STORAGE_KEY -and
+    $env:BUILD_CACHE_CONTAINER) {
+    Write-Host "Local build cache miss; checking shared cache in $($env:BUILD_CACHE_STORAGE_ACCOUNT)..."
+    if (-not (Test-Path -LiteralPath $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    }
+    # Disable throw-on-nonzero locally so we can branch on $LASTEXITCODE — az's
+    # exit code is the cleanest "is this blob there" signal.
+    $prevPref = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        az storage blob download `
+            --account-name $env:BUILD_CACHE_STORAGE_ACCOUNT `
+            --account-key $env:BUILD_CACHE_STORAGE_KEY `
+            --container-name $env:BUILD_CACHE_CONTAINER `
+            --name "build-cache/$safeCacheKey.zip" `
+            --file $cachedZip `
+            --no-progress 2>$null | Out-Null
+        $downloadExit = $LASTEXITCODE
+    } finally {
+        $PSNativeCommandUseErrorActionPreference = $prevPref
+    }
+    if ($downloadExit -eq 0 -and (Test-Path -LiteralPath $cachedZip)) {
+        Write-Host "Shared cache HIT: downloaded build-cache/$safeCacheKey.zip" -ForegroundColor Green
+    } else {
+        # Remove partial file so the build path runs cleanly.
+        Remove-Item -LiteralPath $cachedZip -Force -ErrorAction SilentlyContinue
+        Write-Host "Shared cache MISS: build-cache/$safeCacheKey.zip not found (or download failed)."
+    }
+}
+
 if (Test-Path -LiteralPath $cachedZip) {
     Write-Host "Build cache HIT: reusing $cachedZip" -ForegroundColor Green
 }
@@ -205,6 +245,35 @@ else {
         }
         Copy-Item -LiteralPath "$pathToApp/publish.zip" -Destination $cachedZip -Force
         Write-Host "Cached build artifact at: $cachedZip"
+
+        # Promote to shared cache so the next pipeline run on a fresh agent (or
+        # a sibling case in this run that hits the cache after we cleared the
+        # local copy) skips the build entirely. Failure is non-fatal — the
+        # local cache still serves same-run siblings, and the next-build path
+        # is correct, just slower.
+        if ($env:BUILD_CACHE_STORAGE_ACCOUNT -and $env:BUILD_CACHE_STORAGE_KEY -and $env:BUILD_CACHE_CONTAINER) {
+            Write-Host "Uploading build to shared cache..."
+            $prevPref = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+            try {
+                az storage blob upload `
+                    --account-name $env:BUILD_CACHE_STORAGE_ACCOUNT `
+                    --account-key $env:BUILD_CACHE_STORAGE_KEY `
+                    --container-name $env:BUILD_CACHE_CONTAINER `
+                    --file $cachedZip `
+                    --name "build-cache/$safeCacheKey.zip" `
+                    --overwrite `
+                    --no-progress 2>$null | Out-Null
+                $uploadExit = $LASTEXITCODE
+            } finally {
+                $PSNativeCommandUseErrorActionPreference = $prevPref
+            }
+            if ($uploadExit -eq 0) {
+                Write-Host "Shared cache updated: build-cache/$safeCacheKey.zip"
+            } else {
+                Write-Host "Shared cache upload failed (exit $uploadExit) — local cache still good for siblings in this run."
+            }
+        }
     }
     finally {
         # Restore cwd and clean the build dir on every path (success and failure).
@@ -274,7 +343,18 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         # -SkipHttpErrorCheck so 503 lands here, not in catch{}.
         $response = Invoke-WebRequest -Uri $seederStatusUrl -UseBasicParsing -TimeoutSec 30 -SkipHttpErrorCheck
         $seederStatusCode = $response.StatusCode
-        $responseBody = $response.Content | ConvertFrom-Json
+
+        # Parse the body in its own guard. A non-JSON 5xx (App Service warmup
+        # HTML, gateway error page) would otherwise fall into the outer catch
+        # and get misreported as "Waiting for seeder endpoint..." for the full
+        # timeout budget — hiding the real failure for up to 120 minutes on
+        # the Massive preset.
+        try {
+            $responseBody = $response.Content | ConvertFrom-Json
+        } catch {
+            Write-Host "  [$attempt/$maxAttempts] HTTP $seederStatusCode (non-JSON body); retrying..."
+            continue
+        }
 
         # Terminal-OK states: Completed, CompletedWithErrors, Skipped.
         if ($seederStatusCode -eq 200 -and $responseBody.Status -in @("Completed", "CompletedWithErrors", "Skipped")) {

@@ -137,7 +137,7 @@ The queue UI splits into three concerns: **what to test**, **which tiers to test
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator enforces v13+ and a recognisable `X.Y.Z[-suffix]` shape; the major segment maps to the .NET runtime automatically (see table below). | 17.0.0 | free text |
+| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator accepts v13, v17, v18 today (the majors with a published `Umbraco.Cms.TestDataSeeder` build — v18 reuses the v17 seeder as a fallback); v14/v15/v16 fail validation with a "seeder hasn't shipped" message. The major segment maps to the .NET runtime automatically (see table below). | 17.0.0 | free text |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
 
 **Which tiers:**
@@ -267,6 +267,34 @@ ${prefix}-appservice-${umbraco}-${tier}-${scenario}
 
 Long prerelease tags eat into the budget — see [Pitfalls › Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap).
 
+### Sampler naming
+
+A **sampler** is one operation within a scenario — a `@task` method in a Locust file, or an HTTP Request label in a JMeter `.jmx`. The workbook keys cells by `(scenario × umbraco_version × infra_tier × scenario_name)` and treats sampler names as opaque strings. Two consequences:
+
+- A renamed sampler spawns a new cell. Historical baseline for the old name doesn't transfer — the regression gate restarts at zero for the new name.
+- Two scenarios that share a sampler name (e.g. `BackofficeV13` and `BackofficeV17` both with a `Login` sampler) line up in the Compare tab's per-sampler delta view. Different names for the same operation (`Login` vs `BackofficeLogin`) won't.
+
+Reserved character: sampler names **must not contain `__`** — that's the cell-key delimiter parsed by `check-regression.ps1` and `_history-helpers.ps1`.
+
+For cross-version test plans where the same operation is implemented against two different APIs (the obvious case is backoffice — v13's `/umbraco/backoffice/UmbracoApi/...` vs v17+'s `/umbraco/management/api/v1/...`), agreeing on sampler labels up front is the cheapest discipline. A suggested canonical set for authenticated / backoffice flows:
+
+| Sampler | Operation |
+|---|---|
+| `Login` | Authenticate (any flavour — session cookie, OAuth token, etc.) |
+| `ContentList` | List or page through the content tree |
+| `ContentRead` | Read one content item by id |
+| `ContentSave` | Save (unpublished) one content item |
+| `ContentPublish` | Publish one content item |
+| `ContentUnpublish` | Unpublish one content item |
+| `MediaList` | List media folders or items |
+| `MediaUpload` | Upload one media file |
+| `UserList` | List users (admin-only) |
+| `Search` | Full-text search query |
+
+Front-end (anonymous) scenarios continue to use the existing convention from `Default` / `DeliveryApi` (`Homepage`, `Section`, `Category`, `Page`, `Detail`, `Media`, `ContactFormSubmit`, `DeliveryApiList`, `DeliveryApiItem`).
+
+Locust takes the sampler name from the method name (or the `name=` kwarg on `client.get/post`); JMeter takes it from the HTTP Request element's name. Same string lands in `LoadTestSummary_CL.scenario_name` either way — and from there into every workbook surface that filters or groups by sampler.
+
 ### `appsettings.json` overlay
 
 The contents of a scenario's `AdditionalSetup/appsettings.json` are **flattened** by the validator to App Service envvar form (`Section:Sub:Key` → `Section__Sub__Key`) and **merged into the base `app_settings` block** of the deployed App Service. Overlay keys win over base keys.
@@ -373,6 +401,10 @@ Each scenario's locustfile declares its `@task` methods explicitly, so the workl
 | `submit_contact_form` | 8 | `POST /umbraco/api/contactform/submit` (write path) |
 
 The non-homepage tasks are **inventory-driven**: at test start, locust calls `/umbraco/api/seederstatus/inventory` to discover the actual URLs the seeder generated, so the same test code works against any seeder preset without per-run config. Tasks raise (visible as a 100%-error task in the report) when a bucket is empty — no silent fallbacks, so a broken seeder or misconfigured scenario surfaces loudly instead of distorting the workload. Adjust weights in a scenario's own `locustfile.py` to change that scenario's traffic mix; the DeliveryApi scenario is structured the same way but exercises the Content Delivery API endpoints instead of rendered pages.
+
+### Deterministic URL selection
+
+`loadtests/_helpers.py` seeds Python's `random` at module import (fixed seed `42` by default), so `random.choice()` over the seeded URL inventory follows the same sequence across runs. Cell-to-cell variance from "this run happened to hit Detail-7 a lot, that run hit Detail-23" drops out — leaving infrastructure jitter as the dominant signal in run-to-run deltas (which is the comparison you actually want for regression checks). Set the `LOCUST_RANDOM_SEED` env var to a different integer if you specifically want randomised content selection (e.g. to validate that the harness ISN'T sensitive to URL choice). Caveat: each Locust engine/worker process re-seeds at import, so full request-by-request reproducibility isn't promised; the aggregate URL distribution per run is what stays stable.
 
 ### Cold-cache vs warm-cache testing
 
@@ -541,6 +573,12 @@ cleanup              checkResourceGroupForCleanup → manualValidation (configur
                      deleteResourceGroup if rejected/cancelled/expired. Always runs.
 ```
 
+### Build cache
+
+The install script writes each `dotnet publish` output to `.build-cache/<key>.zip` where the cache key encodes `umbraco-version + scenario + seeder-package + overlay-hash`. Sibling cases in the same pipeline run (e.g. four tiers, same version + scenario) share the local cache, so the rebuild cost is paid once per (version × scenario) combo instead of once per case.
+
+Across runs, hosted agents start fresh and the local cache is gone. To recover that cost, the pipeline promotes cache zips to the history storage account (`build-cache/<key>.zip` under the same container) and downloads matching zips at the start of `provision.apply`. Gated on the `BUILD_CACHE_STORAGE_ACCOUNT / _KEY / _CONTAINER` env vars — populated automatically by `FetchBuildCacheKey` from `historyStorageAccount` + `historyContainer`. Fetch failure warns and continues (pipeline rebuilds from scratch); upload failure warns and continues (same-run siblings still hit local). Cache invalidation is automatic on any input change — bumping seeder version, editing `AdditionalSetup/`, or moving to a new Umbraco version all produce a fresh key.
+
 ## Data Seeder Presets
 
 | Preset | Documents | Media | Members | Approx. Time |
@@ -682,13 +720,15 @@ The `regression-report` artifact + the per-sampler table from `compare-runs.ps1`
 
 `dashboards/loadtest.workbook.json` is an Azure Workbook that queries `LoadTestSummary_CL` in Log Analytics and offers five views:
 
-- **Trends** — chronological per-run chart of the chosen metric (p95 / p99 / avg / error rate / RPS / server CPU peak / DB load peak), one line per `(scenario × version × tier)`; matrix table below with median ±stddev per cell.
-- **Tiers** — pick scenario + version, see latest run per tier as a bar chart + table with conditional-formatted Plan CPU / SQL DTU / error % cells. Answers "what do I get for upgrading the tier?"
+- **Trends** — chronological per-run chart of the chosen metric (p95 / p99 / avg / error rate / RPS / server CPU peak / DB load peak), one line per `(scenario × version × tier)`; matrix table below with median ±stddev and a plain-language **Stability** label per cell (*stable / moderate / noisy / few runs*) flagging cells where a small regression threshold would be lost in run-to-run noise.
+- **Tiers** — pick scenario + version, see latest run per tier as a bar chart + a Capacity-verdict table with **Headroom** and a **Bottleneck** column naming the hottest resource and its peak (e.g. `Database load 92%`). Answers "what do I get for upgrading the tier — and what saturated first?"
 - **Versions** — pick scenario + tier, see per-sampler median latency grouped by Umbraco version. Answers "did this version regress on this tier?"
 - **Compare** — pick two runs + Δ% threshold; per-sampler delta table with red/green conditional formatting; server-side delta block.
-- **Runs** — filtered run list with a regression-verdict column; type a run ID into the drill field to see per-sampler detail.
+- **Runs** — filtered run list with **Bottleneck** + regression-verdict columns; type a run ID into the drill field to see the regression breakdown (which specific samplers flagged), per-sampler latency detail, **and a per-minute resource-pressure line chart** sourced from a companion `LoadTestSeries_CL` table — answers "when *in* the run did p99 spike?" / "did SQL DTU saturate before App CPU?" — the questions the summary scalars can't.
 
-Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Trends / Compare / Runs. Tiers and Versions have their own scoped pickers (Tiers is the cross-tier view, Versions is the cross-version view). Workbook URLs encode the filter state, so links are shareable.
+Above the tab bar — and visible from every view — a **Top issues** panel surfaces the worst recent cases by severity (regressions first, then ≥1% error rate, then resources peaking ≥85% / ≥95%). It scopes to the global filter and prints a single "✓ Clear" row when nothing's flagged, so absence of issues is unambiguous vs missing data.
+
+Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Top issues / Trends / Compare / Runs. Tiers and Versions have their own scoped pickers (Tiers is the cross-tier view, Versions is the cross-version view). Workbook URLs encode the filter state, so links are shareable.
 
 Auth piggybacks on Azure RBAC: anyone with **Reader** on the Log Analytics workspace (or its parent RG) can view the Workbook. No separate identity to manage.
 
@@ -699,8 +739,10 @@ Auth piggybacks on Azure RBAC: anyone with **Reader** on the Log Analytics works
 Nothing to run manually. The pipeline's `ensureMonitoringInfra` stage runs every time and idempotently provisions:
 
 1. **Log Analytics workspace** (`historyWorkspaceName`, default `umbraco-loadtest-laws`)
-2. **Custom table** `LoadTestSummary_CL` matching the publisher's row schema
-3. **Data Collection Endpoint + Rule** for the Logs Ingestion API
+2. **Custom tables**:
+   - `LoadTestSummary_CL` — one row per (run × sampler), plus regression-check + metadata-only marker rows. The Workbook's primary table.
+   - `LoadTestSeries_CL` — one row per (run × metric × minute), populated from the same Azure Monitor data that `LoadTestSummary_CL`'s `*_avg / *_max` scalars come from but kept un-aggregated. Powers the per-run drill-down chart.
+3. **Data Collection Endpoint + Rule** for the Logs Ingestion API (a single DCR carries both stream declarations)
 4. **Monitoring Metrics Publisher** role on the DCR for the pipeline service principal (resolved automatically from the service connection — no manual SP-ID lookup)
 5. **The Workbook itself**, re-applied from `dashboards/loadtest.workbook.json` so changes to the file ship to Azure on the next pipeline run
 

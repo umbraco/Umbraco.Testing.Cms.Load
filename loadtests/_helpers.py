@@ -23,6 +23,7 @@ runs for a given scenario is fully visible in that scenario's locustfile.
 """
 
 import logging
+import os
 import random
 import uuid
 import requests
@@ -32,6 +33,16 @@ logger = logging.getLogger(__name__)
 
 INVENTORY_PATH = "/umbraco/api/seederstatus/inventory"
 DELIVERY_API_LIST_PATH = "/umbraco/delivery/api/v2/content"
+
+# Deterministic PRNG seed. Fixed default across runs so URL picks (and any other
+# random.* call) follow the same sequence, dropping cell-to-cell variance that's
+# purely "which URLs got hit" rather than infra. Override per-run via the
+# LOCUST_RANDOM_SEED env var when you specifically want randomised content
+# selection (e.g. validating that the harness ISN'T sensitive to URL choice).
+# Note: each engine/worker process re-seeds at module import, so multi-engine
+# runs get the same per-worker sequence; full request-by-request reproducibility
+# isn't promised, but aggregate URL distribution per run is now stable.
+random.seed(int(os.environ.get("LOCUST_RANDOM_SEED", "42")))
 
 
 def register_inventory_probe():
