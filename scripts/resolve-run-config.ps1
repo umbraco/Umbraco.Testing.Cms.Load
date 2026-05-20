@@ -22,6 +22,7 @@ param (
     [Parameter(Mandatory = $true)] [string]$RunEnterprise,
     [Parameter(Mandatory = $true)] [string]$PoolDtuOverride,
     [Parameter(Mandatory = $true)] [string]$AppSkuOverride,
+    [Parameter(Mandatory = $true)] [ValidateSet('Auto', 'Small', 'Medium', 'Large', 'Massive')] [string]$SeederPresetOverride,
     [Parameter(Mandatory = $true)] [string]$WorkspaceRoot
 )
 
@@ -43,6 +44,13 @@ switch ($Profile) {
     'smoke'    { $preset = 'Small';  $users = 50;  $spawn = 10; $duration = 60;  $engines = 1 }
     'standard' { $preset = 'Medium'; $users = 100; $spawn = 10; $duration = 300; $engines = 1 }
     'stress'   { $preset = 'Large';  $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
+}
+
+# Seeder preset override (Auto keeps the profile-coupled default). Unlocks
+# off-diagonal cells (Small content + stress load, Massive content + smoke
+# load) and is the only way to reach the Massive preset.
+if ($SeederPresetOverride -ne 'Auto') {
+    $preset = $SeederPresetOverride
 }
 
 # Each Umbraco major mapped explicitly (not by range) so a future major without

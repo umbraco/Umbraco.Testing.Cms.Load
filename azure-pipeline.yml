@@ -70,11 +70,6 @@ parameters:
     type: boolean
     default: false
 
-  - name: skipLoadTests
-    displayName: Skip load tests (infra-only run)
-    type: boolean
-    default: false
-
   - name: validationTimeoutMinutes
     displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
     type: number
@@ -91,7 +86,7 @@ parameters:
   # experiments. Defaults (per loadtests/tiers.json): Starter=20, Standard=50,
   # Pro=100, Enterprise=200. 'Auto' = use each tier's built-in DTU cap.
   - name: poolDtuOverride
-    displayName: SQL per-DB DTU override (Auto = use the tier's default)
+    displayName: SQL per-DB DTU override (Auto = match tier)
     type: string
     default: 'Auto'
     values:
@@ -107,7 +102,7 @@ parameters:
   # (per loadtests/tiers.json): Starter=P0v3, Standard=P1v3, Pro=P2v3,
   # Enterprise=P3v3. 'Auto' = use each tier's built-in SKU.
   - name: appSkuOverride
-    displayName: App Service SKU override (Auto = use the tier's default)
+    displayName: App Service SKU override (Auto = match tier)
     type: string
     default: 'Auto'
     values:
@@ -116,6 +111,23 @@ parameters:
       - 'P1v3'
       - 'P2v3'
       - 'P3v3'
+
+  # Override the TestDataSeeder preset so content size is independent of the
+  # load profile. 'Auto' couples preset to profile (smoke=Small, standard=Medium,
+  # stress=Large). Override unlocks the otherwise-unreachable Massive preset
+  # and enables off-diagonal cells (Small content + stress load, Massive content
+  # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~30 min,
+  # Large ~60 min, Massive ~120 min.
+  - name: seederPresetOverride
+    displayName: Seeder preset override (Auto = match load profile)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'Small'
+      - 'Medium'
+      - 'Large'
+      - 'Massive'
 
 variables:
   # Variable group `umbraco-loadtest-history` provides all history* variables:
@@ -162,6 +174,7 @@ stages:
                 -RunEnterprise '${{ parameters.runEnterprise }}'
                 -PoolDtuOverride '${{ parameters.poolDtuOverride }}'
                 -AppSkuOverride '${{ parameters.appSkuOverride }}'
+                -SeederPresetOverride '${{ parameters.seederPresetOverride }}'
                 -WorkspaceRoot '$(System.DefaultWorkingDirectory)'
 
   - stage: ensureHistoryInfra
@@ -349,17 +362,42 @@ stages:
                 echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
               addSpnToEnvironment: true
 
+          # Shared build cache: fetch the history storage key and expose it as a
+          # secret variable so the install script (run from Terraform local-exec
+          # below) can download/upload `build-cache/<key>.zip`. Fetch failure
+          # downgrades to a warning — Terraform Apply still runs, just without
+          # the cross-run cache.
+          - task: AzureCLI@2
+            name: FetchBuildCacheKey
+            displayName: Fetch build-cache storage key
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: pscore
+              scriptLocation: inlineScript
+              inlineScript: |
+                $key = az storage account keys list -n $(historyStorageAccount) -g $(historyResourceGroup) --query "[0].value" -o tsv
+                if ([string]::IsNullOrWhiteSpace($key)) {
+                    Write-Host "##vso[task.logissue type=warning]Could not fetch history storage key — shared build cache will be skipped this run."
+                } else {
+                    Write-Host "##vso[task.setvariable variable=BUILD_CACHE_STORAGE_KEY;issecret=true]$key"
+                }
+
           - task: TerraformTaskV4@4
             displayName: Terraform Apply
             # ARM_* env vars inherit into the install script via local-exec child-process
             # inheritance. Kept out of terraform variables (which would suppress local-exec
             # output) and out of the local-exec `environment` block (same reason).
+            # BUILD_CACHE_* envs do the same trick for the shared-cache code path in
+            # install-umbraco-cms-on-appservice.ps1 — missing values just skip that path.
             env:
-              ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
-              ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
-              ARM_TENANT_ID:       $(ARM_TENANT_ID)
-              ARM_OIDC_TOKEN:      $(ARM_OIDC_TOKEN)
-              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              ARM_CLIENT_ID:               $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET:           $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID:               $(ARM_TENANT_ID)
+              ARM_OIDC_TOKEN:              $(ARM_OIDC_TOKEN)
+              ARM_SUBSCRIPTION_ID:         $(ARM_SUBSCRIPTION_ID)
+              BUILD_CACHE_STORAGE_ACCOUNT: $(historyStorageAccount)
+              BUILD_CACHE_STORAGE_KEY:     $(BUILD_CACHE_STORAGE_KEY)
+              BUILD_CACHE_CONTAINER:       $(historyContainer)
             inputs:
               provider: 'azurerm'
               command: 'apply'
@@ -379,6 +417,27 @@ stages:
                 $compact = ($raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10)
                 Write-Host "##vso[task.setvariable variable=testCaseOutputs;isOutput=true]$compact"
 
+                # Aggregate per-case seeder results into a single output variable
+                # so the loadTest stage (different agent, no shared filesystem)
+                # doesn't need a pipeline-artifact handoff just for one field per
+                # case. install-umbraco-cms-on-appservice.ps1 wrote
+                # .seeder-results/<testCaseId>.json during local-exec; we
+                # gather them all here and emit one compact JSON output var.
+                $seederResultsDir = Join-Path "$(System.DefaultWorkingDirectory)" ".seeder-results"
+                $seederMap = @{}
+                if (Test-Path $seederResultsDir) {
+                    foreach ($f in Get-ChildItem -Path $seederResultsDir -Filter '*.json') {
+                        try {
+                            $seederMap[$f.BaseName] = Get-Content $f.FullName -Raw | ConvertFrom-Json
+                        } catch {
+                            Write-Warning "Couldn't parse seeder result $($f.FullName): $($_.Exception.Message)"
+                        }
+                    }
+                }
+                $seederJson = ($seederMap | ConvertTo-Json -Compress -Depth 5)
+                Write-Host "Aggregated $($seederMap.Count) seeder result(s)"
+                Write-Host "##vso[task.setvariable variable=seederResults;isOutput=true]$seederJson"
+
   - stage: loadTest
     displayName: Run load tests
     dependsOn:
@@ -391,34 +450,18 @@ stages:
       # Stage-level fan-out: every job in this stage inherits these.
       # Resolved values come from validateTestCases; testCaseOutputs from provision.apply.
       testCaseOutputs:         $[ stageDependencies.provision.apply.outputs['outputVars.testCaseOutputs'] ]
+      seederResults:           $[ stageDependencies.provision.apply.outputs['outputVars.seederResults'] ]
       resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
       resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
-      monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
-      monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
-      monitoringStreamName:     $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
+      monitoringDceUri:           $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId:   $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringStreamName:       $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
+      monitoringSeriesStreamName: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringSeriesStreamName'] ]
     jobs:
-      # Smoke check, only when skipLoadTests=true. Load tests do their own warm-up.
-      - job: verifyDeployments
-        displayName: Smoke-verify deployed sites
-        condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'True'))
-        steps:
-          - task: AzureCLI@2
-            displayName: Start, hit /, stop each App Service
-            env:
-              TEST_CASE_OUTPUTS: $(testCaseOutputs)
-            inputs:
-              azureSubscription: '$(serviceConnection)'
-              scriptType: 'pscore'
-              scriptLocation: 'scriptPath'
-              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/verify-deployments.ps1'
-              arguments: >
-                -ResourceGroupName "$(azureResourceGroup)"
-
       - job: runLoadTests
         displayName: Run Load Tests
-        condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'False'))
         # Each case: warm-up (~5 min) + load test (up to 600s) + publish. Up to four
         # cases per queue (one per selected tier); budget generously.
         timeoutInMinutes: 720
@@ -439,6 +482,7 @@ stages:
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
                 logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
           - ${{ if eq(parameters.runStandard, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -450,6 +494,7 @@ stages:
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
                 logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
           - ${{ if eq(parameters.runPro, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -461,6 +506,7 @@ stages:
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
                 logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
           - ${{ if eq(parameters.runEnterprise, true) }}:
             - template: templates/load-test-job.yml
               parameters:
@@ -472,6 +518,7 @@ stages:
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
                 logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
 
           # Stop all apps so none run idle during the manual validation window.
           - task: AzureCLI@2
@@ -497,7 +544,7 @@ stages:
     dependsOn:
       - ensureMonitoringInfra
       - loadTest
-    condition: and(succeeded('loadTest'), eq('${{ parameters.skipLoadTests }}', 'False'))
+    condition: succeeded('loadTest')
     variables:
       monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
       monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
