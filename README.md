@@ -15,7 +15,7 @@ Thresholds (fail-the-pipeline gates) are intentionally **deferred** until baseli
 
 This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs Locust load tests via Azure Load Testing service.
 
-**Supported Umbraco versions: v13–v18.** Each major maps to a specific .NET runtime (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map) below). A run for a major that doesn't yet have a `Umbraco.Cms.TestDataSeeder` package build fails fast at install time with a clear message — update the per-major map in `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` when a new seeder version ships.
+**Supported Umbraco versions: v13–v18 (subject to seeder availability).** Each major maps to a specific .NET runtime (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map) below). Today only **v17** has a published `Umbraco.Cms.TestDataSeeder` build (`17.0.0-beta.2`); v13–v16 and v18 queues fail at validation with a clear message until the seeder ships for those majors. Update the maps in `scripts/resolve-run-config.ps1` (validator-side) and `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` (install-side) in lockstep when a new seeder version ships.
 
 The `DeliveryApi` scenario is **v17+ only** — its `Program.cs` overlay uses v17's builder shape. The validator rejects the `DeliveryApi` + < v17 combination before provisioning. Use the `Default` scenario for older majors.
 
@@ -34,10 +34,12 @@ Cases on the same tier in one run share an App Service Plan; cases on different 
 - Azure subscription with appropriate permissions. The pipeline service principal needs:
   - Standard create/manage rights on the ephemeral and history resource groups (Contributor is enough for resources).
   - **`Microsoft.Storage/storageAccounts/listKeys/action`** on the history storage account — Storage Account Contributor (or any role that includes `listKeys/action`) is enough. Downstream scripts (`publish-load-test-results.ps1`, `_history-helpers.ps1`) fetch the account key at runtime and authenticate with `--account-key`. RBAC + `--auth-mode login` would be a stricter alternative but requires `Microsoft.Authorization/roleAssignments/write` for the SP, which is a heavier permissions ask.
+  - **`Microsoft.Authorization/roleAssignments/write`** on the history resource group (or specifically on the Data Collection Rule once it exists) — `ensure-monitoring-infra.ps1` grants the same SP "Monitoring Metrics Publisher" on the DCR so it can POST to the Logs Ingestion API. User Access Administrator on the history RG is sufficient.
+  - **Directory read** in Microsoft Entra ID — the pipeline calls `az ad sp show` to resolve its own object ID for the role grant above. Default tenants allow this for any authenticated principal; locked-down tenants may need an explicit `Directory Readers` role assignment on the SP.
 - Azure DevOps organization with:
   - Service connection to Azure (`terraform-umbraco-load-testing-az-connection`)
   - Variable group `umbraco-loadtest-history` with at minimum: `historyResourceGroup`, `historyLocation`, `historyLoadTestName`, `historyStorageAccount` (override the placeholder `loadtestchangeme` with a globally-unique 3-24 lowercase alphanumeric value), `historyContainer`.
-- Terraform >= 1.3.9
+- Terraform >= 1.13.3 (pinned at 1.13.3 in CI; pipelines install via TerraformInstaller@0)
 - PowerShell Core (pwsh) 7.3+ — earlier versions silently swallow native command failures (`dotnet build` errors etc.) because `$ErrorActionPreference = "Stop"` doesn't apply to native exit codes; 7.3 introduced `$PSNativeCommandUseErrorActionPreference` which the install script sets.
 
 ## First-time setup
@@ -47,7 +49,7 @@ A new team forking this project should:
 1. **Pick a globally-unique storage account name** (3-24 lowercase alphanumeric chars). This will host the long-lived run history. Override `historyStorageAccount` in the variable group with this value — the placeholder `loadtestchangeme` is rejected by `ensure-history-infra.ps1`.
 2. **Create the AzDO variable group** `umbraco-loadtest-history` with the five history variables above.
 3. **Configure the service principal** with the permissions listed in Prerequisites — Contributor on the subscription (or scoped narrower) is sufficient.
-4. **Queue the pipeline once with `skipLoadTests=true`.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container) and verifies the per-case provisioning path without committing to a full load test. ~10-15 minutes.
+4. **Queue the pipeline once.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container) **and the monitoring infra** (Log Analytics workspace, custom table, DCR, Workbook) alongside the per-case provisioning. The Workbook URL is printed in the `ensureMonitoringInfra` stage log — pin it to your Azure portal dashboard.
 5. **(Local-dev users)** `az login` and verify you can list keys for the history storage account — `show-trends.ps1` / `check-regression.ps1` / `compare-runs.ps1` (history mode) run locally need the same `listKeys/action` the pipeline SP uses:
    ```bash
    az storage account keys list -n <your-history-storage-account> -g umbraco-loadtest-history-rg --query "[0].keyName" -o tsv
@@ -57,11 +59,18 @@ A new team forking this project should:
 
 > ⚠️ Before queueing your first non-default run, skim the [Pitfalls](#pitfalls) section — security, name-length, overlay-precedence, and cleanup gotchas live there.
 
+**History storage scales sub-linearly thanks to a lifecycle policy.** `ensure-history-infra.ps1` tiers blobs from Hot → Cool after 30 days (override via `-LifecycleCoolAfterDays`). Cool tier is ~3× cheaper than Hot for storage, retrieval is still instant, and the per-read cost is negligible at PS-tool / Workbook query frequency.
+
+Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays = 0`) because the policy filter is coarse — it applies to every blob in the container, including the small `summary.ndjson` files the PS analysis tools read. Archive saves another ~3× on storage but takes **hours** to rehydrate; reads against year-old `summary.ndjson` would fail with HTTP 409 until rehydration completes. Enable Archive only if you've segregated raw zips into a separate prefix and tightened the policy filter, or you're OK with the rehydration delay.
+
 ## Project Structure
 
 ```
 ├── azure-pipeline.yml           # Main load test pipeline (manual queue)
 ├── README.md
+│
+├── dashboards/
+│   └── loadtest.workbook.json   # Azure Workbook: Trends / Tiers / Versions / Compare / Runs / Glossary over LoadTestSummary_CL
 │
 ├── templates/
 │   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
@@ -72,7 +81,6 @@ A new team forking this project should:
 │   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
 │   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, Azure Load Testing, storage
 │   ├── generate-loadtest-config.ps1    # Per-case ALT YAML config (testId, appComponents, failureCriteria)
-│   ├── verify-deployments.ps1          # Smoke-check each deployed site (skipLoadTests=true path)
 │   ├── stop-all-app-services.ps1       # Pre-test and end-of-run sweep: stop App Services in the case set
 │   ├── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
 │   ├── compare-runs.ps1                # Markdown delta report between two runs (CSV or history)
@@ -128,7 +136,7 @@ The queue UI splits into three concerns: **what to test**, **which tiers to test
 
 | Parameter | Description | Default | Options |
 |-----------|-------------|---------|---------|
-| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator enforces v13+ and a recognisable `X.Y.Z[-suffix]` shape; the major segment maps to the .NET runtime automatically (see table below). | 17.0.0 | free text |
+| `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator accepts v13, v17, v18 today (the majors with a published `Umbraco.Cms.TestDataSeeder` build — v18 reuses the v17 seeder as a fallback); v14/v15/v16 fail validation with a "seeder hasn't shipped" message. The major segment maps to the .NET runtime automatically (see table below). | 17.0.0 | free text |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
 
 **Which tiers:**
@@ -176,14 +184,16 @@ The v18 mapping should be verified against the actual v18 release notes before r
 | `azureRegion` | Azure region | West Europe | West Europe, North Europe, East US, West US 2 |
 | `resourcePrefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
 | `skipWarmup` | Skip warmup (test cold-start / cache warm-up behaviour) | false | true, false |
-| `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 | `poolDtuOverride` | Force every case onto a specific per-DB DTU cap (decouples DB sizing from tier) | Auto | Auto, 10, 20, 50, 100, 200 |
 | `appSkuOverride` | Force every case onto a specific App Service Plan SKU (decouples app sizing from tier) | Auto | Auto, P0v3, P1v3, P2v3, P3v3 |
+| `seederPresetOverride` | Force every case onto a specific TestDataSeeder preset (decouples content size from load profile) | Auto | Auto, Small, Medium, Large, Massive |
 
 **Pool DTU override.** When set to a value other than `Auto`, every test case in the run uses the same per-DB DTU cap regardless of the tier's default — useful for "is SQL actually the bottleneck?" experiments. Default caps are Starter→20, Standard→50, Pro→100, Enterprise→200 (see `tiers.json`). The Elastic Pool's eDTU capacity is sized automatically to the smallest valid Standard pool that can hold a DB at the chosen cap.
 
 **App SKU override.** Counterpart to `poolDtuOverride` on the app side. When set to a value other than `Auto`, every test case uses the same App Service Plan SKU regardless of the tier's default — useful for "is the app actually the bottleneck?" experiments. Default SKUs are Starter→P0v3, Standard→P1v3, Pro→P2v3, Enterprise→P3v3.
+
+**Seeder preset override.** Decouples content size from the load profile. `Auto` keeps the existing coupling (smoke→Small, standard→Medium, stress→Large); explicit values unlock off-diagonal combinations like Massive content + smoke load or Small content + stress load, and are the only way to reach the Massive preset. Approximate seeder times: Small ~10 min, Medium ~30 min, Large ~60 min, Massive ~120 min.
 
 The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds).
 
@@ -257,6 +267,34 @@ ${prefix}-appservice-${umbraco}-${tier}-${scenario}
 ```
 
 Long prerelease tags eat into the budget — see [Pitfalls › Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap).
+
+### Sampler naming
+
+A **sampler** is one operation within a scenario — a `@task` method in a Locust file, or an HTTP Request label in a JMeter `.jmx`. The workbook keys cells by `(scenario × umbraco_version × infra_tier × scenario_name)` and treats sampler names as opaque strings. Two consequences:
+
+- A renamed sampler spawns a new cell. Historical baseline for the old name doesn't transfer — the regression gate restarts at zero for the new name.
+- Two scenarios that share a sampler name (e.g. `BackofficeV13` and `BackofficeV17` both with a `Login` sampler) line up in the Compare tab's per-sampler delta view. Different names for the same operation (`Login` vs `BackofficeLogin`) won't.
+
+Reserved character: sampler names **must not contain `__`** — that's the cell-key delimiter parsed by `check-regression.ps1` and `_history-helpers.ps1`.
+
+For cross-version test plans where the same operation is implemented against two different APIs (the obvious case is backoffice — v13's `/umbraco/backoffice/UmbracoApi/...` vs v17+'s `/umbraco/management/api/v1/...`), agreeing on sampler labels up front is the cheapest discipline. A suggested canonical set for authenticated / backoffice flows:
+
+| Sampler | Operation |
+|---|---|
+| `Login` | Authenticate (any flavour — session cookie, OAuth token, etc.) |
+| `ContentList` | List or page through the content tree |
+| `ContentRead` | Read one content item by id |
+| `ContentSave` | Save (unpublished) one content item |
+| `ContentPublish` | Publish one content item |
+| `ContentUnpublish` | Unpublish one content item |
+| `MediaList` | List media folders or items |
+| `MediaUpload` | Upload one media file |
+| `UserList` | List users (admin-only) |
+| `Search` | Full-text search query |
+
+Front-end (anonymous) scenarios continue to use the existing convention from `Default` / `DeliveryApi` (`Homepage`, `Section`, `Category`, `Page`, `Detail`, `Media`, `ContactFormSubmit`, `DeliveryApiList`, `DeliveryApiItem`).
+
+Locust takes the sampler name from the method name (or the `name=` kwarg on `client.get/post`); JMeter takes it from the HTTP Request element's name. Same string lands in `LoadTestSummary_CL.scenario_name` either way — and from there into every workbook surface that filters or groups by sampler.
 
 ### `appsettings.json` overlay
 
@@ -365,6 +403,10 @@ Each scenario's locustfile declares its `@task` methods explicitly, so the workl
 
 The non-homepage tasks are **inventory-driven**: at test start, locust calls `/umbraco/api/seederstatus/inventory` to discover the actual URLs the seeder generated, so the same test code works against any seeder preset without per-run config. Tasks raise (visible as a 100%-error task in the report) when a bucket is empty — no silent fallbacks, so a broken seeder or misconfigured scenario surfaces loudly instead of distorting the workload. Adjust weights in a scenario's own `locustfile.py` to change that scenario's traffic mix; the DeliveryApi scenario is structured the same way but exercises the Content Delivery API endpoints instead of rendered pages.
 
+### Deterministic URL selection
+
+`loadtests/_helpers.py` seeds Python's `random` at module import (fixed seed `42` by default), so `random.choice()` over the seeded URL inventory follows the same sequence across runs. Cell-to-cell variance from "this run happened to hit Detail-7 a lot, that run hit Detail-23" drops out — leaving infrastructure jitter as the dominant signal in run-to-run deltas (which is the comparison you actually want for regression checks). Set the `LOCUST_RANDOM_SEED` env var to a different integer if you specifically want randomised content selection (e.g. to validate that the harness ISN'T sensitive to URL choice). Caveat: each Locust engine/worker process re-seeds at import, so full request-by-request reproducibility isn't promised; the aggregate URL distribution per run is what stays stable.
+
 ### Cold-cache vs warm-cache testing
 
 By default, the pipeline **warms up** the App Service (5-minute poll for `200` on `/`) before starting the load test, so measurements reflect steady-state cache-warm behaviour — the most stable comparison surface across tiers and versions.
@@ -373,11 +415,12 @@ Set `skipWarmup: true` to skip the warmup. The load test then hits a freshly-sta
 
 ## Results
 
-The pipeline writes results to three places:
+The pipeline writes results to four places:
 
-- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The Azure Load Testing resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one load test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} #{buildId}`.
+- **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The Azure Load Testing resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one load test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} {poolDtuMax}DTU #{buildId}` — the per-DB DTU cap is in the name so override runs (e.g. `Standard 100DTU`) are distinguishable from default-pairing runs (`Standard 50DTU`) in the portal's Compare view.
 - **Pipeline artifacts**: per-case ZIP under `loadtest-results-{sanitised-testCaseId}` on the build, useful for forensic deep-dives. Expires with the pipeline's build retention policy.
 - **History storage account** (long-lived): per-case NDJSON summary at `{scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/summary.ndjson` plus the raw artifact dump under `raw/`. Scenario is top-level because it defines what's *comparable* — different scenarios hit different endpoints / seed different data, so their numbers can't be compared directly. Within a scenario, prefix-listing maps to the natural pivots: `Default/17/` trends a major, `Default/17/17.0.0/` is all tiers in one build, `Default/17/*/Starter/` sweeps versions on one tier. Each row carries the full run metadata (commit, version, tier, scenario, SKUs, seeder preset, user count), so cross-run queries don't need joins.
+- **Log Analytics workspace** (long-lived): the same NDJSON rows mirrored into the `LoadTestSummary_CL` custom table for KQL querying. The Workbook (see "Dashboard" below) reads from here. Blob storage remains source of truth — Log Analytics is a queryable mirror.
 
 NDJSON is ingestible directly by Azure Data Explorer, pandas, Postgres `COPY`, etc. — pick whatever query layer fits, the data shape stays the same.
 
@@ -486,7 +529,7 @@ Defaults:
 
 Cells with fewer than `-MinBaselineRuns` prior runs are reported as "insufficient baseline" and **never** trigger a fail — you can't regress against nothing. This means turning the gate on doesn't break the first few runs of a brand-new scenario or tier; the gate activates per-cell as baselines accrue.
 
-Pass `-FailOnRegression $false` to render the report without failing (useful for "show me what would break if I turned this on").
+Pass `-NoFailOnRegression` to render the report without failing (useful for "show me what would break if I turned this on").
 
 The script is wired into the pipeline as the `regressionCheck` job after `runLoadTests`. It's permissive by default (cells with < `MinBaselineRuns` prior runs report "insufficient baseline" and exit 0), so it's safe to leave on from day one — the gate activates per-cell as baselines accrue.
 
@@ -497,13 +540,13 @@ The pipeline manages two separate resource groups:
 | Resource group | Lifetime | Contents |
 |---|---|---|
 | `${prefix}-rg` (ephemeral) | Created and destroyed per pipeline run | App Service plans (one per used tier), App Services + SQL servers + databases (one per case) |
-| `umbraco-loadtest-history-rg` (long-lived) | Created once, never deleted by the pipeline | Shared Azure Load Testing resource, storage account for results history |
+| `umbraco-loadtest-history-rg` (long-lived) | Created once, never deleted by the pipeline | Shared Azure Load Testing resource, storage account for results history, Log Analytics workspace + custom table + DCR/DCE for the Workbook, the Workbook itself |
 
-The long-lived RG is provisioned idempotently at the start of every pipeline run by `scripts/ensure-history-infra.ps1` — first run creates it, subsequent runs no-op. Override the names via the `historyResourceGroup`, `historyLoadTestName`, `historyStorageAccount`, `historyContainer` pipeline variables (or pin them in a variable group) if multiple teams share the subscription. **The storage account name must be globally unique and 3-24 lowercase alphanumeric chars.**
+The long-lived RG is provisioned idempotently at the start of every pipeline run by `scripts/ensure-history-infra.ps1` (storage / ALT) and `scripts/ensure-monitoring-infra.ps1` (Log Analytics / DCR / Workbook role grant) — first run creates, subsequent runs no-op. Override the names via the `historyResourceGroup`, `historyLoadTestName`, `historyStorageAccount`, `historyContainer`, `historyWorkspaceName`, `historyDceName`, `historyDcrName` pipeline variables (or pin them in a variable group) if multiple teams share the subscription. **The storage account name must be globally unique and 3-24 lowercase alphanumeric chars.**
 
 ## Pipeline Workflow
 
-The pipeline runs in six stages. Stage boundaries are visible in the AzDO run summary so failures isolate cleanly: a failed `provision` stage tells you Terraform broke; a failed `loadTest` stage tells you the test itself broke. The `cleanup` stage runs on `always()` so the ephemeral RG gets torn down (or offered for manual keep) on every outcome — including pipeline cancellation.
+The pipeline runs in seven stages. Stage boundaries are visible in the AzDO run summary so failures isolate cleanly: a failed `provision` stage tells you Terraform broke; a failed `loadTest` stage tells you the test itself broke. The `cleanup` stage runs on `always()` so the ephemeral RG gets torn down (or offered for manual keep) on every outcome — including pipeline cancellation.
 
 ```
 validateTestCases    Validate testCases JSON, read scenario folders, resolve load profile
@@ -512,21 +555,28 @@ validateTestCases    Validate testCases JSON, read scenario folders, resolve loa
 ensureHistoryInfra   Idempotent: shared Azure Load Testing resource + storage + container.
                      First run creates; subsequent runs no-op.
 
+ensureMonitoringInfra Idempotent: Log Analytics workspace + custom table + DCR/DCE + Workbook.
+                     Exposes the Logs Ingestion target as cross-stage variables.
+
 provision            checkResourceGroup → setup (init + validate + plan) → apply.
                      Provisions one App Service Plan per used tier, plus per-case App Services
                      and SQL DBs. Emits test_case_outputs map.
 
-loadTest             verifyDeployments (only when skipLoadTests=true) OR runLoadTests.
-                     Each case warms up, runs Locust on ALT, publishes results to
-                     history storage and the build artifact.
+loadTest             runLoadTests: each case warms up, runs Locust on ALT, publishes results
+                     to history storage, the build artifact, and Log Analytics.
 
 regression           Compare candidate run against baseline-median; fail the pipeline when a
-                     cell exceeds threshold AND has ≥3 prior runs. Skipped when
-                     skipLoadTests=true.
+                     cell exceeds threshold AND has ≥3 prior runs.
 
 cleanup              checkResourceGroupForCleanup → manualValidation (configurable window) →
                      deleteResourceGroup if rejected/cancelled/expired. Always runs.
 ```
+
+### Build cache
+
+The install script writes each `dotnet publish` output to `.build-cache/<key>.zip` where the cache key encodes `umbraco-version + scenario + seeder-package + overlay-hash`. Sibling cases in the same pipeline run (e.g. four tiers, same version + scenario) share the local cache, so the rebuild cost is paid once per (version × scenario) combo instead of once per case.
+
+Across runs, hosted agents start fresh and the local cache is gone. To recover that cost, the pipeline promotes cache zips to the history storage account (`build-cache/<key>.zip` under the same container) and downloads matching zips at the start of `provision.apply`. Gated on the `BUILD_CACHE_STORAGE_ACCOUNT / _KEY / _CONTAINER` env vars — populated automatically by `FetchBuildCacheKey` from `historyStorageAccount` + `historyContainer`. Fetch failure warns and continues (pipeline rebuilds from scratch); upload failure warns and continues (same-run siblings still hit local). Cache invalidation is automatic on any input change — bumping seeder version, editing `AdditionalSetup/`, or moving to a new Umbraco version all produce a fresh key.
 
 ## Data Seeder Presets
 
@@ -547,18 +597,13 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 2. Pick the **load profile** (`smoke` / `standard` / `stress`), **Umbraco version** (free text — prereleases ok), and **scenario** (defaults to `Default`).
 3. Tick the **tiers** to run against (`runStarter` / `runStandard` / `runPro` / `runEnterprise` — at least one). Defaults to Starter only.
 4. Adjust the orthogonal knobs (region, prefix, cold start, skip load tests, validation window) only if you need to.
-5. Wait for validation → ensure-history-infra → provisioning → load tests → regression check to complete.
+5. Wait for validation → ensure-history-infra → ensure-monitoring-infra → provisioning → load tests → regression check to complete.
 6. Review results in Azure Load Testing portal, pipeline artifacts, and history storage NDJSON. The `regression-report` artifact has the post-run regression check output.
 7. Approve or reject resource cleanup within the validation window (default 60 min).
 
 ### Smoke-testing changes
 
-When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Two faster modes:
-
-- **Profile-only smoke** — `loadProfile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Use this when you've changed something that might affect the load-test path (Locust task, test config YAML, ALT integration).
-- **Infra-only smoke** — `skipLoadTests=true` (with any profile + tier selection). Skips ALT entirely; runs validate → provision → install + seed → verify-deployments → cleanup. Use this when you've changed scripts/Terraform that affect provisioning or deployment but not load tests.
-
-Both modes exercise the full ephemeral-infra cycle. The profile-only smoke mode runs the regression check too (a no-op until baselines accrue); the infra-only smoke mode skips it (no new run to check).
+When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Run a **profile-only smoke**: `loadProfile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Exercises the full ephemeral-infra cycle and the load-test path on the smallest seeder preset.
 
 ### Running Terraform Locally
 
@@ -613,7 +658,6 @@ Pipeline parameters for the 3 baseline runs:
   loadProfile:    standard
   poolDtuOverride: Auto
   skipWarmup:     false
-  skipLoadTests:  false
 ```
 
 Wait for all 3 to finish, then approve cleanup on each.
@@ -664,6 +708,104 @@ Pipeline parameters for the candidate:
 - **All samplers up + `plan_CpuPercentage_max` near 100%** — App Service saturation. Same diagnostic question, different lever (App Service tier).
 
 The `regression-report` artifact + the per-sampler table from `compare-runs.ps1` together usually tell you whether to **investigate the code** or **revisit the infra sizing**.
+
+## Dashboard
+
+`dashboards/loadtest.workbook.json` is an Azure Workbook that queries `LoadTestSummary_CL` in Log Analytics and offers six views:
+
+- **Trends** — chronological per-run chart of the chosen metric (p95 / p99 / avg / error rate / RPS / server CPU peak / DB load peak), one line per `(scenario × version × tier)`; side-by-side latency + resource-pressure charts share a run-indexed x-axis for direct visual correlation of code-bound vs infra-bound symptoms; matrix table below with median ±stddev and a plain-language **Stability** label per cell (*stable / moderate / noisy / few runs*) flagging cells where a small regression threshold would be lost in run-to-run noise. Sampler filter is multi-select.
+- **Tiers** — pick scenario + version, see latest run per tier as a bar chart + a Capacity-verdict table with **Headroom** and a **Bottleneck** column naming the hottest resource and its peak (e.g. `Database load 92%`). Tier rows sort by capacity rank (Starter → Standard → Pro → Enterprise). Answers "what do I get for upgrading the tier — and what saturated first?"
+- **Versions** — pick scenario + tier, see per-sampler median latency grouped by Umbraco version. Answers "did this version regress on this tier?"
+- **Compare** — pick two runs + Δ% threshold; per-sampler delta table with red/green conditional formatting; server-side delta block with a **Note** column distinguishing "no change" from "no data". Failed runs (`no_metrics`) are excluded from the run pickers.
+- **Runs** — filtered run list with **Bottleneck** + regression-verdict columns; pick a run from the drill dropdown to see the regression breakdown (which specific samplers flagged), per-sampler latency detail, **and per-minute resource-pressure charts** (% metrics and HTTP error counts on separate axes) sourced from a companion `LoadTestSeries_CL` table — answers "when *in* the run did p99 spike?" / "did SQL DTU saturate before App CPU?" — the questions the summary scalars can't.
+- **Glossary** — vocabulary reference for every column / verdict / metric used in the other tabs.
+
+Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Trends / Compare / Runs. Tiers and Versions have their own scoped pickers (Tiers is the cross-tier view, Versions is the cross-version view). Workbook URLs encode the filter state, so links are shareable.
+
+Auth piggybacks on Azure RBAC: anyone with **Reader** on the Log Analytics workspace (or its parent RG) can view the Workbook. No separate identity to manage.
+
+> **Single-team scope today.** The Workbook GUID, the `LoadTestSummary_CL` table, and the workspace itself are shared resources with no per-team partitioning. If multiple teams ever fork this and target the same subscription, they'll need to override `historyWorkspaceName` / `historyDceName` / `historyDcrName` (already supported) **and** pass a fork-specific `-WorkbookId` to `deploy-workbook.ps1` to avoid clobbering each other's dashboard customisations. Row-level filters per team aren't implemented — anyone with workspace Reader sees every team's data.
+
+### Setup
+
+Nothing to run manually. The pipeline's `ensureMonitoringInfra` stage runs every time and idempotently provisions:
+
+1. **Log Analytics workspace** (`historyWorkspaceName`, default `umbraco-loadtest-laws`)
+2. **Custom tables**:
+   - `LoadTestSummary_CL` — one row per (run × sampler), plus regression-check + metadata-only marker rows. The Workbook's primary table.
+   - `LoadTestSeries_CL` — one row per (run × metric × minute), populated from the same Azure Monitor data that `LoadTestSummary_CL`'s `*_avg / *_max` scalars come from but kept un-aggregated. Powers the per-run drill-down chart.
+3. **Data Collection Endpoint + Rule** for the Logs Ingestion API (a single DCR carries both stream declarations)
+4. **Monitoring Metrics Publisher** role on the DCR for the pipeline service principal (resolved automatically from the service connection — no manual SP-ID lookup)
+5. **The Workbook itself**, re-applied from `dashboards/loadtest.workbook.json` so changes to the file ship to Azure on the next pipeline run
+
+After the first pipeline run, the printed Workbook URL is in the `ensureMonitoringInfra` stage log (look for "Workbook deployed" — the URL line below it). Pin the Workbook to your Azure portal dashboard for one-click access. First-time data takes ~5–10 minutes to surface in a brand-new custom table.
+
+If you want to override the resource names (e.g. multiple teams sharing one subscription), set `historyWorkspaceName`, `historyDceName`, `historyDcrName` in the `umbraco-loadtest-history` variable group.
+
+### Manual deploy (rare)
+
+You can run either script manually if you need to provision monitoring outside a pipeline run, or push a Workbook tweak without queueing the full pipeline:
+
+```powershell
+./scripts/ensure-monitoring-infra.ps1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
+    -HistoryLocation "West Europe" `
+    -WorkspaceName umbraco-loadtest-laws `
+    -DceName umbraco-loadtest-dce `
+    -DcrName umbraco-loadtest-dcr `
+    -IngestPrincipalId (az ad sp show --id <pipeline-sp-app-id> --query id -o tsv)
+
+./scripts/deploy-workbook.ps1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
+    -HistoryLocation "West Europe" `
+    -WorkspaceName umbraco-loadtest-laws
+```
+
+### Cost
+
+$0/month at this volume. Log Analytics gives 5 GB/month free per billing account (each `summary.ndjson` is a few KB, so you'd need ~100,000+ runs/month to dent the free tier). 31-day retention is included free; longer is ~$0.10/GB/month — also negligible. Workbooks themselves are free.
+
+### Maintenance
+
+**Prereqs both scripts assume**: `az` CLI logged in (`az login`), pwsh 7.3+.
+
+**Iterating on the Workbook** — edit `dashboards/loadtest.workbook.json` directly, or edit in the portal's Advanced Editor and paste the result back. Re-run `deploy-workbook.ps1` to push. The deploy uses a stable GUID (`-WorkbookId` parameter) so re-runs update in place.
+
+**Schema changes** — if you add a field in `publish-load-test-results.ps1`, mirror it in the `$columns` array in `ensure-monitoring-infra.ps1` and re-run that script. The DCR PUT is an in-place schema update; existing data is preserved. Fields without a matching column are dropped at ingestion (no failure).
+
+**Backfilling old runs** — the Workbook only sees what's been ingested into Log Analytics. Anything in blob storage from before the monitoring infra existed (or any run whose original publish step succeeded the blob upload but failed the Logs Ingestion call) is invisible to the Workbook. Replay it with:
+
+```powershell
+./scripts/backfill-monitoring.ps1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
+    -StorageAccountName <history-sa> `
+    -ContainerName loadtest-history `
+    -WorkspaceName umbraco-loadtest-laws `
+    -DceName umbraco-loadtest-dce `
+    -DcrName umbraco-loadtest-dcr
+```
+
+Idempotent by default — queries existing `run_id`s in the table and skips blobs whose run is already there. `-Force` re-ingests everything (creates duplicates; use only after a teardown).
+
+**Access control** — grant `Log Analytics Reader` (or any role that includes read on the workspace) to anyone who needs to view the Workbook. Revoke by removing the role assignment.
+
+**Teardown** — remove the Workbook + monitoring without affecting load-test history:
+
+```powershell
+az resource delete --ids "/subscriptions/<sub>/resourceGroups/umbraco-loadtest-history-rg/providers/Microsoft.Insights/workbooks/<workbookId>"
+az monitor data-collection rule delete -n umbraco-loadtest-dcr -g umbraco-loadtest-history-rg
+az monitor data-collection endpoint delete -n umbraco-loadtest-dce -g umbraco-loadtest-history-rg
+az monitor log-analytics workspace delete -n umbraco-loadtest-laws -g umbraco-loadtest-history-rg --yes
+```
+
+The history storage account, container, and ALT all stay untouched.
+
+### Troubleshooting
+
+- **Workbook loads but tables/charts are empty.** Check the Log Analytics workspace directly: `LoadTestSummary_CL | take 50`. If empty, `publish-load-test-results.ps1` isn't reaching the Logs Ingestion API — check pipeline log for the "Posting N row(s) to Log Analytics" line. Most common cause: the SP doesn't have Monitoring Metrics Publisher on the DCR (re-run `ensure-monitoring-infra.ps1` to repair).
+- **First-ever ingest after table creation appears to do nothing.** New custom tables take 5–10 minutes for ingestion to surface. Wait, then re-query.
+- **Permission denied opening the Workbook.** Grant `Log Analytics Reader` (or Contributor on the workspace) to the user.
+- **`deploy-workbook.ps1` fails with "Resource not found" on the workspace.** Run `ensure-monitoring-infra.ps1` first; the deploy script needs the workspace to set its `sourceId`.
 
 ## Roadmap
 
@@ -767,7 +909,12 @@ Practical guidance: use Massive when you specifically need the data volume. For 
 ```bash
 cd Terraform && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
 Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+git ls-files 'loadtests/**/locustfile.py' 'loadtests/_helpers.py' | ForEach-Object { python -m py_compile $_ }
+yamllint -d "{rules: {document-start: disable, line-length: disable, truthy: disable}}" loadtests/scenarios/
+git ls-files '*.json' | ForEach-Object { Get-Content -LiteralPath $_ -Raw | ConvertFrom-Json | Out-Null }
 ```
+
+Running these locally catches the common typos (trailing commas in the Workbook JSON, unescaped `$` in PowerShell, indentation in scenario yaml) without burning a pipeline run.
 
 ## Azure resource tagging
 

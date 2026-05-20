@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Build, publish, and zip-deploy a fresh Umbraco CMS project to the target App
 # Service, then poll the seeder status endpoint until seeding completes.
 # Invoked from terraform's null_resource.deploy_umbraco local-exec; expects SP
@@ -12,7 +14,11 @@ param (
     [Parameter(Mandatory = $true)] [string]$AppServiceHostname,
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$Scenario,
-    [Parameter(Mandatory = $true)] [string]$SeederPreset
+    [Parameter(Mandatory = $true)] [string]$SeederPreset,
+    # File the script writes once the seeder finishes — the load-test job
+    # reads it to surface seeder_duration_seconds in the published metrics.
+    # On Skipped/Failed seeder, duration_seconds is written as null.
+    [Parameter(Mandatory = $true)] [string]$SeederResultPath
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,12 +47,15 @@ if (-not $env:ARM_CLIENT_SECRET -and -not $env:ARM_OIDC_TOKEN) {
 # for that major and the run will fail-fast below with a clear message.
 # The version is baked into the build cache key, so bumps auto-invalidate stale builds.
 $seederPackageVersions = @{
-    13 = $null              # TBD: v13 seeder build pending
-    14 = $null              # TBD: v14 seeder build pending
-    15 = $null              # TBD: v15 seeder build pending
-    16 = $null              # TBD: v16 seeder build pending
+    13 = "13.0.0-beta.1"
     17 = "17.0.0-beta.2"
-    18 = $null              # TBD: v18 seeder build pending
+    # No dedicated v18 build yet; v17 seeder works on v18 (the seeder's surface
+    # area is stable across the v17→v18 jump). Bump to a v18 build if/when one
+    # ships and the v17 fallback drifts.
+    18 = "17.0.0-beta.2"
+    # v14/v15/v16: no published seeder yet. resolve-run-config.ps1 fails the
+    # run at validation with a clear message; add entries here in lockstep when
+    # those builds ship.
 }
 
 $umbracoMajor = [int](($UmbracoVersion -split '\.')[0])
@@ -106,6 +115,46 @@ $cachedZip    = Join-Path $cacheDir "$safeCacheKey.zip"
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Deploying Umbraco $UmbracoVersion ($Scenario)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
+
+# Shared build cache (history-RG storage). The local .build-cache/ folder only
+# survives within a single pipeline run — fresh hosted agents start empty, so
+# every run currently re-runs `dotnet publish` for the first case of each
+# (version, scenario) combination. Promoting cache zips to history storage and
+# downloading them on demand removes that minute-tax across runs. Gated on the
+# three BUILD_CACHE_* env vars (set by the pipeline's Terraform Apply task); a
+# missing env var just falls through to the existing local-cache-only path.
+if (-not (Test-Path -LiteralPath $cachedZip) -and
+    $env:BUILD_CACHE_STORAGE_ACCOUNT -and
+    $env:BUILD_CACHE_STORAGE_KEY -and
+    $env:BUILD_CACHE_CONTAINER) {
+    Write-Host "Local build cache miss; checking shared cache in $($env:BUILD_CACHE_STORAGE_ACCOUNT)..."
+    if (-not (Test-Path -LiteralPath $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    }
+    # Disable throw-on-nonzero locally so we can branch on $LASTEXITCODE — az's
+    # exit code is the cleanest "is this blob there" signal.
+    $prevPref = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+    try {
+        az storage blob download `
+            --account-name $env:BUILD_CACHE_STORAGE_ACCOUNT `
+            --account-key $env:BUILD_CACHE_STORAGE_KEY `
+            --container-name $env:BUILD_CACHE_CONTAINER `
+            --name "build-cache/$safeCacheKey.zip" `
+            --file $cachedZip `
+            --no-progress 2>$null | Out-Null
+        $downloadExit = $LASTEXITCODE
+    } finally {
+        $PSNativeCommandUseErrorActionPreference = $prevPref
+    }
+    if ($downloadExit -eq 0 -and (Test-Path -LiteralPath $cachedZip)) {
+        Write-Host "Shared cache HIT: downloaded build-cache/$safeCacheKey.zip" -ForegroundColor Green
+    } else {
+        # Remove partial file so the build path runs cleanly.
+        Remove-Item -LiteralPath $cachedZip -Force -ErrorAction SilentlyContinue
+        Write-Host "Shared cache MISS: build-cache/$safeCacheKey.zip not found (or download failed)."
+    }
+}
 
 if (Test-Path -LiteralPath $cachedZip) {
     Write-Host "Build cache HIT: reusing $cachedZip" -ForegroundColor Green
@@ -196,6 +245,35 @@ else {
         }
         Copy-Item -LiteralPath "$pathToApp/publish.zip" -Destination $cachedZip -Force
         Write-Host "Cached build artifact at: $cachedZip"
+
+        # Promote to shared cache so the next pipeline run on a fresh agent (or
+        # a sibling case in this run that hits the cache after we cleared the
+        # local copy) skips the build entirely. Failure is non-fatal — the
+        # local cache still serves same-run siblings, and the next-build path
+        # is correct, just slower.
+        if ($env:BUILD_CACHE_STORAGE_ACCOUNT -and $env:BUILD_CACHE_STORAGE_KEY -and $env:BUILD_CACHE_CONTAINER) {
+            Write-Host "Uploading build to shared cache..."
+            $prevPref = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+            try {
+                az storage blob upload `
+                    --account-name $env:BUILD_CACHE_STORAGE_ACCOUNT `
+                    --account-key $env:BUILD_CACHE_STORAGE_KEY `
+                    --container-name $env:BUILD_CACHE_CONTAINER `
+                    --file $cachedZip `
+                    --name "build-cache/$safeCacheKey.zip" `
+                    --overwrite `
+                    --no-progress 2>$null | Out-Null
+                $uploadExit = $LASTEXITCODE
+            } finally {
+                $PSNativeCommandUseErrorActionPreference = $prevPref
+            }
+            if ($uploadExit -eq 0) {
+                Write-Host "Shared cache updated: build-cache/$safeCacheKey.zip"
+            } else {
+                Write-Host "Shared cache upload failed (exit $uploadExit) — local cache still good for siblings in this run."
+            }
+        }
     }
     finally {
         # Restore cwd and clean the build dir on every path (success and failure).
@@ -229,6 +307,22 @@ if ($env:ARM_SUBSCRIPTION_ID) {
 Write-Host "Deploying to App Service: $AppServiceName..."
 az webapp deployment source config-zip --src $cachedZip -n $AppServiceName -g $ResourceGroupName
 
+function Write-SeederResult {
+    param(
+        [Parameter(Mandatory)] [string]$Status,
+        [Nullable[double]]$DurationSeconds = $null
+    )
+    $payload = [ordered]@{
+        status           = $Status
+        duration_seconds = $DurationSeconds
+    }
+    $dir = Split-Path -Parent $SeederResultPath
+    if ($dir -and -not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    $payload | ConvertTo-Json -Compress | Set-Content -Path $SeederResultPath -Encoding utf8
+}
+
 # Wait for the data seeder to finish. The polling doubles as App Service warm-up.
 $seederStatusUrl = "https://$AppServiceHostname/umbraco/api/seederstatus/status"
 $maxAttemptsByPreset = @{ Small = 60; Medium = 180; Large = 360; Massive = 720 }   # 10/30/60/120 min at 10s cadence
@@ -249,13 +343,25 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         # -SkipHttpErrorCheck so 503 lands here, not in catch{}.
         $response = Invoke-WebRequest -Uri $seederStatusUrl -UseBasicParsing -TimeoutSec 30 -SkipHttpErrorCheck
         $seederStatusCode = $response.StatusCode
-        $responseBody = $response.Content | ConvertFrom-Json
+
+        # Parse the body in its own guard. A non-JSON 5xx (App Service warmup
+        # HTML, gateway error page) would otherwise fall into the outer catch
+        # and get misreported as "Waiting for seeder endpoint..." for the full
+        # timeout budget — hiding the real failure for up to 120 minutes on
+        # the Massive preset.
+        try {
+            $responseBody = $response.Content | ConvertFrom-Json
+        } catch {
+            Write-Host "  [$attempt/$maxAttempts] HTTP $seederStatusCode (non-JSON body); retrying..."
+            continue
+        }
 
         # Terminal-OK states: Completed, CompletedWithErrors, Skipped.
         if ($seederStatusCode -eq 200 -and $responseBody.Status -in @("Completed", "CompletedWithErrors", "Skipped")) {
             Write-Host ""
             if ($responseBody.Status -eq "Skipped") {
                 Write-Host "Data seeder was disabled in scenario config - skipping wait." -ForegroundColor Green
+                Write-SeederResult -Status "Skipped"
             } else {
                 $elapsedSeconds = [math]::Round($responseBody.ElapsedMs / 1000, 2)
                 $verb = ($responseBody.Status -eq "CompletedWithErrors") ? "completed with errors" : "completed successfully"
@@ -263,6 +369,7 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
                 Write-Host "  Duration: $elapsedSeconds seconds"
                 Write-Host "  Executed: $($responseBody.ExecutedCount)"
                 Write-Host "  Failed: $($responseBody.FailedCount)"
+                Write-SeederResult -Status $responseBody.Status -DurationSeconds $elapsedSeconds
             }
             $seederComplete = $true
             $seederSuccess = $true
@@ -270,6 +377,7 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         elseif ($seederStatusCode -eq 503) {
             Write-Host ""
             Write-Host "ERROR: Seeder reported failure - $($responseBody.ErrorMessage)" -ForegroundColor Red
+            Write-SeederResult -Status "Failed"
             $seederComplete = $true
         }
         else {
@@ -285,6 +393,10 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
 if (-not $seederSuccess) {
     Write-Host ""
     Write-Host "Seeder did not complete - stopping App Service and exiting non-zero" -ForegroundColor Red
+    # 503 path already wrote 'Failed'; this catches the loop-timeout case.
+    if (-not (Test-Path $SeederResultPath)) {
+        Write-SeederResult -Status "TimedOut"
+    }
     az webapp stop -n $AppServiceName -g $ResourceGroupName
     exit 1
 }

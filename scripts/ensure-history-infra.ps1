@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Idempotently ensure the long-lived "history" infra exists: RG, Azure Load Testing, storage, container.
 # First run creates; subsequent runs no-op. Account-key auth avoids RBAC propagation delays.
 
@@ -7,7 +9,22 @@ param(
     [Parameter(Mandatory = $true)] [string]$HistoryLocation,
     [Parameter(Mandatory = $true)] [string]$LoadTestName,
     [Parameter(Mandatory = $true)] [string]$StorageAccountName,
-    [Parameter(Mandatory = $true)] [string]$ContainerName
+    [Parameter(Mandatory = $true)] [string]$ContainerName,
+    # Lifecycle policy thresholds (days). Set either to 0 to disable that
+    # transition.
+    #
+    # Default is Cool@30d, Archive disabled. Reason: the policy filter is
+    # coarse — it applies to ALL blobs in the container, including the
+    # summary.ndjson files the PS analysis tools (show-trends.ps1,
+    # compare-runs.ps1, check-regression.ps1, backfill-monitoring.ps1) read.
+    # Cool tier is instant retrieval at slightly higher per-read cost — fine.
+    # Archive tier takes HOURS to rehydrate, so older summary.ndjson reads
+    # would fail with HTTP 409 until manually rehydrated. Cool-only sidesteps
+    # that. Override -LifecycleArchiveAfterDays only if you've segregated
+    # raw zips to a different prefix (and updated the policy filter to match)
+    # or you're OK with the rehydration delay on year-old data.
+    [int]$LifecycleCoolAfterDays    = 30,
+    [int]$LifecycleArchiveAfterDays = 0
 )
 
 $ErrorActionPreference = "Stop"

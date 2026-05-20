@@ -40,5 +40,9 @@ module "umbraco" {
   pool_dtu_override = var.pool_dtu_override
   app_sku_override  = var.app_sku_override
 
+  budget_alert_amount        = var.budget_alert_amount
+  budget_alert_threshold_pct = var.budget_alert_threshold_pct
+  budget_alert_emails        = var.budget_alert_emails
+
   build_id = var.build_id
 }

@@ -1,0 +1,963 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# Umbraco Load Test Dashboard\nData source: `LoadTestSummary_CL` in the workspace below, populated by `scripts/publish-load-test-results.ps1` on every pipeline run. Open the **Glossary** tab for the full vocabulary."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-workspace",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspace",
+            "label": "Workspace",
+            "type": 5,
+            "isRequired": true,
+            "value": "__WORKSPACE_ID__",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "includeAll": false,
+              "showDefault": true
+            },
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-timerange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": { "durationMs": 604800000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 86400000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 },
+                { "durationMs": 7776000000 },
+                { "durationMs": 31536000000 }
+              ]
+            }
+          },
+          {
+            "id": "param-scenario",
+            "version": "KqlParameterItem/1.0",
+            "name": "Scenario",
+            "label": "Scenario",
+            "type": 2,
+            "isRequired": false,
+            "value": "*",
+            "query": "LoadTestSummary_CL\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-version",
+            "version": "KqlParameterItem/1.0",
+            "name": "Version",
+            "label": "Version",
+            "type": 2,
+            "isRequired": false,
+            "value": "*",
+            "query": "LoadTestSummary_CL\n| distinct umbraco_version\n| where isnotempty(umbraco_version)\n| order by parse_version(umbraco_version) asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-tier",
+            "version": "KqlParameterItem/1.0",
+            "name": "Tier",
+            "label": "Tier",
+            "type": 2,
+            "isRequired": false,
+            "value": "*",
+            "query": "LoadTestSummary_CL\n| distinct infra_tier\n| where isnotempty(infra_tier)\n| order by infra_tier asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "global-filters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "_Filters above scope **Trends**, **Compare**, and **Runs**. **Tiers** and **Versions** have their own pickers; they default to the matching global values when set._"
+      },
+      "name": "global-filters-scope-note"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// One-row health banner. Always renders; green ✓ when data is reachable in\n// the selected Workspace, amber ⚠ when nothing matches — so a fresh deploy\n// with the wrong Workspace param or an empty table is obvious instead of\n// silently rendering every panel blank.\nprint n = toscalar(LoadTestSummary_CL | summarize count())\n| extend ['Data source'] = iif(n > 0, strcat('✓ Connected — ', tostring(n), ' record(s) in LoadTestSummary_CL'), '⚠ No data in LoadTestSummary_CL — check the Workspace parameter above, widen Time range, or run the pipeline first')\n| project ['Data source']",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Data source", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "contains", "thresholdValue": "✓", "representation": "success" },
+              { "operator": "contains", "thresholdValue": "⚠", "representation": "warning" },
+              { "operator": "Default", "representation": "info" }
+            ] } }
+          ]
+        }
+      },
+      "name": "workspace-health"
+    },
+
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-selected-tab",
+            "version": "KqlParameterItem/1.0",
+            "name": "SelectedTab",
+            "label": "",
+            "type": 10,
+            "isRequired": true,
+            "value": "Trends",
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": false },
+            "jsonData": "[\n    { \"value\": \"Trends\",   \"label\": \"Trends\",   \"selected\": true },\n    { \"value\": \"Tiers\",    \"label\": \"Tiers\" },\n    { \"value\": \"Versions\", \"label\": \"Versions\" },\n    { \"value\": \"Compare\",  \"label\": \"Compare\" },\n    { \"value\": \"Runs\",     \"label\": \"Runs\" },\n    { \"value\": \"Glossary\", \"label\": \"Glossary\" }\n]"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "tab-bar"
+    },
+
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Latest-run summary card. Top-of-page glance answer to 'is the latest\n// run OK?' Pulls one row per (scenario × version × tier) bounded by the\n// global filter. Capacity status flags infra saturation (Server CPU /\n// memory / Database load peaks at 85/95% or error rate at 1%);\n// Regression surfaces the verdict posted by scripts/check-regression.ps1\n// for the same case.\n// publish-load-test-results.ps1 writes one row per sampler with the\n// run-level resource metrics (plan_*, sql_*) duplicated across every\n// row of the same run. arg_max picks one row per case and its resource\n// fields ARE the run-level values — no need to filter to an empty\n// scenario_name (which would exclude everything).\nlet runs = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and coalesce(cold_start, false) == false\n    | extend run_key = tolower(trim(@'\\s+', tostring(run_id))), scenario_key = tolower(trim(@'\\s+', scenario)), version_key = tolower(trim(@'\\s+', umbraco_version)), tier_key = tolower(trim(@'\\s+', infra_tier))\n    | summarize arg_max(TimeGenerated, *) by run_key, scenario_key, version_key, tier_key\n    | top 5 by TimeGenerated desc;\nlet regression = LoadTestSummary_CL\n    | where parse_status == 'regression_check'\n    | extend run_key = tolower(trim(@'\\s+', tostring(run_id))), scenario_key = tolower(trim(@'\\s+', scenario)), version_key = tolower(trim(@'\\s+', umbraco_version)), tier_key = tolower(trim(@'\\s+', infra_tier))\n    | summarize regression_status = take_any(regression_status), reg_ts = max(TimeGenerated) by run_key, scenario_key, version_key, tier_key;\nruns\n| join kind=leftouter regression on run_key, scenario_key, version_key, tier_key\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| extend bn_peak = coalesce(max_of(plan_CpuPercentage_max, plan_MemoryPercentage_max, sql_dtu_consumption_percent_max, sql_cpu_percent_max, sql_log_write_percent_max, sql_physical_data_read_percent_max), real(0))\n// Decision-first column order: identifier, verdict triple (Capacity/Bottleneck/\n// Regression), then the supporting metric columns.\n| project Started = TimeGenerated,\n          Scenario = scenario,\n          Version = umbraco_version,\n          Tier = infra_tier,\n          ['Capacity status'] = case(\n              run_error_rate >= 0.01\n                or plan_CpuPercentage_max >= 95\n                or plan_MemoryPercentage_max >= 95\n                or sql_dtu_consumption_percent_max >= 95\n                or sql_cpu_percent_max >= 95, 'Saturated',\n              plan_CpuPercentage_max >= 85\n                or plan_MemoryPercentage_max >= 85\n                or sql_dtu_consumption_percent_max >= 85\n                or sql_cpu_percent_max >= 85, 'Stressed',\n              'OK'),\n          Bottleneck = case(\n              bn_peak < 50, '—',\n              plan_CpuPercentage_max == bn_peak, strcat('App CPU ', round(bn_peak, 0), '%'),\n              plan_MemoryPercentage_max == bn_peak, strcat('Server memory ', round(bn_peak, 0), '%'),\n              sql_dtu_consumption_percent_max == bn_peak, strcat('Database load ', round(bn_peak, 0), '%'),\n              sql_cpu_percent_max == bn_peak, strcat('Database CPU ', round(bn_peak, 0), '%'),\n              sql_log_write_percent_max == bn_peak, strcat('Database log-write ', round(bn_peak, 0), '%'),\n              sql_physical_data_read_percent_max == bn_peak, strcat('Database physical reads ', round(bn_peak, 0), '%'),\n              '—'),\n          Regression = case(\n              regression_status == 'regress',      'regression detected',\n              regression_status == 'pass',         'no regression',\n              regression_status == 'insufficient', 'not enough history',\n              isnotempty(regression_status),       regression_status,\n              TimeGenerated > ago(15min),          'checking',\n              'not run'),\n          ['Error %']          = round(run_error_rate * 100, 2),\n          ['Run #'] = run_id,\n          ['Server CPU avg %'] = round(plan_CpuPercentage_avg, 1),\n          ['Server CPU peak %'] = round(plan_CpuPercentage_max, 1),\n          ['Database load avg %']  = round(sql_dtu_consumption_percent_avg, 1),\n          ['Database load peak %']  = round(sql_dtu_consumption_percent_max, 1)\n| order by Started desc",
+        "size": 0,
+        "title": "Latest 5 runs (chronological) — quick status check on the most recent activity across the global filter. Complements the issues panel above (which is severity-sorted and only shows what's flagged).",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Server CPU avg %", "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load avg %",  "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load peak %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Error %",          "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
+            { "columnMatch": "Capacity status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
+              { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
+              { "operator": "Default", "representation": "success" }
+            ] } },
+            { "columnMatch": "Regression", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "regression detected", "representation": "critical" },
+              { "operator": "==", "thresholdValue": "not enough history",  "representation": "3" },
+              { "operator": "==", "thresholdValue": "checking",            "representation": "info" },
+              { "operator": "==", "thresholdValue": "not run",             "representation": "unknown" },
+              { "operator": "==", "thresholdValue": "no regression",       "representation": "success" },
+              { "operator": "Default", "representation": "unknown" }
+            ] } }
+          ]
+        }
+      },
+      "name": "latest-run-card",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Trends\nOne line per `(sampler × version × tier)` across recent runs. The latest-run card above is the at-a-glance capacity check; the chart below is the longitudinal view, with a foldout matrix showing median ± spread per cell. **Cold-start runs (queued with `skipWarmup: true`) are excluded by default — see the Runs tab to view them, or the Compare tab to pick one explicitly.**"
+      },
+      "name": "trends-header",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-metric",
+            "version": "KqlParameterItem/1.0",
+            "name": "Metric",
+            "label": "Metric",
+            "type": 2,
+            "isRequired": true,
+            "value": "p95 (ms)",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
+            "jsonData": "[\n    { \"value\": \"p95 (ms)\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99 (ms)\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg (ms)\", \"label\": \"avg (ms)\" },\n    { \"value\": \"error rate\", \"label\": \"error rate\" },\n    { \"value\": \"Requests/sec\", \"label\": \"Requests/sec\" },\n    { \"value\": \"Server CPU peak %\", \"label\": \"Server CPU peak %\" },\n    { \"value\": \"Database load peak %\", \"label\": \"Database load peak %\" }\n]"
+          },
+          {
+            "id": "param-sampler",
+            "version": "KqlParameterItem/1.0",
+            "name": "Sampler",
+            "label": "Sampler",
+            "type": 2,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "isRequired": true,
+            "value": ["*"],
+            "query": "// Dropdown is scoped by the global Scenario filter so picking a scenario\n// trims the sampler list to just that scenario's tasks. parse_status filter\n// keeps metadata-only / regression-check rows out — they have empty\n// scenario_name and would surface as an empty option.\nLoadTestSummary_CL\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| distinct scenario_name\n| order by scenario_name asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": false, "selectAllValue": "*" },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "trends-params",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Run-indexed x-axis (NOT time): each Run # is a discrete categorical\n// position so runs are equally spaced regardless of how long elapsed\n// between them. Time-based axis crammed bursts and isolated long-gap\n// runs together making run-to-run trends unreadable. Chronological order\n// is preserved via the upstream `order by TimeGenerated asc`.\n//\n// Pivoted into wide-form (one numeric column per Sampler) so Workbook's\n// linechart treats each Sampler as its own series automatically. The\n// long-form (Run, Sampler, value) shape causes Workbook to collapse\n// samplers via Sum at each x-axis position.\n//\n// Metric translation inlined as a case() because KQL `column_ifexists`\n// requires a string literal — a let-bound variable doesn't compile.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where '*' in ({Sampler}) or scenario_name in ({Sampler})\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| extend value = case(\n    '{Metric}' == 'p95 (ms)',              toreal(p95_ms),\n    '{Metric}' == 'p99 (ms)',              toreal(p99_ms),\n    '{Metric}' == 'avg (ms)',              toreal(avg_ms),\n    '{Metric}' == 'error rate',            toreal(error_rate),\n    '{Metric}' == 'Requests/sec',          toreal(requests_per_sec),\n    '{Metric}' == 'Server CPU peak %',     toreal(plan_CpuPercentage_max),\n    '{Metric}' == 'Database load peak %',  toreal(sql_dtu_consumption_percent_max),\n    real(null))\n| where isnotnull(value)\n| extend Sampler = strcat(scenario_name, ' | ', umbraco_version, ' | ', infra_tier)\n| extend Run = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' #', run_id)\n| project Run, Sampler, value\n| evaluate pivot(Sampler, any(value))\n| order by Run asc",
+        "size": 0,
+        "title": "{Metric} per run — one line per (sampler · version · tier). Ignore the (Sum) totals next to each series in the legend; that's the chart engine summing values across runs, which isn't a meaningful number — read each series line directly.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "linechart",
+        "chartSettings": {
+          "xAxis": "Run",
+          "showLegend": true
+        }
+      },
+      "customWidth": "50",
+      "name": "trends-chart",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Server-side resource pressure per run. Read alongside the latency chart\n// to the LEFT: if latency climbs as Server CPU / Database load does, you're\n// infra-bound; if they diverge, the regression is code-side. Run-indexed\n// x-axis matches the chart on the left and prevents Workbook's time-bin\n// aggregation from summing peak-percentages across rows (a 'Sum' line\n// showing 300%+ is meaningless).\n//\n// Unpivoted to long-form so the chart can render one line per\n// (metric × tier). Otherwise a multi-tier sweep zigzags between the\n// tiers' values on a single 'Server CPU' line.\n// Resource metrics are duplicated across all per-sampler rows of the\n// same run by the publish script, so arg_max by run_id returns valid\n// run-level values — picking any sampler row is fine.\nlet pressure = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status == 'ok' and coalesce(cold_start, false) == false\n    | summarize arg_max(TimeGenerated, *) by run_id, umbraco_version, infra_tier;\nunion\n    (pressure | extend metric='Server CPU peak %',    value=round(todouble(plan_CpuPercentage_max), 1)),\n    (pressure | extend metric='Server memory peak %', value=round(todouble(plan_MemoryPercentage_max), 1)),\n    (pressure | extend metric='Database load peak %', value=round(todouble(sql_dtu_consumption_percent_max), 1)),\n    (pressure | extend metric='Database CPU peak %',  value=round(todouble(sql_cpu_percent_max), 1))\n| where isnotnull(value)\n| extend Run = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' #', run_id), Series = strcat(metric, ' | ', infra_tier)\n| project Run, Series, value\n| evaluate pivot(Series, any(value))\n| order by Run asc",
+        "size": 0,
+        "title": "Resource pressure per run — Server CPU, Server memory, Database load, Database CPU peaks. (Ignore the (Sum) totals in the legend — chart artifact, not meaningful.)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "linechart",
+        "chartSettings": {
+          "xAxis": "Run",
+          "showLegend": true,
+          "ySettings": { "min": 0, "max": 100, "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
+        }
+      },
+      "customWidth": "50",
+      "name": "trends-resources",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// 'error rate' is 0..1 and rounds to '0 ± 0' at integer precision — use 3\n// decimals for fractional metrics, integers for everything else. Metric\n// translation inlined because KQL column_ifexists requires a literal.\nlet precision = iif('{Metric}' == 'error rate', 3, 0);\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where '*' in ({Sampler}) or scenario_name in ({Sampler})\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| extend value = case(\n    '{Metric}' == 'p95 (ms)',              toreal(p95_ms),\n    '{Metric}' == 'p99 (ms)',              toreal(p99_ms),\n    '{Metric}' == 'avg (ms)',              toreal(avg_ms),\n    '{Metric}' == 'error rate',            toreal(error_rate),\n    '{Metric}' == 'Requests/sec',          toreal(requests_per_sec),\n    '{Metric}' == 'Server CPU peak %',     toreal(plan_CpuPercentage_max),\n    '{Metric}' == 'Database load peak %',  toreal(sql_dtu_consumption_percent_max),\n    real(null))\n| where isnotnull(value)\n| summarize med_raw = percentile(value, 50), sd_raw = stdev(value), n = count() by scenario_name, umbraco_version, infra_tier\n| extend med = round(med_raw, precision), sd = round(sd_raw, precision)\n// Stability is the coefficient of variation (stdev/median × 100) bucketed into\n// plain-language labels. Computed from pre-round values so a 3-decimal metric\n// like error rate doesn't lose precision to rounding. Thresholds align with the\n// default 10% regression-check sensitivity — cells noisier than that need\n// wider thresholds before a regression call is meaningful.\n| extend cv = iif(n < 5 or med_raw == 0, real(null), sd_raw / med_raw * 100.0)\n| extend Stability = case(\n    isnull(cv),  'few runs',\n    cv < 10,     'stable',\n    cv < 25,     'moderate',\n                 'noisy')\n| project Sampler = scenario_name, Version = umbraco_version, Tier = infra_tier, ['median ± spread (runs)'] = strcat(med, ' ± ', sd, ' (', n, ' runs)'), Stability\n| order by Sampler asc, Version asc, Tier asc",
+        "size": 0,
+        "title": "Matrix view — median {Metric} ± spread across runs, plus Stability per cell. Noisy cells mean run-to-run spread is wide enough that a small regression threshold won't be meaningful.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Stability", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "noisy",    "representation": "critical" },
+              { "operator": "==", "thresholdValue": "moderate", "representation": "3" },
+              { "operator": "==", "thresholdValue": "stable",   "representation": "success" },
+              { "operator": "==", "thresholdValue": "few runs", "representation": "unknown" },
+              { "operator": "Default", "representation": "info" }
+            ] } }
+          ]
+        }
+      },
+      "name": "trends-matrix",
+      "styleSettings": { "showBorder": true },
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Tiers\nCompare tiers for one `(scenario, version)` combination. Answers \"what do I get for upgrading the tier?\" Pick the scenario and version below; the tables and chart aggregate across every matching run — medians for latency/throughput, plus a worst-case column on each resource peak so a single saturated run still flags Saturated. The **Runs** column shows how many runs back each median; cells with 1 run are single-run snapshots, 3+ runs is statistically meaningful. When the global filter at the top is narrowed, the pickers default to the matching scenario/version automatically. **Cold-start runs are excluded; see the Runs tab for those.**"
+      },
+      "name": "tiers-header",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-tiers-scenario",
+            "version": "KqlParameterItem/1.0",
+            "name": "TiersScenario",
+            "label": "Scenario",
+            "type": 2,
+            "isRequired": true,
+            "query": "// Inherits the global Scenario filter when set: with a global selection the\n// dropdown lists only that scenario and showDefault auto-picks it; with `*` it\n// shows the full universe. parse_status filter keeps metadata-only rows from\n// surfacing scenarios that never produced metrics — otherwise picking them\n// would render an empty Tiers chart.\nLoadTestSummary_CL\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-tiers-version",
+            "version": "KqlParameterItem/1.0",
+            "name": "TiersVersion",
+            "label": "Version",
+            "type": 2,
+            "isRequired": true,
+            "query": "// Show all versions; if the global Version filter is set, sort the matching\n// version to the top so showDefault picks it. Otherwise newest-first.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| distinct umbraco_version\n| where isnotempty(umbraco_version)\n| order by iif(umbraco_version == '{Version}', 0, 1) asc, parse_version(umbraco_version) desc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-tiers-metric",
+            "version": "KqlParameterItem/1.0",
+            "name": "TiersMetric",
+            "label": "Metric",
+            "type": 2,
+            "isRequired": true,
+            "value": "p95 (ms)",
+            "jsonData": "[\n    { \"value\": \"p95 (ms)\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99 (ms)\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg (ms)\", \"label\": \"avg (ms)\" }\n]"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "tiers-params",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Resource metrics (plan_*, sql_*) and requests_per_sec are duplicated across\n// every per-sampler row of the same run by the publish script. Reduce to one\n// row per (tier, run_id) first, then aggregate by tier across runs.\n//\n// Peaks show worst-case (max across runs). Capacity status, Headroom, and\n// Bottleneck all derive from worst so a single saturated run flags the tier\n// — and the resource columns on the right tell you why.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where parse_status == 'ok' and coalesce(cold_start, false) == false\n| summarize arg_max(TimeGenerated, *) by infra_tier, run_id\n| extend run_error_rate = todouble(coalesce(error_rate, real(0)))\n| summarize\n    Runs                                = count(),\n    ['Requests/sec']                    = round(percentile(todouble(requests_per_sec), 50), 1),\n    ['Server CPU avg %']                = round(percentile(plan_CpuPercentage_avg, 50), 1),\n    ['Server CPU peak %']               = round(max(plan_CpuPercentage_max), 1),\n    ['Server memory peak %']            = round(max(plan_MemoryPercentage_max), 1),\n    ['Database load avg %']             = round(percentile(sql_dtu_consumption_percent_avg, 50), 1),\n    ['Database load peak %']            = round(max(sql_dtu_consumption_percent_max), 1),\n    ['Database CPU peak %']             = round(max(sql_cpu_percent_max), 1),\n    ['Database physical reads peak %']  = round(max(sql_physical_data_read_percent_max), 1),\n    ['Database log-write peak %']       = round(max(sql_log_write_percent_max), 1),\n    ['Error %']                         = round(max(run_error_rate) * 100, 2),\n    // Seeder duration (s) — null on Skipped/Failed/TimedOut/pre-feature runs;\n    // percentile ignores nulls so those don't drag the median to 0.\n    // Drop zero/negative readings from the median - the seeder takes minutes\n    // on every preset, so a 0 means the publish path captured ElapsedMs wrong\n    // (or a historical bug). Letting it through would drag the median to 0.\n    ['Seeder duration (s)']             = round(percentile(iif(seeder_duration_seconds > 0, seeder_duration_seconds, real(null)), 50), 0),\n    // Helpers below feed Capacity status, Headroom, Bottleneck — dropped from\n    // the projection at the end so they don't show in the table.\n    cpu_worst     = max(plan_CpuPercentage_max),\n    mem_worst     = max(plan_MemoryPercentage_max),\n    sqldtu_worst  = max(sql_dtu_consumption_percent_max),\n    sqlcpu_worst  = max(sql_cpu_percent_max),\n    sqllog_worst  = max(sql_log_write_percent_max),\n    sqlread_worst = max(sql_physical_data_read_percent_max),\n    err_worst     = max(run_error_rate)\n    by Tier = infra_tier\n| extend ['Capacity status'] = case(\n    err_worst >= 0.01\n      or cpu_worst    >= 95\n      or mem_worst    >= 95\n      or sqldtu_worst >= 95\n      or sqlcpu_worst >= 95, 'Saturated',\n    cpu_worst    >= 85\n      or mem_worst    >= 85\n      or sqldtu_worst >= 85\n      or sqlcpu_worst >= 85, 'Stressed',\n    'OK')\n// bn_peak is the highest peak across ALL six resources (the four used for\n// Capacity status plus log-write and physical-reads). Headroom and Bottleneck\n// derive from it so the 'how much room' and 'what saturated' answers agree.\n| extend bn_peak = coalesce(max_of(cpu_worst, mem_worst, sqldtu_worst, sqlcpu_worst, sqllog_worst, sqlread_worst), real(0))\n| extend Headroom = round(100 - bn_peak, 0)\n| extend Bottleneck = case(\n    bn_peak < 50, '—',\n    cpu_worst == bn_peak,     strcat('App CPU ', round(bn_peak, 0), '%'),\n    mem_worst == bn_peak,     strcat('Server memory ', round(bn_peak, 0), '%'),\n    sqldtu_worst == bn_peak,  strcat('Database load ', round(bn_peak, 0), '%'),\n    sqlcpu_worst == bn_peak,  strcat('Database CPU ', round(bn_peak, 0), '%'),\n    sqllog_worst == bn_peak,  strcat('Database log-write ', round(bn_peak, 0), '%'),\n    sqlread_worst == bn_peak, strcat('Database physical reads ', round(bn_peak, 0), '%'),\n    '—')\n// Decision-first column order: verdict, then context, then supporting evidence.\n| project Tier, ['Capacity status'], Headroom, Bottleneck,\n          Runs, ['Requests/sec'],\n          ['Server CPU avg %'], ['Server CPU peak %'],\n          ['Server memory peak %'],\n          ['Database load avg %'], ['Database load peak %'],\n          ['Database CPU peak %'],\n          ['Database physical reads peak %'],\n          ['Database log-write peak %'],\n          ['Error %'],\n          ['Seeder duration (s)']\n// Sort by tier capacity rank, not alphabetical - upgrade progression should\n// read top-to-bottom (Starter -> Standard -> Pro -> Enterprise).\n| extend tier_rank = case(Tier == 'Starter', 1, Tier == 'Standard', 2, Tier == 'Pro', 3, Tier == 'Enterprise', 4, 99)\n| order by tier_rank asc\n| project-away tier_rank",
+        "size": 0,
+        "title": "Capacity verdict per tier — verdict columns on the left, supporting resource peaks on the right. Peaks are worst-case across runs (a single saturated run flags the tier).",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Capacity status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
+              { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
+              { "operator": "Default", "representation": "success" }
+            ] } },
+            { "columnMatch": "Headroom",                          "formatter": 8, "formatOptions": { "palette": "redToGreen",      "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } },
+            { "columnMatch": "Runs",                              "formatter": 8, "formatOptions": { "palette": "blue",            "min": 1, "max": 10 } },
+            { "columnMatch": "Requests/sec",                      "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 500 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU avg %",                  "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server CPU peak %",                 "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Server memory peak %",              "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load avg %",               "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database load peak %",              "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database CPU peak %",               "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database physical reads peak %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Database log-write peak %",         "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "Error %",                           "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 },   "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
+            { "columnMatch": "Seeder duration (s)",               "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 3600 },"numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
+          ]
+        }
+      },
+      "name": "tiers-saturation",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Long-form (Sampler, Tier, value) + `group: Tier` in chartSettings.\n// Pivoted-wide-form bars stack by default in Workbook; the explicit group\n// column renders them side-by-side. Median across all matching runs per\n// (sampler, tier).\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| extend value = case(\n    '{TiersMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{TiersMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{TiersMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| where isnotnull(value)\n| summarize ['{TiersMetric}'] = round(percentile(value, 50), 0) by Sampler = scenario_name, Tier = infra_tier\n| order by Sampler asc, Tier asc",
+        "size": 0,
+        "title": "Median {TiersMetric} per sampler — one bar per tier. Ignore the (Sum) totals in the legend; that's the chart engine summing medians across samplers, which isn't a meaningful number — compare individual bars.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Sampler",
+          "group": "Tier",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "tiers-bar",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Per-sampler detail aggregated across runs. Run-level resource metrics\n// (Server CPU peak, Database load peak) are NOT shown here — they're\n// identical for every sampler in the same run, so they'd just repeat the\n// same number on every row. Those values live in the Capacity verdict\n// table above. median + p95 spread (stdev) give the typical reading and\n// how much the runs disagree; worst Error % surfaces a single bad run that\n// the median would otherwise hide.\nLoadTestSummary_CL\n| where scenario == '{TiersScenario}' and umbraco_version == '{TiersVersion}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| summarize\n    Runs                  = count(),\n    Requests              = toint(percentile(request_count, 50)),\n    ['Requests/sec']      = round(percentile(todouble(requests_per_sec), 50), 1),\n    ['avg (ms)']          = round(percentile(avg_ms, 50), 0),\n    ['p95 (ms)']          = round(percentile(p95_ms, 50), 0),\n    ['p95 spread (ms)']   = round(stdev(p95_ms), 0),\n    ['p99 (ms)']          = round(percentile(p99_ms, 50), 0),\n    ['max (ms)']          = round(max(max_ms), 0),\n    ['median Error %']    = round(percentile(error_rate, 50) * 100, 2),\n    ['worst Error %']     = round(max(error_rate) * 100, 2)\n    by Sampler = scenario_name, Tier = infra_tier\n| order by Sampler asc, Tier asc",
+        "size": 0,
+        "title": "Per-sampler detail per tier — medians across all matching runs.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Runs",            "formatter": 8, "formatOptions": { "palette": "blue",            "min": 1, "max": 10 } },
+            { "columnMatch": "Requests",        "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 10000 } },
+            { "columnMatch": "Requests/sec",    "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "p95 (ms)",        "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 2000 } },
+            { "columnMatch": "p95 spread (ms)", "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 500 } },
+            { "columnMatch": "p99 (ms)",        "formatter": 8, "formatOptions": { "palette": "orange",          "min": 0, "max": 2000 } },
+            { "columnMatch": "max (ms)",        "formatter": 8, "formatOptions": { "palette": "redBright",       "min": 0, "max": 10000 } },
+            { "columnMatch": "median Error %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 },  "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
+            { "columnMatch": "worst Error %",   "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 25 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } }
+          ]
+        }
+      },
+      "name": "tiers-table",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Versions\nCompare Umbraco versions for one `(scenario, tier)` combination. Answers \"how does v17.3.0 compare to v17.0.0 / v18.0.0 on the same hardware running the same workload?\" Aggregates across every matching run in the table — the **Runs** column shows how many runs back each median: cells with 1 run are single-run snapshots; 3+ runs is statistically meaningful. When the global filter is narrowed, the pickers default to the matching scenario/tier automatically. **Cold-start runs are excluded; see the Runs tab for those.**"
+      },
+      "name": "versions-header",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-versions-scenario",
+            "version": "KqlParameterItem/1.0",
+            "name": "VersionsScenario",
+            "label": "Scenario",
+            "type": 2,
+            "isRequired": true,
+            "query": "LoadTestSummary_CL\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-versions-tier",
+            "version": "KqlParameterItem/1.0",
+            "name": "VersionsTier",
+            "label": "Tier",
+            "type": 2,
+            "isRequired": true,
+            "query": "// Show all tiers; if the global Tier filter is set, sort the matching\n// tier first so showDefault picks it. Otherwise alphabetical.\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| distinct infra_tier\n| where isnotempty(infra_tier)\n| extend sort_key = iif(infra_tier == '{Tier}', '0', strcat('1_', infra_tier))\n| order by sort_key asc\n| project infra_tier",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-versions-baseline",
+            "version": "KqlParameterItem/1.0",
+            "name": "VersionsBaseline",
+            "label": "Baseline version",
+            "type": 2,
+            "isRequired": true,
+            "query": "LoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| distinct umbraco_version\n| order by parse_version(umbraco_version) asc",
+            "crossComponentResources": ["{Workspace}"],
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-versions-metric",
+            "version": "KqlParameterItem/1.0",
+            "name": "VersionsMetric",
+            "label": "Metric",
+            "type": 2,
+            "isRequired": true,
+            "value": "p95 (ms)",
+            "jsonData": "[\n    { \"value\": \"p95 (ms)\", \"label\": \"p95 (ms)\" },\n    { \"value\": \"p99 (ms)\", \"label\": \"p99 (ms)\" },\n    { \"value\": \"avg (ms)\", \"label\": \"avg (ms)\" }\n]"
+          },
+          {
+            "id": "param-versions-threshold",
+            "version": "KqlParameterItem/1.0",
+            "name": "VersionsThreshold",
+            "label": "Significant change (%)",
+            "type": 1,
+            "isRequired": true,
+            "value": "10"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "versions-params",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Long-form output (Sampler, Version, value) and `group: Version` in\n// chartSettings — pivoted-wide-form would stack the bars; long-form\n// with an explicit grouping column renders side-by-side reliably.\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| extend value = case(\n    '{VersionsMetric}' == 'p95 (ms)', toreal(p95_ms),\n    '{VersionsMetric}' == 'p99 (ms)', toreal(p99_ms),\n    '{VersionsMetric}' == 'avg (ms)', toreal(avg_ms),\n    real(null))\n| where isnotnull(value)\n| summarize ['{VersionsMetric}'] = round(percentile(value, 50), 0) by Sampler = scenario_name, Version = umbraco_version\n| order by Sampler asc, parse_version(Version) asc",
+        "size": 0,
+        "title": "Median {VersionsMetric} per sampler — one bar per version. Ignore the (Sum) totals in the legend; that's the chart engine summing medians across samplers, which isn't a meaningful number — compare individual bars.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Sampler",
+          "group": "Version",
+          "createOtherGroup": 0,
+          "showLegend": true,
+          "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
+        }
+      },
+      "name": "versions-bar",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Overall version-vs-baseline delta. For each non-baseline version,\n// compute median p95/p99 per sampler, take the average % delta against\n// the baseline version's median, then summarize across samplers as a\n// single per-version row. 'faster_p95' counts how many samplers got\n// better in the candidate; 'slower_p95' the opposite.\nlet baseline = LoadTestSummary_CL\n    | where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version == '{VersionsBaseline}'\n    | where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n    | summarize base_p95 = percentile(p95_ms, 50), base_p99 = percentile(p99_ms, 50) by scenario_name;\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version != '{VersionsBaseline}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| summarize cand_p95 = percentile(p95_ms, 50), cand_p99 = percentile(p99_ms, 50), runs = count_distinct(run_id) by scenario_name, umbraco_version\n| join kind=inner baseline on scenario_name\n| extend p95_delta = (cand_p95 - base_p95) / base_p95 * 100,\n         p99_delta = (cand_p99 - base_p99) / base_p99 * 100\n| summarize\n    ['Samplers']     = count(),\n    runs_min         = min(runs),\n    runs_max         = max(runs),\n    ['Avg p95 change %']  = round(avg(p95_delta), 0),\n    ['Avg p99 change %']  = round(avg(p99_delta), 0),\n    ['Samplers faster'] = countif(p95_delta < 0),\n    ['Samplers slower'] = countif(p95_delta > 0)\n    by Version = umbraco_version\n| extend ['Runs (per sampler)'] = iif(runs_min == runs_max, tostring(runs_min), strcat(runs_min, '–', runs_max))\n| project Version, Samplers, ['Runs (per sampler)'], ['Avg p95 change %'], ['Avg p99 change %'], ['Samplers faster'], ['Samplers slower']\n| order by Version asc",
+        "size": 0,
+        "title": "Overall — each version vs baseline {VersionsBaseline}",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Avg p95 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{VersionsThreshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{VersionsThreshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } },
+            { "columnMatch": "Avg p99 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{VersionsThreshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{VersionsThreshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } },
+            { "columnMatch": "Samplers faster", "formatter": 8, "formatOptions": { "palette": "green",     "min": 0, "max": 10 } },
+            { "columnMatch": "Samplers slower", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
+          ]
+        }
+      },
+      "name": "versions-overall",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// median + worst Error %: median represents typical behavior, worst surfaces\n// catastrophic single-run outliers that the median would otherwise hide\n// (e.g. one run at 100% error rate in a 5-run sample → median 0%, worst 100%).\nLoadTestSummary_CL\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| summarize\n    Runs = count(),\n    ['median p95 (ms)'] = round(percentile(p95_ms, 50), 0),\n    ['p95 spread (ms)'] = round(stdev(p95_ms), 0),\n    ['median p99 (ms)'] = round(percentile(p99_ms, 50), 0),\n    ['median Error %']    = round(percentile(error_rate, 50) * 100, 1),\n    ['worst Error %']     = round(max(error_rate) * 100, 1)\n    by Sampler = scenario_name, Version = umbraco_version\n| order by Sampler asc, Version asc",
+        "size": 0,
+        "title": "Per-sampler stats per version",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Runs", "formatter": 8, "formatOptions": { "palette": "blue", "min": 1, "max": 10 } },
+            { "columnMatch": "median Error %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } },
+            { "columnMatch": "worst Error %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 25 } }
+          ]
+        }
+      },
+      "name": "versions-table",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Compare\nPick two runs to see per-sampler + server-side changes. The dropdowns honour the global **Time range** but ignore the other global filters — each entry is one `(run × scenario × version × tier)`, so a multi-case pipeline run shows up as several picks."
+      },
+      "name": "compare-header",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-compare-baseline",
+            "version": "KqlParameterItem/1.0",
+            "name": "Baseline",
+            "label": "Baseline run",
+            "type": 2,
+            "isRequired": true,
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "query": "// One row per (run_id × scenario × version × tier) so a pipeline run that\n// swept multiple cases gets one dropdown entry per case — picking the wrong\n// one would otherwise mix cases via scenario_name joins. value is a composite\n// 'run_id|scenario|version|tier' the comparison queries split on.\n// Baseline default = second-most-recent (the comparison reference); the\n// most-recent run is hidden so showDefault picks the previous one, giving\n// 'previous vs newest' as the default comparison instead of 'newest vs\n// newest' which would render an identity-delta table.\n// parse_status filter excludes failed runs (no_metrics, no_results_dir) - they\n// have a metadata-only row but no sampler data, so picking one as baseline or\n// candidate yields an empty comparison.\nlet pool = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where parse_status == 'ok'\n    | where isnotempty(scenario) and isnotempty(umbraco_version) and isnotempty(infra_tier)\n    | summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier;\nlet newest_ts = toscalar(pool | summarize max(TimeGenerated));\npool\n| where TimeGenerated < newest_ts\n| project value = strcat(run_id, '|', scenario, '|', umbraco_version, '|', infra_tier),\n          label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier, ' (#', run_id, ')'),\n          TimeGenerated\n| order by TimeGenerated desc\n| project value, label",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-compare-candidate",
+            "version": "KqlParameterItem/1.0",
+            "name": "Candidate",
+            "label": "Candidate run",
+            "type": 2,
+            "isRequired": true,
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "query": "// Candidate is the run under test. Default = most recent, so 'previous vs\n// newest' is the out-of-the-box comparison (Baseline excludes the most\n// recent for exactly this reason). parse_status filter mirrors the Baseline\n// dropdown - failed runs aren't comparable.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where parse_status == 'ok'\n| where isnotempty(scenario) and isnotempty(umbraco_version) and isnotempty(infra_tier)\n| summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier\n| project value = strcat(run_id, '|', scenario, '|', umbraco_version, '|', infra_tier),\n          label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier, ' (#', run_id, ')'),\n          TimeGenerated\n| order by TimeGenerated desc\n| project value, label",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-compare-threshold",
+            "version": "KqlParameterItem/1.0",
+            "name": "Threshold",
+            "label": "Significant change (%)",
+            "type": 1,
+            "isRequired": true,
+            "value": "10"
+          },
+          {
+            "id": "param-repo-compare-url",
+            "version": "KqlParameterItem/1.0",
+            "name": "RepoCompareUrl",
+            "label": "Repo compare URL prefix",
+            "description": "Optional URL prefix that turns baseline+candidate commit SHAs into a clickable diff. GitHub format: `https://github.com/<org>/<repo>/compare/`. AzDO format: `https://dev.azure.com/<org>/<project>/_git/<repo>/branchCompare?baseVersion=GC&targetVersion=GC&_a=files&baseVersionType=GC&targetVersionType=GC&baseVersion=`. The SHAs are appended as `<baseline>...<candidate>` (GitHub style); leave blank to disable.",
+            "type": 1,
+            "isRequired": false,
+            "value": ""
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "compare-params",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Header rows showing exactly which case is on each side, so the reviewer\n// can confirm they're comparing like-for-like. Commit comes from the per-\n// run summary row. The 'Diff' column is populated only when RepoCompareUrl\n// is set, producing a clickable baseline..candidate URL.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet b_commit = toscalar(LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | extend safe_commit = tostring(column_ifexists(\"commit\", \"\"))\n    | summarize arg_max(TimeGenerated, safe_commit)\n    | project safe_commit);\nlet c_commit = toscalar(LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | extend safe_commit = tostring(column_ifexists(\"commit\", \"\"))\n    | summarize arg_max(TimeGenerated, safe_commit)\n    | project safe_commit);\nlet diff_url = iif(strlen('{RepoCompareUrl}') > 0 and strlen(b_commit) > 0 and strlen(c_commit) > 0, strcat('{RepoCompareUrl}', substring(b_commit, 0, 8), '...', substring(c_commit, 0, 8)), '');\nprint Side = 'Baseline',  ['Run #'] = tostring(b_parts[0]), Scenario = tostring(b_parts[1]), Version = tostring(b_parts[2]), Tier = tostring(b_parts[3]), Commit = substring(b_commit, 0, 8), Diff = ''\n| union (print Side = 'Candidate', ['Run #'] = tostring(c_parts[0]), Scenario = tostring(c_parts[1]), Version = tostring(c_parts[2]), Tier = tostring(c_parts[3]), Commit = substring(c_commit, 0, 8), Diff = diff_url)",
+        "size": 4,
+        "title": "Comparing",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Diff", "formatter": 7, "formatOptions": { "linkTarget": "Url", "linkIsContextBlade": false } }
+          ]
+        }
+      },
+      "name": "compare-summary",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// {Baseline}/{Candidate} values are composite keys 'run_id|scenario|version|tier'\n// produced by the dropdown queries above. Split here so a single dropdown\n// pick targets exactly one case of one run, not 'all cases of run_id'.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where isnotempty(scenario_name);\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n// Columns grouped per metric (raw baseline, raw candidate, change %) so each\n// row reads as 'for this sampler: avg story, p95 story, p99 story' instead\n// of jumping between far-apart raw and % blocks.\n| project Sampler = coalesce(scenario_name, scenario_name1),\n          ['Reqs baseline'] = request_count,    ['Reqs candidate'] = request_count1,\n          ['avg baseline (ms)'] = round(avg_ms, 0), ['avg candidate (ms)'] = round(avg_ms1, 0), ['avg change %'] = delta(avg_ms, avg_ms1),\n          ['p95 baseline (ms)'] = round(p95_ms, 0), ['p95 candidate (ms)'] = round(p95_ms1, 0), ['p95 change %'] = delta(p95_ms, p95_ms1),\n          ['p99 baseline (ms)'] = round(p99_ms, 0), ['p99 candidate (ms)'] = round(p99_ms1, 0), ['p99 change %'] = delta(p99_ms, p99_ms1)\n| order by Sampler asc",
+        "size": 0,
+        "title": "Per-sampler change",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "avg change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } },
+            { "columnMatch": "p95 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } },
+            { "columnMatch": "p99 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } }
+          ]
+        }
+      },
+      "name": "compare-table",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Long-form output (Sampler, Series, p95 ms) instead of pivoting Series\n// into columns. Workbook bar charts render pivoted multi-numeric columns\n// as stacked by default; long-form with a categorical Series column\n// renders side-by-side bars reliably.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where isnotempty(scenario_name);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where isnotempty(scenario_name);\nunion\n    (baseline  | project Sampler = scenario_name, Series = 'Baseline',  ['p95 (ms)'] = todouble(p95_ms)),\n    (candidate | project Sampler = scenario_name, Series = 'Candidate', ['p95 (ms)'] = todouble(p95_ms))\n| where isnotnull(['p95 (ms)'])\n| order by Sampler asc, Series asc",
+        "size": 0,
+        "title": "p95 per sampler — baseline vs candidate. Ignore the (Sum) totals in the legend; that's the chart engine summing p95 values across samplers, which isn't a meaningful number — compare individual bars.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Sampler",
+          "group": "Series",
+          "createOtherGroup": 0,
+          "showLegend": true,
+          "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
+        }
+      },
+      "name": "compare-bar",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Resource metrics live on every per-sampler row of a given run (the\n// publish script duplicates them), so arg_max picks any sampler row and\n// the run-level resource fields are correct.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where parse_status == 'ok' and coalesce(cold_start, false) == false\n    | summarize arg_max(TimeGenerated, *);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where parse_status == 'ok' and coalesce(cold_start, false) == false\n    | summarize arg_max(TimeGenerated, *);\nunion\n    (baseline | project Metric='Server CPU peak %',      Baseline=plan_CpuPercentage_max,            Candidate=toscalar(candidate | project plan_CpuPercentage_max)),\n    (baseline | project Metric='Server memory peak %',   Baseline=plan_MemoryPercentage_max,         Candidate=toscalar(candidate | project plan_MemoryPercentage_max)),\n    (baseline | project Metric='Database load peak %',       Baseline=sql_dtu_consumption_percent_max,   Candidate=toscalar(candidate | project sql_dtu_consumption_percent_max)),\n    (baseline | project Metric='Database CPU peak %',       Baseline=sql_cpu_percent_max,               Candidate=toscalar(candidate | project sql_cpu_percent_max)),\n    (baseline | project Metric='Database log-write peak %',     Baseline=sql_log_write_percent_max,         Candidate=toscalar(candidate | project sql_log_write_percent_max)),\n    (baseline | project Metric='Database physical reads peak %', Baseline=sql_physical_data_read_percent_max, Candidate=toscalar(candidate | project sql_physical_data_read_percent_max)),\n    (baseline | project Metric='Server HTTP 4xx peak',          Baseline=app_Http4xx_max,                   Candidate=toscalar(candidate | project app_Http4xx_max)),\n    (baseline | project Metric='Server HTTP 5xx peak',          Baseline=app_Http5xx_max,                   Candidate=toscalar(candidate | project app_Http5xx_max))\n| extend Baseline = round(Baseline, 1), Candidate = round(Candidate, 1)\n| extend ['change %'] = iif(Baseline == 0 or isnull(Baseline) or isnull(Candidate), real(null), round((Candidate - Baseline) / Baseline * 100.0, 0)),\n         Note = case(\n             isnull(Baseline) and isnull(Candidate), 'no data either side',\n             isnull(Baseline),                       'no baseline data',\n             isnull(Candidate),                      'no candidate data',\n             Baseline == 0 and Candidate == 0,       'both zero',\n             Baseline == 0,                          'baseline zero',\n             '')",
+        "size": 0,
+        "title": "Server-side change",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
+              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
+              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
+              { "operator": "Default", "representation": "transparent" }
+            ] } }
+          ]
+        }
+      },
+      "name": "compare-server",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+    },
+
+    {
+      "type": 1,
+      "content": {
+        "json": "## Runs\nAll runs matching the global filter. To inspect a specific run's per-sampler detail, pick it from the **Drill into run #** dropdown below — the detail panel only renders when one is selected. The two **URL prefix** fields are optional: set them once to turn Run # → AzDO build links and Commit short-SHAs → repo commit links in the table."
+      },
+      "name": "runs-header",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" }
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-drill-run",
+            "version": "KqlParameterItem/1.0",
+            "name": "DrillRun",
+            "label": "Drill into run #",
+            "type": 2,
+            "isRequired": false,
+            "value": "",
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": false },
+            "query": "// Dropdown sourced from the same runs the table above shows, in the same\n// time range and global filter scope. value = run_id (string) so the drill\n// queries below can compare directly; label adds context so the right run\n// is easy to spot. Includes failed runs so the per-sampler detail panel\n// can still surface 'no rows' clearly for them.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where parse_status in ('ok', 'no_metrics', 'no_results_dir')\n| summarize arg_max(TimeGenerated, scenario, umbraco_version, infra_tier) by run_id\n| project value = tostring(run_id),\n          label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' #', run_id, ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier),\n          TimeGenerated\n| order by TimeGenerated desc\n| project value, label",
+            "crossComponentResources": ["{Workspace}"],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-azdo-org-url",
+            "version": "KqlParameterItem/1.0",
+            "name": "AzdoOrgUrl",
+            "label": "AzDO build URL prefix (ends in ?buildId=)",
+            "description": "Optional URL prefix — NOT a run number. Paste your pipeline's full result URL up to and including `?buildId=`, e.g. `https://dev.azure.com/myorg/myproject/_build/results?buildId=`. The run number from each row is appended automatically, turning Run # cells in the table below into clickable links. Leave blank to disable.",
+            "type": 1,
+            "isRequired": false,
+            "value": ""
+          },
+          {
+            "id": "param-repo-commit-url",
+            "version": "KqlParameterItem/1.0",
+            "name": "RepoCommitUrl",
+            "label": "Repo commit URL prefix",
+            "description": "Optional URL prefix that turns the Commit short-SHA into a clickable link. GitHub format: `https://github.com/<org>/<repo>/commit/`. AzDO format: `https://dev.azure.com/<org>/<project>/_git/<repo>/commit/`. The commit SHA is appended automatically. Leave blank to disable.",
+            "type": 1,
+            "isRequired": false,
+            "value": ""
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "runs-params",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Group by (run_id × scenario × version × tier) so a pipeline run that\n// covered multiple cases shows one row per case. parse_status filter\n// excludes the regression_check rows from the load-test summary, then we\n// leftouter-join them back to surface the regression verdict per case.\nlet runs = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where '{Scenario}' == '*' or scenario == '{Scenario}'\n    | where '{Version}' == '*' or umbraco_version == '{Version}'\n    | where '{Tier}' == '*' or infra_tier == '{Tier}'\n    | where parse_status in ('ok', 'no_metrics', 'no_results_dir')\n    | extend run_key = tolower(trim(@'\\s+', tostring(run_id))), scenario_key = tolower(trim(@'\\s+', scenario)), version_key = tolower(trim(@'\\s+', umbraco_version)), tier_key = tolower(trim(@'\\s+', infra_tier))\n    | summarize arg_max(TimeGenerated, *) by run_key, scenario_key, version_key, tier_key;\nlet regression = LoadTestSummary_CL\n    | where parse_status == 'regression_check'\n    | extend run_key = tolower(trim(@'\\s+', tostring(run_id))), scenario_key = tolower(trim(@'\\s+', scenario)), version_key = tolower(trim(@'\\s+', umbraco_version)), tier_key = tolower(trim(@'\\s+', infra_tier))\n    | summarize regression_status = take_any(regression_status), regressed_count = take_any(regressed_count), reg_ts = max(TimeGenerated) by run_key, scenario_key, version_key, tier_key;\nruns\n| join kind=leftouter regression on run_key, scenario_key, version_key, tier_key\n| extend ['Build URL'] = iif(strlen('{AzdoOrgUrl}') > 0, strcat('{AzdoOrgUrl}', run_id), '')\n| extend bn_peak = coalesce(max_of(plan_CpuPercentage_max, plan_MemoryPercentage_max, sql_dtu_consumption_percent_max, sql_cpu_percent_max, sql_log_write_percent_max, sql_physical_data_read_percent_max), real(0))\n// Decision-first column order: row identifier, then verdict triple\n// (Regression / Bottleneck / Regressed #), then reference / metadata columns.\n| project Started=TimeGenerated,\n          Scenario=scenario,\n          Version=umbraco_version,\n          Tier=infra_tier,\n          ['Cold start']=coalesce(cold_start, false),\n          Regression=case(\n              regression_status == 'regress',      'regression detected',\n              regression_status == 'pass',         'no regression',\n              regression_status == 'insufficient', 'not enough history',\n              isnotempty(regression_status),       regression_status,\n              TimeGenerated > ago(15min),          'checking',\n              'not run'),\n          Bottleneck=case(\n              bn_peak < 50, '—',\n              plan_CpuPercentage_max == bn_peak, strcat('App CPU ', round(bn_peak, 0), '%'),\n              plan_MemoryPercentage_max == bn_peak, strcat('Server memory ', round(bn_peak, 0), '%'),\n              sql_dtu_consumption_percent_max == bn_peak, strcat('Database load ', round(bn_peak, 0), '%'),\n              sql_cpu_percent_max == bn_peak, strcat('Database CPU ', round(bn_peak, 0), '%'),\n              sql_log_write_percent_max == bn_peak, strcat('Database log-write ', round(bn_peak, 0), '%'),\n              sql_physical_data_read_percent_max == bn_peak, strcat('Database physical reads ', round(bn_peak, 0), '%'),\n              '—'),\n          ['Regressed #']=coalesce(regressed_count, 0),\n          ['Run #']=run_id,\n          ['Build URL']=['Build URL'],\n          Commit=substring(column_ifexists(\"commit\", \"\"), 0, 8),\n          ['Parse status']=parse_status,\n          ['Commit URL'] = iif(strlen('{RepoCommitUrl}') > 0 and strlen(column_ifexists(\"commit\", \"\")) > 0, strcat('{RepoCommitUrl}', column_ifexists(\"commit\", \"\")), '')\n| order by Started desc",
+        "size": 0,
+        "title": "Runs",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "rowLimit": 500,
+          "formatters": [
+            { "columnMatch": "Build URL", "formatter": 7, "formatOptions": { "linkTarget": "Url", "linkIsContextBlade": false } },
+            { "columnMatch": "Commit URL", "formatter": 7, "formatOptions": { "linkTarget": "Url", "linkIsContextBlade": false } },
+            { "columnMatch": "Regression", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "regression detected", "representation": "critical" },
+              { "operator": "==", "thresholdValue": "not enough history",  "representation": "3" },
+              { "operator": "==", "thresholdValue": "checking",            "representation": "info" },
+              { "operator": "==", "thresholdValue": "not run",             "representation": "unknown" },
+              { "operator": "==", "thresholdValue": "no regression",       "representation": "success" },
+              { "operator": "Default", "representation": "unknown" }
+            ] } },
+            { "columnMatch": "Regressed #", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
+          ]
+        }
+      },
+      "name": "runs-table",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Regression detail for the drilled run — which specific samplers regressed\n// per case, sourced from the regression_check rows posted by scripts/check-\n// regression.ps1. Empty result = no regression row exists for this run\n// (regression stage skipped, hasn't completed, or this run predates the\n// regression-LA integration).\nLoadTestSummary_CL\n| where run_id == '{DrillRun}' and parse_status == 'regression_check'\n| project Scenario=scenario, Version=umbraco_version, Tier=infra_tier,\n          Verdict=case(\n              regression_status == 'regress',      'regression detected',\n              regression_status == 'pass',         'no regression',\n              regression_status == 'insufficient', 'not enough history',\n              regression_status),\n          ['Regressed samplers']=replace_string(coalesce(regressed_samplers, ''), ',', ', '),\n          ['# regressed']=coalesce(regressed_count, 0)\n| order by Verdict asc, Scenario asc, Version asc, Tier asc",
+        "size": 0,
+        "title": "Regression breakdown for selected run",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Verdict", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
+              { "operator": "==", "thresholdValue": "regression detected", "representation": "critical" },
+              { "operator": "==", "thresholdValue": "not enough history",  "representation": "3" },
+              { "operator": "==", "thresholdValue": "no regression",       "representation": "success" },
+              { "operator": "Default", "representation": "unknown" }
+            ] } },
+            { "columnMatch": "# regressed", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
+          ]
+        }
+      },
+      "name": "runs-regression",
+      "conditionalVisibilities": [
+        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
+        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+      ]
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Drill-down: paste a run_id into the parameter to see per-sampler detail for\n// that run. Tier column is required because a multi-tier pipeline run produces\n// one row per (sampler, tier) — without Tier the table shows duplicate sampler\n// names with no way to tell Standard from Starter.\nLoadTestSummary_CL\n| where run_id == '{DrillRun}' and isnotempty(scenario_name)\n| project Tier=infra_tier, Sampler=scenario_name,\n          Reqs=request_count, Fails=failure_count,\n          ['Error %']=round(error_rate*100, 1),\n          Avg=round(avg_ms, 0), p50=round(p50_ms, 0), p90=round(p90_ms, 0), p95=round(p95_ms, 0), p99=round(p99_ms, 0), Max=round(max_ms, 0)\n| order by Sampler asc, Tier asc",
+        "size": 0,
+        "title": "Per-sampler detail for selected run",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "Error %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
+            { "columnMatch": "p95",   "formatter": 8, "formatOptions": { "palette": "yellow",    "min": 0, "max": 2000 } },
+            { "columnMatch": "p99",   "formatter": 8, "formatOptions": { "palette": "orange",    "min": 0, "max": 2000 } },
+            { "columnMatch": "Max",   "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10000 } }
+          ]
+        }
+      },
+      "name": "runs-detail",
+      "conditionalVisibilities": [
+        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
+        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+      ]
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Per-minute resource pressure (% metrics only) for the drilled run.\n// Sourced from LoadTestSeries_CL. Split from the HTTP-error chart below\n// because percentages share a 0-100 scale where errors would visually flatten.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where metric_name !startswith 'app_Http'\n| project TimeGenerated, metric_name, value\n| evaluate pivot(metric_name, any(value))\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Per-minute resource pressure (% metrics) — App / SQL CPU, DTU, log-write, physical reads.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "linechart",
+        "chartSettings": {
+          "xAxis": "TimeGenerated",
+          "showLegend": true,
+          "ySettings": { "min": 0, "max": 100, "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
+        }
+      },
+      "name": "runs-series-percentages",
+      "conditionalVisibilities": [
+        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
+        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+      ]
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Per-minute HTTP error counts (4xx / 5xx) for the drilled run. Separate\n// chart from the % metrics above so the count Y-axis auto-scales to the\n// natural range (usually 0-10 except during spikes) instead of being crushed\n// against a 0-100 floor shared with CPU/DTU percentages.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where metric_name startswith 'app_Http'\n| project TimeGenerated, metric_name, value\n| evaluate pivot(metric_name, any(value))\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Per-minute HTTP error counts — 4xx (client errors) + 5xx (server errors). Auto-scaled Y-axis.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["{Workspace}"],
+        "visualization": "linechart",
+        "chartSettings": {
+          "xAxis": "TimeGenerated",
+          "showLegend": true
+        }
+      },
+      "name": "runs-series-errors",
+      "conditionalVisibilities": [
+        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
+        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+      ]
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Glossary\n\n### Entities\n- **Run** — one pipeline build. Identified by `Run #` (the AzDO build ID).\n- **Case** — one (scenario × version × tier) slice. A multi-case pipeline run produces several rows per `Run #`.\n- **Scenario** — the workload YAML under `loadtests/scenarios/` (e.g. `BackofficeOnly`).\n- **Sampler** — one Locust task inside a scenario (an individual endpoint or operation). Shown as `Sampler` in tables (underlying column: `scenario_name`).\n- **Tier** — the Azure App Service + SQL Database pairing the case ran on (e.g. Starter, Standard, Premium).\n\n### Metrics\n- **p95 / p99** — 95th / 99th percentile of per-request latency in milliseconds. *5 in 100 / 1 in 100* requests were slower than this.\n- **Max** — the single slowest request observed for that sampler during the run. One observation, not an aggregate. Useful for spotting outliers; noisy run-to-run.\n- **Requests/sec** — throughput the case sustained.\n- **Error %** — percentage of requests that failed.\n- **Server CPU avg / peak %** — average and peak Azure App Service Plan CPU during the run.\n- **Database load avg / peak %** — average and peak Azure SQL Database load (Azure's bundled CPU + IO measure, internally called DTU).\n- **Database CPU peak %** — peak Azure SQL Database CPU during the run (the CPU portion only, distinct from `Database load` which bundles CPU + IO).\n- **Database physical reads peak %** — peak fraction of database reads that hit disk instead of memory cache. Rises *before* DTU saturates — a leading indicator that SQL is memory-constrained.\n- **Database log-write peak %** — peak fraction of the database's transaction-log throughput budget consumed during the run. Surfaces write-heavy bottlenecks (inserts/updates/deletes); pairs with `Database CPU peak %` to separate write pressure from read/compute pressure.\n- **Server HTTP 4xx peak / Server HTTP 5xx peak** — peak count of client errors (4xx — auth failures, validation, missing endpoints) and server errors (5xx — crashes, unhandled exceptions) seen during the run.\n- **spread** — one standard deviation across the runs that produced the median. Rough indicator of variability; latency is skewed so treat as indicative, not symmetric.\n- **change %** — percentage difference vs. the chosen baseline. *Negative* = candidate is faster than baseline, *positive* = slower.\n\n### Verdicts\n- **Capacity status** — verdict on a run's infrastructure: *Saturated* (any resource ≥ 95% or error rate ≥ 1%), *Stressed* (any resource ≥ 85%), or *OK*.\n- **Headroom** — `100 − highest peak %` across all monitored resources. The buffer before the most-saturated resource hits ceiling; higher = more room to grow.\n- **Bottleneck** — names the hottest resource and its peak (e.g. `Database load 92%`). Tells you *what* saturated. `—` means everything was below 50%.\n- **Stability** — how consistent the metric was across runs in this cell. *stable* (CV < 10%), *moderate* (10–25%), *noisy* (≥ 25%), *few runs* (< 5). Noisy cells need wider regression thresholds — a 10% regression in a 30%-noise cell is indistinguishable from run-to-run variance.\n- **Regression** — verdict from `scripts/check-regression.ps1` comparing this run's p95/p99/error against the cell's baseline median: *regression detected*, *no regression*, *not enough history*, *checking*, *not run*.\n- **Cold start** — `true` if the run skipped warmup (queue parameter `skipWarmup: true`). Cold-start runs are excluded from Trends/Tiers/Versions by default; visible on Runs.\n\n### Layout\nThe global filter scopes **Trends**, **Compare**, and **Runs**. The **Tiers** and **Versions** tabs have their own pickers but inherit the global filter when one is set."
+      },
+      "name": "glossary",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Glossary" }
+    }
+  ],
+  "fallbackResourceIds": [],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

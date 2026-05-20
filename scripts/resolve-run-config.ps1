@@ -22,6 +22,7 @@ param (
     [Parameter(Mandatory = $true)] [string]$RunEnterprise,
     [Parameter(Mandatory = $true)] [string]$PoolDtuOverride,
     [Parameter(Mandatory = $true)] [string]$AppSkuOverride,
+    [Parameter(Mandatory = $true)] [ValidateSet('Auto', 'Small', 'Medium', 'Large', 'Massive')] [string]$SeederPresetOverride,
     [Parameter(Mandatory = $true)] [string]$WorkspaceRoot
 )
 
@@ -45,6 +46,13 @@ switch ($Profile) {
     'stress'   { $preset = 'Large';  $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
 }
 
+# Seeder preset override (Auto keeps the profile-coupled default). Unlocks
+# off-diagonal cells (Small content + stress load, Massive content + smoke
+# load) and is the only way to reach the Massive preset.
+if ($SeederPresetOverride -ne 'Auto') {
+    $preset = $SeederPresetOverride
+}
+
 # Each Umbraco major mapped explicitly (not by range) so a future major without
 # a known TFM hits default and errors, rather than silently inheriting v17/v18.
 # dotnetVersion = App Service framework_version ('vX.0'); sdkVersion = SDK feed
@@ -63,6 +71,18 @@ if (-not $dotnetVersion) {
     Write-PipelineError "Umbraco $UmbracoVersion is unsupported (this pipeline targets v13–v18). Extend the major→runtime map in resolve-run-config.ps1 when a new major is supported."
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
+
+# Mirror of $seederPackageVersions in
+# Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1.
+# Listed here so a major without a published seeder build fails at validation
+# (minute 0) instead of install (minute ~10). Update both sites in lockstep
+# when a new seeder ships. v18 isn't listed directly because it uses the v17
+# seeder as a fallback (see the install script); add 18 once a dedicated v18
+# build ships.
+$seederShippedMajors = @(13, 17, 18)
+if ($seederShippedMajors -notcontains $umbracoMajor) {
+    Write-PipelineError "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet. Currently shipped: v13 (beta), v17, v18 (via v17 fallback). Update the maps in resolve-run-config.ps1 + Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 once the package ships."
+}
 
 # 'Auto' = Terraform's "use the tier's default" sentinel (0 for DTU, '' for SKU).
 $poolDtuOverrideValue = if ($PoolDtuOverride -eq 'Auto') { '0' } else { $PoolDtuOverride }

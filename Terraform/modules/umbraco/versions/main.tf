@@ -125,7 +125,12 @@ resource "null_resource" "deploy_umbraco" {
     # pipeline's Terraform Apply task). Not declared here on purpose - putting
     # sensitive vars in `environment = {}` makes terraform suppress local-exec
     # output, which hides the install script's progress.
-    command     = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\""
+    #
+    # SeederResultPath is a per-test-case JSON file under <repo>/.seeder-results
+    # (path.root is the Terraform working dir = $(System.DefaultWorkingDirectory)/Terraform,
+    # so '../' resolves to the pipeline workspace root). The load-test job reads
+    # this file via the same path to surface seeder duration in the published metrics.
+    command     = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\" -SeederResultPath \"${path.root}/../.seeder-results/${var.test_case_id}.json\""
     interpreter = ["pwsh", "-Command"]
   }
 

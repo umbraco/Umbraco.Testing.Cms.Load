@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Stop every App Service in the test case set, optionally skipping one.
 #
 # Used in two places:

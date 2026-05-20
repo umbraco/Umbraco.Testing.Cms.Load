@@ -33,6 +33,58 @@ resource "azurerm_resource_group" "rg" {
   tags     = local.common_tags
 }
 
+# Cost guard: monthly budget on the ephemeral RG that emails when MTD spend
+# crosses the threshold percentage. Skipped entirely when budget_alert_emails
+# is empty (the default) so it stays opt-in.
+#
+# Trade-offs:
+# * Monthly grain is Azure's smallest budget window — there's no per-run /
+#   per-hour. A single run accruing $4 won't fire (well below 80% × $50);
+#   the alert protects against MULTIPLE forgotten gates compounding within
+#   a billing month, OR a runaway loop.
+# * The budget resource itself is destroyed when terraform destroy runs at
+#   end-of-pipeline cleanup, so an "orphaned" RG that survives cleanup also
+#   loses its budget — at which point you'd want a subscription-scope budget
+#   instead. Out of scope here; this RG-scope budget covers the normal case.
+resource "azurerm_consumption_budget_resource_group" "ephemeral" {
+  count             = length(var.budget_alert_emails) > 0 ? 1 : 0
+  name              = "${var.resource_group_name}-budget"
+  resource_group_id = azurerm_resource_group.rg.id
+
+  amount     = var.budget_alert_amount
+  time_grain = "Monthly"
+
+  # Start of current month, in UTC. formatdate keeps it stable across re-applies
+  # within the same month; a re-apply in a new month will roll the start date
+  # forward, which is the desired behavior for monthly grain.
+  #
+  # end_date is set explicitly ~10 years out. azurerm provider defaults this
+  # to start_date + 1 year, which silently disables the budget after 12
+  # months from initial apply — easy to miss because Terraform doesn't drift-
+  # detect a "budget that no longer monitors anything". Pushing it ~decade
+  # out makes the time window long enough that re-applies (which always
+  # happen on each pipeline run) will refresh start_date well before
+  # end_date matters.
+  time_period {
+    start_date = formatdate("YYYY-MM-01'T'00:00:00'Z'", timestamp())
+    end_date   = formatdate("YYYY-MM-01'T'00:00:00'Z'", timeadd(timestamp(), "87600h"))
+  }
+
+  notification {
+    enabled        = true
+    threshold      = var.budget_alert_threshold_pct
+    operator       = "GreaterThan"
+    threshold_type = "Actual"
+    contact_emails = var.budget_alert_emails
+  }
+
+  lifecycle {
+    # start_date drifts via timestamp() on every plan; ignoring its diff
+    # avoids spurious "in-place update" plans that don't change semantics.
+    ignore_changes = [time_period]
+  }
+}
+
 resource "random_string" "admin_login" {
   length  = 15
   special = false

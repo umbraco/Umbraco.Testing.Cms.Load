@@ -16,6 +16,25 @@ parameters:
   - name: skipWarmup
     type: boolean
     default: false
+  # Logs Ingestion API target (Log Analytics custom table). When DceUri +
+  # DcrImmutableId + StreamName are non-empty, publish-load-test-results.ps1
+  # mirrors each summary row to the LoadTestSummary_CL custom table so the
+  # Workbook can read it. When SeriesStreamName is also non-empty, per-minute
+  # Azure Monitor datapoints are mirrored to LoadTestSeries_CL for the
+  # workbook's per-run drill-down panel. Empty defaults keep the template
+  # backward-compatible if invoked outside the main pipeline.
+  - name: logAnalyticsDceUri
+    type: string
+    default: ''
+  - name: logAnalyticsDcrImmutableId
+    type: string
+    default: ''
+  - name: logAnalyticsStreamName
+    type: string
+    default: ''
+  - name: logAnalyticsSeriesStreamName
+    type: string
+    default: ''
 
 steps:
   - task: PowerShell@2
@@ -24,6 +43,7 @@ steps:
       # Env vars sidestep $(var) quote escaping.
       RESOLVED_TEST_CASES: $(resolvedTestCases)
       TEST_CASE_OUTPUTS: $(testCaseOutputs)
+      SEEDER_RESULTS: $(seederResults)
     inputs:
       targetType: 'inline'
       script: |
@@ -47,6 +67,38 @@ steps:
         Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
         Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
+
+        # Seeder result is captured per-case by install-umbraco-cms-on-appservice.ps1
+        # during the provision stage's Terraform local-exec, aggregated into the
+        # `seederResults` pipeline output variable by the outputVars step, and
+        # surfaces here as $env:SEEDER_RESULTS. Filesystem isn't shared across
+        # stages, so this variable hop is how the value crosses the agent boundary.
+        $seederDurationSeconds = ''
+        $seeder = $null
+        if (-not [string]::IsNullOrWhiteSpace($env:SEEDER_RESULTS)) {
+            try {
+                $seederMap = $env:SEEDER_RESULTS | ConvertFrom-Json
+                $seeder = $seederMap.$testCaseId
+            } catch {
+                Write-Host "##vso[task.logissue type=warning]Couldn't parse SEEDER_RESULTS: $($_.Exception.Message)"
+            }
+        }
+        if ($null -ne $seeder) {
+            # Treat 0 (and any sub-second value that rounds to 0) the same as
+            # null — Small/Medium/Large/Massive presets all take minutes, so a
+            # 0 reading means the seeder reported ElapsedMs incorrectly. Letting
+            # 0s through would drag the dashboard median to 0 and hide the real
+            # value. Warn so the underlying cause gets diagnosed.
+            if ($null -ne $seeder.duration_seconds -and [double]$seeder.duration_seconds -gt 0) {
+                $seederDurationSeconds = [string]$seeder.duration_seconds
+            } elseif ($null -ne $seeder.duration_seconds) {
+                Write-Host "##vso[task.logissue type=warning]Seeder result for $testCaseId has duration_seconds=$($seeder.duration_seconds) - dropping as suspect (status=$($seeder.status))"
+            }
+            Write-Host "Seeder result for $testCaseId | status=$($seeder.status) raw=$($seeder.duration_seconds) used=$seederDurationSeconds"
+        } else {
+            Write-Host "No seeder result for $testCaseId in SEEDER_RESULTS - publishing without duration."
+        }
+        Write-Host "##vso[task.setvariable variable=seederDurationSeconds]$seederDurationSeconds"
 
         Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s"
 
@@ -79,6 +131,14 @@ steps:
         az webapp start -n $(appServiceName) -g $(azureResourceGroup)
 
   # Skipped when skipWarmup=true — so the test hits a freshly started App Service.
+  # Two phases:
+  #   Phase 1: poll / until 200 (App Service + Umbraco bootstrap is up).
+  #   Phase 2: prime every endpoint the load test will hit. Mirrors the URL
+  #            buckets the locustfile reads from /umbraco/api/seederstatus/inventory,
+  #            so JIT/route/view caches are warm for every sampler — not just /.
+  #            Without this, only Homepage runs against a warm app and the other
+  #            samplers absorb cold-start latency into their early measurement
+  #            window, inflating run-to-run spread.
   - ${{ if not(parameters.skipWarmup) }}:
     - task: PowerShell@2
       displayName: 'Warm up [${{ parameters.testCaseId }}]'
@@ -87,15 +147,15 @@ steps:
         targetType: 'inline'
         script: |
           $hostname = "$(hostName)"
-          $url = "https://$hostname"
+          $base = "https://$hostname"
           $deadline = (Get-Date).AddMinutes(5)
           $ready = $false
-          Write-Host "Polling $url for 200 (max 5 minutes)..."
+          Write-Host "Phase 1: polling $base for 200 (max 5 minutes)..."
           while ((Get-Date) -lt $deadline) {
               try {
-                  $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -DisableKeepAlive -TimeoutSec 15
+                  $resp = Invoke-WebRequest -Uri $base -UseBasicParsing -DisableKeepAlive -TimeoutSec 15
                   if ($resp.StatusCode -eq 200) {
-                      Write-Host "App responded 200 - warm-up complete."
+                      Write-Host "App responded 200 - bootstrap complete."
                       $ready = $true
                       break
                   }
@@ -111,6 +171,58 @@ steps:
               Write-Host "##vso[task.logissue type=error]App did not respond 200 within 5 minutes - skipping load test for this case"
               exit 1
           }
+
+          Write-Host ""
+          Write-Host "Phase 2: priming all sampler endpoints..."
+          $inventoryUrl = "$base/umbraco/api/seederstatus/inventory"
+          try {
+              $inventory = Invoke-RestMethod -Uri $inventoryUrl -TimeoutSec 30
+          }
+          catch {
+              # Non-fatal: the load test will still run, just without the per-endpoint
+              # priming — spread on non-Homepage samplers may be wider on this run.
+              Write-Host "##vso[task.logissue type=warning]Inventory probe failed ($($_.Exception.Message)); load test will run against a partially-warmed app."
+              return
+          }
+
+          # Prime EVERY URL in every bucket. The load test picks via
+          # random.choice() across the full bucket, so any URL not warmed here
+          # hits first-touch latency during measurement — that's the dominant
+          # source of run-to-run noise on p95/p99. Output-cached responses on
+          # warmed URLs return in ~5ms; uncached first-touch is 200-600ms.
+          # Cost: ~30-60s extra warmup; benefit: measurement starts from a
+          # fully-warm cache state.
+          $targets = New-Object System.Collections.Generic.List[string]
+          foreach ($u in @($inventory.rootSectionUrls))                                                         { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Category' } | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Page' }     | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Detail' }   | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleMediaUrls))                                                         { if ($u) { $targets.Add($u) } }
+          Write-Host "  priming $($targets.Count) URL(s) across all buckets"
+
+          foreach ($path in $targets) {
+              $absolute = if ($path -match '^https?://') { $path } else { "$base$path" }
+              try {
+                  $r = Invoke-WebRequest -Uri $absolute -UseBasicParsing -DisableKeepAlive -TimeoutSec 30
+                  Write-Host "  primed $absolute -> $($r.StatusCode)"
+              }
+              catch {
+                  Write-Host "  warn: $absolute -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+              }
+          }
+
+          # Prime the contact form route. A 4xx is fine — the goal is to register
+          # the route + bind the model + compile the controller, not a real submission.
+          try {
+              $r = Invoke-WebRequest -Uri "$base/umbraco/api/contactform/submit" -Method Post `
+                   -ContentType 'application/json' -Body '{}' `
+                   -UseBasicParsing -DisableKeepAlive -TimeoutSec 30 -SkipHttpErrorCheck
+              Write-Host "  primed contact form -> $($r.StatusCode)"
+          }
+          catch {
+              Write-Host "  warn: contact form -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+          }
+          Write-Host "Warm-up complete."
 
   # Load test config is per-case so runs stay distinguishable in the portal.
   # Generation lives in scripts/generate-loadtest-config.ps1 so it's locally
@@ -169,7 +281,12 @@ steps:
       # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
       # or you can't tell override runs apart from default-pairing runs in the portal Compare view.
       loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(poolDtuMax)DTU #$(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], app=$(appServiceSku) sql=$(poolDtuMax)DTU, $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
+      # Azure Load Testing caps the description at 100 chars. Worst-case
+      # combo (longest version + Enterprise + DeliveryApi + Massive + stress
+      # numbers) lands around 70 with this template; well under the limit.
+      # Drops the .NET version (derivable from the Umbraco major and visible
+      # in LoadTestSummary_CL) and shortens 'users for Ns' to 'Nu/Ns'.
+      loadTestRunDescription: '${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }} | $(appServiceSku)/$(poolDtuMax)DTU/$(resolvedSeederPreset) | $(userAmount)u/$(testDuration)s'
 
   - task: PowerShell@2
     displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
@@ -231,3 +348,8 @@ steps:
         -AppServiceResourceId "$(appServiceResourceId)"
         -AppServicePlanResourceId "$(appServicePlanId)"
         -SqlDatabaseResourceId "$(sqlDatabaseId)"
+        -SeederDurationSeconds "$(seederDurationSeconds)"
+        -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
+        -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
+        -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
+        -LogAnalyticsSeriesStreamName "${{ parameters.logAnalyticsSeriesStreamName }}"

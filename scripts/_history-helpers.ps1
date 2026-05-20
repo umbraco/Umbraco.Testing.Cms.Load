@@ -18,6 +18,21 @@ function Get-HistoryPrefix {
     if ($Major) { "$Scenario/$Major/" } else { "$Scenario/" }
 }
 
+# Parse a row's run_started_at into a DateTime, returning $null on failure.
+# Used by every consumer of Get-HistoryCells to sort/filter by run time
+# defensively — a single corrupt timestamp in history must not throw under
+# $ErrorActionPreference="Stop" and brick the whole analysis script.
+# _history-helpers tolerates bad JSON lines at load-time; this closes the
+# equivalent gap for parse-after-load.
+function Get-RunDate {
+    param([Parameter(Mandatory)] $Row)
+    try {
+        return [datetime]::Parse([string]$Row.run_started_at, [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        return $null
+    }
+}
+
 # Median of a numeric array — used by both the trend renderer and the regression
 # gate. For even N, returns the mean of the two middle values.
 function Get-Median([double[]] $values) {
@@ -85,8 +100,13 @@ function Get-HistoryCells {
             if ($Sampler -and $row.scenario_name -ne $Sampler) { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"
-            if (-not $cells.ContainsKey($cellKey)) { $cells[$cellKey] = @() }
-            $cells[$cellKey] += $row
+            if (-not $cells.ContainsKey($cellKey)) {
+                # List[object] for O(1) appends; += on PowerShell arrays is
+                # O(N²) on long histories and dominates wall-clock of every
+                # downstream analysis script.
+                $cells[$cellKey] = [System.Collections.Generic.List[object]]::new()
+            }
+            $cells[$cellKey].Add($row)
         }
     }
 

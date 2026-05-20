@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 # Validate the testCases JSON (built by the pipeline from the queue-time params or
 # supplied via -TestCasesJson / TEST_CASES_JSON env var), expand the tiers axis,
 # flatten scenario appsettings, resolve load profiles, emit two output variables
