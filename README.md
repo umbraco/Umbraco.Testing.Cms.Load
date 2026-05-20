@@ -70,7 +70,7 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 ├── README.md
 │
 ├── dashboards/
-│   └── loadtest.workbook.json   # Azure Workbook: Trends / Tiers / Compare / Runs over LoadTestSummary_CL
+│   └── loadtest.workbook.json   # Azure Workbook: Trends / Tiers / Versions / Compare / Runs / Glossary over LoadTestSummary_CL
 │
 ├── templates/
 │   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
@@ -187,10 +187,13 @@ The v18 mapping should be verified against the actual v18 release notes before r
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 | `poolDtuOverride` | Force every case onto a specific per-DB DTU cap (decouples DB sizing from tier) | Auto | Auto, 10, 20, 50, 100, 200 |
 | `appSkuOverride` | Force every case onto a specific App Service Plan SKU (decouples app sizing from tier) | Auto | Auto, P0v3, P1v3, P2v3, P3v3 |
+| `seederPresetOverride` | Force every case onto a specific TestDataSeeder preset (decouples content size from load profile) | Auto | Auto, Small, Medium, Large, Massive |
 
 **Pool DTU override.** When set to a value other than `Auto`, every test case in the run uses the same per-DB DTU cap regardless of the tier's default — useful for "is SQL actually the bottleneck?" experiments. Default caps are Starter→20, Standard→50, Pro→100, Enterprise→200 (see `tiers.json`). The Elastic Pool's eDTU capacity is sized automatically to the smallest valid Standard pool that can hold a DB at the chosen cap.
 
 **App SKU override.** Counterpart to `poolDtuOverride` on the app side. When set to a value other than `Auto`, every test case uses the same App Service Plan SKU regardless of the tier's default — useful for "is the app actually the bottleneck?" experiments. Default SKUs are Starter→P0v3, Standard→P1v3, Pro→P2v3, Enterprise→P3v3.
+
+**Seeder preset override.** Decouples content size from the load profile. `Auto` keeps the existing coupling (smoke→Small, standard→Medium, stress→Large); explicit values unlock off-diagonal combinations like Massive content + smoke load or Small content + stress load, and are the only way to reach the Massive preset. Approximate seeder times: Small ~10 min, Medium ~30 min, Large ~60 min, Massive ~120 min.
 
 The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds).
 
@@ -708,13 +711,14 @@ The `regression-report` artifact + the per-sampler table from `compare-runs.ps1`
 
 ## Dashboard
 
-`dashboards/loadtest.workbook.json` is an Azure Workbook that queries `LoadTestSummary_CL` in Log Analytics and offers five views:
+`dashboards/loadtest.workbook.json` is an Azure Workbook that queries `LoadTestSummary_CL` in Log Analytics and offers six views:
 
-- **Trends** — chronological per-run chart of the chosen metric (p95 / p99 / avg / error rate / RPS / server CPU peak / DB load peak), one line per `(scenario × version × tier)`; matrix table below with median ±stddev and a plain-language **Stability** label per cell (*stable / moderate / noisy / few runs*) flagging cells where a small regression threshold would be lost in run-to-run noise.
-- **Tiers** — pick scenario + version, see latest run per tier as a bar chart + a Capacity-verdict table with **Headroom** and a **Bottleneck** column naming the hottest resource and its peak (e.g. `Database load 92%`). Answers "what do I get for upgrading the tier — and what saturated first?"
+- **Trends** — chronological per-run chart of the chosen metric (p95 / p99 / avg / error rate / RPS / server CPU peak / DB load peak), one line per `(scenario × version × tier)`; side-by-side latency + resource-pressure charts share a run-indexed x-axis for direct visual correlation of code-bound vs infra-bound symptoms; matrix table below with median ±stddev and a plain-language **Stability** label per cell (*stable / moderate / noisy / few runs*) flagging cells where a small regression threshold would be lost in run-to-run noise. Sampler filter is multi-select.
+- **Tiers** — pick scenario + version, see latest run per tier as a bar chart + a Capacity-verdict table with **Headroom** and a **Bottleneck** column naming the hottest resource and its peak (e.g. `Database load 92%`). Tier rows sort by capacity rank (Starter → Standard → Pro → Enterprise). Answers "what do I get for upgrading the tier — and what saturated first?"
 - **Versions** — pick scenario + tier, see per-sampler median latency grouped by Umbraco version. Answers "did this version regress on this tier?"
-- **Compare** — pick two runs + Δ% threshold; per-sampler delta table with red/green conditional formatting; server-side delta block.
-- **Runs** — filtered run list with **Bottleneck** + regression-verdict columns; type a run ID into the drill field to see the regression breakdown (which specific samplers flagged), per-sampler latency detail, **and a per-minute resource-pressure line chart** sourced from a companion `LoadTestSeries_CL` table — answers "when *in* the run did p99 spike?" / "did SQL DTU saturate before App CPU?" — the questions the summary scalars can't.
+- **Compare** — pick two runs + Δ% threshold; per-sampler delta table with red/green conditional formatting; server-side delta block with a **Note** column distinguishing "no change" from "no data". Failed runs (`no_metrics`) are excluded from the run pickers.
+- **Runs** — filtered run list with **Bottleneck** + regression-verdict columns; pick a run from the drill dropdown to see the regression breakdown (which specific samplers flagged), per-sampler latency detail, **and per-minute resource-pressure charts** (% metrics and HTTP error counts on separate axes) sourced from a companion `LoadTestSeries_CL` table — answers "when *in* the run did p99 spike?" / "did SQL DTU saturate before App CPU?" — the questions the summary scalars can't.
+- **Glossary** — vocabulary reference for every column / verdict / metric used in the other tabs.
 
 Above the tab bar — and visible from every view — a **Top issues** panel surfaces the worst recent cases by severity (regressions first, then ≥1% error rate, then resources peaking ≥85% / ≥95%). It scopes to the global filter and prints a single "✓ Clear" row when nothing's flagged, so absence of issues is unambiguous vs missing data.
 
