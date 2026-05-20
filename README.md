@@ -720,9 +720,7 @@ The `regression-report` artifact + the per-sampler table from `compare-runs.ps1`
 - **Runs** — filtered run list with **Bottleneck** + regression-verdict columns; pick a run from the drill dropdown to see the regression breakdown (which specific samplers flagged), per-sampler latency detail, **and per-minute resource-pressure charts** (% metrics and HTTP error counts on separate axes) sourced from a companion `LoadTestSeries_CL` table — answers "when *in* the run did p99 spike?" / "did SQL DTU saturate before App CPU?" — the questions the summary scalars can't.
 - **Glossary** — vocabulary reference for every column / verdict / metric used in the other tabs.
 
-Above the tab bar — and visible from every view — a **Top issues** panel surfaces the worst recent cases by severity (regressions first, then ≥1% error rate, then resources peaking ≥85% / ≥95%). It scopes to the global filter and prints a single "✓ Clear" row when nothing's flagged, so absence of issues is unambiguous vs missing data.
-
-Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Top issues / Trends / Compare / Runs. Tiers and Versions have their own scoped pickers (Tiers is the cross-tier view, Versions is the cross-version view). Workbook URLs encode the filter state, so links are shareable.
+Global filter bar (Workspace, time range, Scenario / Version / Tier dropdowns) scopes Trends / Compare / Runs. Tiers and Versions have their own scoped pickers (Tiers is the cross-tier view, Versions is the cross-version view). Workbook URLs encode the filter state, so links are shareable.
 
 Auth piggybacks on Azure RBAC: anyone with **Reader** on the Log Analytics workspace (or its parent RG) can view the Workbook. No separate identity to manage.
 
