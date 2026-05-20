@@ -49,7 +49,7 @@ A new team forking this project should:
 1. **Pick a globally-unique storage account name** (3-24 lowercase alphanumeric chars). This will host the long-lived run history. Override `historyStorageAccount` in the variable group with this value — the placeholder `loadtestchangeme` is rejected by `ensure-history-infra.ps1`.
 2. **Create the AzDO variable group** `umbraco-loadtest-history` with the five history variables above.
 3. **Configure the service principal** with the permissions listed in Prerequisites — Contributor on the subscription (or scoped narrower) is sufficient.
-4. **Queue the pipeline once with `skipLoadTests=true`.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container) **and the monitoring infra** (Log Analytics workspace, custom table, DCR, Workbook) and verifies the per-case provisioning path without committing to a full load test. ~10-15 minutes. The Workbook URL is printed in the `ensureMonitoringInfra` stage log — pin it to your Azure portal dashboard.
+4. **Queue the pipeline once.** The first run creates the long-lived history infra (RG, ALT resource, storage account, container) **and the monitoring infra** (Log Analytics workspace, custom table, DCR, Workbook) alongside the per-case provisioning. The Workbook URL is printed in the `ensureMonitoringInfra` stage log — pin it to your Azure portal dashboard.
 5. **(Local-dev users)** `az login` and verify you can list keys for the history storage account — `show-trends.ps1` / `check-regression.ps1` / `compare-runs.ps1` (history mode) run locally need the same `listKeys/action` the pipeline SP uses:
    ```bash
    az storage account keys list -n <your-history-storage-account> -g umbraco-loadtest-history-rg --query "[0].keyName" -o tsv
@@ -81,7 +81,6 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
 │   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, Azure Load Testing, storage
 │   ├── generate-loadtest-config.ps1    # Per-case ALT YAML config (testId, appComponents, failureCriteria)
-│   ├── verify-deployments.ps1          # Smoke-check each deployed site (skipLoadTests=true path)
 │   ├── stop-all-app-services.ps1       # Pre-test and end-of-run sweep: stop App Services in the case set
 │   ├── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
 │   ├── compare-runs.ps1                # Markdown delta report between two runs (CSV or history)
@@ -185,7 +184,6 @@ The v18 mapping should be verified against the actual v18 release notes before r
 | `azureRegion` | Azure region | West Europe | West Europe, North Europe, East US, West US 2 |
 | `resourcePrefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
 | `skipWarmup` | Skip warmup (test cold-start / cache warm-up behaviour) | false | true, false |
-| `skipLoadTests` | Skip load tests (infra-only run) | false | true, false |
 | `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
 | `poolDtuOverride` | Force every case onto a specific per-DB DTU cap (decouples DB sizing from tier) | Auto | Auto, 10, 20, 50, 100, 200 |
 | `appSkuOverride` | Force every case onto a specific App Service Plan SKU (decouples app sizing from tier) | Auto | Auto, P0v3, P1v3, P2v3, P3v3 |
@@ -561,13 +559,11 @@ provision            checkResourceGroup → setup (init + validate + plan) → a
                      Provisions one App Service Plan per used tier, plus per-case App Services
                      and SQL DBs. Emits test_case_outputs map.
 
-loadTest             verifyDeployments (only when skipLoadTests=true) OR runLoadTests.
-                     Each case warms up, runs Locust on ALT, publishes results to
-                     history storage, the build artifact, and Log Analytics.
+loadTest             runLoadTests: each case warms up, runs Locust on ALT, publishes results
+                     to history storage, the build artifact, and Log Analytics.
 
 regression           Compare candidate run against baseline-median; fail the pipeline when a
-                     cell exceeds threshold AND has ≥3 prior runs. Skipped when
-                     skipLoadTests=true.
+                     cell exceeds threshold AND has ≥3 prior runs.
 
 cleanup              checkResourceGroupForCleanup → manualValidation (configurable window) →
                      deleteResourceGroup if rejected/cancelled/expired. Always runs.
@@ -604,12 +600,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 
 ### Smoke-testing changes
 
-When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Two faster modes:
-
-- **Profile-only smoke** — `loadProfile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Use this when you've changed something that might affect the load-test path (Locust task, test config YAML, ALT integration).
-- **Infra-only smoke** — `skipLoadTests=true` (with any profile + tier selection). Skips ALT entirely; runs validate → provision → install + seed → verify-deployments → cleanup. Use this when you've changed scripts/Terraform that affect provisioning or deployment but not load tests.
-
-Both modes exercise the full ephemeral-infra cycle. The profile-only smoke mode runs the regression check too (a no-op until baselines accrue); the infra-only smoke mode skips it (no new run to check).
+When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Run a **profile-only smoke**: `loadProfile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Exercises the full ephemeral-infra cycle and the load-test path on the smallest seeder preset.
 
 ### Running Terraform Locally
 
@@ -664,7 +655,6 @@ Pipeline parameters for the 3 baseline runs:
   loadProfile:    standard
   poolDtuOverride: Auto
   skipWarmup:     false
-  skipLoadTests:  false
 ```
 
 Wait for all 3 to finish, then approve cleanup on each.

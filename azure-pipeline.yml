@@ -70,11 +70,6 @@ parameters:
     type: boolean
     default: false
 
-  - name: skipLoadTests
-    displayName: Skip load tests (infra-only run)
-    type: boolean
-    default: false
-
   - name: validationTimeoutMinutes
     displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
     type: number
@@ -116,6 +111,23 @@ parameters:
       - 'P1v3'
       - 'P2v3'
       - 'P3v3'
+
+  # Override the TestDataSeeder preset so content size is independent of the
+  # load profile. 'Auto' couples preset to profile (smoke=Small, standard=Medium,
+  # stress=Large). Override unlocks the otherwise-unreachable Massive preset
+  # and enables off-diagonal cells (Small content + stress load, Massive content
+  # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~30 min,
+  # Large ~60 min, Massive ~120 min.
+  - name: seederPresetOverride
+    displayName: TestDataSeeder preset override (Auto = couple to load profile)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'Small'
+      - 'Medium'
+      - 'Large'
+      - 'Massive'
 
 variables:
   # Variable group `umbraco-loadtest-history` provides all history* variables:
@@ -162,6 +174,7 @@ stages:
                 -RunEnterprise '${{ parameters.runEnterprise }}'
                 -PoolDtuOverride '${{ parameters.poolDtuOverride }}'
                 -AppSkuOverride '${{ parameters.appSkuOverride }}'
+                -SeederPresetOverride '${{ parameters.seederPresetOverride }}'
                 -WorkspaceRoot '$(System.DefaultWorkingDirectory)'
 
   - stage: ensureHistoryInfra
@@ -447,26 +460,8 @@ stages:
       monitoringStreamName:       $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
       monitoringSeriesStreamName: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringSeriesStreamName'] ]
     jobs:
-      # Smoke check, only when skipLoadTests=true. Load tests do their own warm-up.
-      - job: verifyDeployments
-        displayName: Smoke-verify deployed sites
-        condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'True'))
-        steps:
-          - task: AzureCLI@2
-            displayName: Start, hit /, stop each App Service
-            env:
-              TEST_CASE_OUTPUTS: $(testCaseOutputs)
-            inputs:
-              azureSubscription: '$(serviceConnection)'
-              scriptType: 'pscore'
-              scriptLocation: 'scriptPath'
-              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/verify-deployments.ps1'
-              arguments: >
-                -ResourceGroupName "$(azureResourceGroup)"
-
       - job: runLoadTests
         displayName: Run Load Tests
-        condition: and(succeeded(), eq('${{ parameters.skipLoadTests }}', 'False'))
         # Each case: warm-up (~5 min) + load test (up to 600s) + publish. Up to four
         # cases per queue (one per selected tier); budget generously.
         timeoutInMinutes: 720
@@ -549,7 +544,7 @@ stages:
     dependsOn:
       - ensureMonitoringInfra
       - loadTest
-    condition: and(succeeded('loadTest'), eq('${{ parameters.skipLoadTests }}', 'False'))
+    condition: succeeded('loadTest')
     variables:
       monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
       monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
