@@ -250,7 +250,7 @@
             "multiSelect": true,
             "quote": "'",
             "delimiter": ",",
-            "isRequired": false,
+            "isRequired": true,
             "value": ["*"],
             "query": "// Dropdown is scoped by the global Scenario filter so picking a scenario\n// trims the sampler list to just that scenario's tasks. parse_status filter\n// keeps metadata-only / regression-check rows out — they have empty\n// scenario_name and would surface as an empty option.\nLoadTestSummary_CL\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where isnotempty(scenario_name) and parse_status == 'ok' and coalesce(cold_start, false) == false\n| distinct scenario_name\n| order by scenario_name asc",
             "crossComponentResources": ["{Workspace}"],
