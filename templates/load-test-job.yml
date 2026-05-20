@@ -281,7 +281,12 @@ steps:
       # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
       # or you can't tell override runs apart from default-pairing runs in the portal Compare view.
       loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(poolDtuMax)DTU #$(Build.BuildId)'
-      loadTestRunDescription: 'Umbraco ${{ parameters.umbracoVersion }} on $(resolvedDotnetVersion) [${{ parameters.tier }}/${{ parameters.scenario }}], app=$(appServiceSku) sql=$(poolDtuMax)DTU, $(resolvedSeederPreset) preset, $(userAmount) users for $(testDuration)s'
+      # Azure Load Testing caps the description at 100 chars. Worst-case
+      # combo (longest version + Enterprise + DeliveryApi + Massive + stress
+      # numbers) lands around 70 with this template; well under the limit.
+      # Drops the .NET version (derivable from the Umbraco major and visible
+      # in LoadTestSummary_CL) and shortens 'users for Ns' to 'Nu/Ns'.
+      loadTestRunDescription: '${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }} | $(appServiceSku)/$(poolDtuMax)DTU/$(resolvedSeederPreset) | $(userAmount)u/$(testDuration)s'
 
   - task: PowerShell@2
     displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
