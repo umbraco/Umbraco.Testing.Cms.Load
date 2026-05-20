@@ -140,6 +140,13 @@ function Get-MetricSummary {
             if ($points.Count -eq 0) {
                 $summary["${name}_avg"] = $null
                 $summary["${name}_max"] = $null
+                # Surface as a warning too — AzMon returning success + zero
+                # datapoints is the silent failure mode (e.g. VM hadn't started
+                # emitting yet, wrong time window). Without this the column
+                # just shows blank in the dashboard with no clue why.
+                $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] - column will be null."
+                Write-Warning $msg
+                Write-Host "##vso[task.logissue type=warning]$msg"
                 continue
             }
             # Per-minute points retained for LoadTestSeries_CL. The summary
