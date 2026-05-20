@@ -157,7 +157,13 @@ function Get-MetricSummary {
             $summary["${name}_max"] = [math]::Round((($values | Measure-Object -Maximum).Maximum), 2)
         }
     } catch {
-        Write-Warning "Azure Monitor query failed for $ResourceId : $($_.Exception.Message)"
+        # Surface to BOTH the task log AND the AzDO summary panel — silent
+        # Write-Warning blends into the log and a partial-metrics gap (e.g.
+        # plan_* missing while sql_*/app_* populate) drifts unnoticed for
+        # multiple runs.
+        $msg = "Azure Monitor query failed for $ResourceId : $($_.Exception.Message)"
+        Write-Warning $msg
+        Write-Host "##vso[task.logissue type=warning]$msg"
     }
     return @{ Summary = $summary; Series = $series }
 }
