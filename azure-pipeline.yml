@@ -86,7 +86,7 @@ parameters:
   # experiments. Defaults (per loadtests/tiers.json): Starter=20, Standard=50,
   # Pro=100, Enterprise=200. 'Auto' = use each tier's built-in DTU cap.
   - name: poolDtuOverride
-    displayName: SQL per-DB DTU override (Auto = use the tier's default)
+    displayName: SQL per-DB DTU override (Auto = match tier)
     type: string
     default: 'Auto'
     values:
@@ -102,7 +102,7 @@ parameters:
   # (per loadtests/tiers.json): Starter=P0v3, Standard=P1v3, Pro=P2v3,
   # Enterprise=P3v3. 'Auto' = use each tier's built-in SKU.
   - name: appSkuOverride
-    displayName: App Service SKU override (Auto = use the tier's default)
+    displayName: App Service SKU override (Auto = match tier)
     type: string
     default: 'Auto'
     values:
@@ -119,7 +119,7 @@ parameters:
   # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~30 min,
   # Large ~60 min, Massive ~120 min.
   - name: seederPresetOverride
-    displayName: TestDataSeeder preset override (Auto = couple to load profile)
+    displayName: Seeder preset override (Auto = match load profile)
     type: string
     default: 'Auto'
     values:
