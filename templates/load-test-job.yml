@@ -73,10 +73,18 @@ steps:
         $seederDurationSeconds = ''
         if (Test-Path $seederResultPath) {
             $seeder = Get-Content $seederResultPath -Raw | ConvertFrom-Json
-            if ($null -ne $seeder.duration_seconds) {
+            # Treat 0 (and any sub-second value that rounds to 0) the same as
+            # null — Small/Medium/Large/Massive presets all take minutes, so a
+            # 0 reading means the seeder reported ElapsedMs incorrectly (status
+            # endpoint bug, field-name change, etc.). Letting 0s through would
+            # drag the dashboard median to 0 and hide the real value. Worth
+            # warning so the underlying cause gets diagnosed.
+            if ($null -ne $seeder.duration_seconds -and [double]$seeder.duration_seconds -gt 0) {
                 $seederDurationSeconds = [string]$seeder.duration_seconds
+            } elseif ($null -ne $seeder.duration_seconds) {
+                Write-Host "##vso[task.logissue type=warning]Seeder result for $testCaseId has duration_seconds=$($seeder.duration_seconds) - dropping as suspect (status=$($seeder.status))"
             }
-            Write-Host "Seeder result for $testCaseId | status=$($seeder.status) duration=$seederDurationSeconds"
+            Write-Host "Seeder result for $testCaseId | status=$($seeder.status) raw=$($seeder.duration_seconds) used=$seederDurationSeconds"
         } else {
             Write-Host "No seeder result file at $seederResultPath - publishing without duration."
         }
@@ -167,15 +175,20 @@ steps:
               return
           }
 
-          # One URL per bucket is enough to register the route, instantiate the
-          # controller, and compile the view. JIT tier-1 optimisation happens during
-          # the load test itself; this only eliminates the first-request cliff.
+          # Prime EVERY URL in every bucket. The load test picks via
+          # random.choice() across the full bucket, so any URL not warmed here
+          # hits first-touch latency during measurement — that's the dominant
+          # source of run-to-run noise on p95/p99. Output-cached responses on
+          # warmed URLs return in ~5ms; uncached first-touch is 200-600ms.
+          # Cost: ~30-60s extra warmup; benefit: measurement starts from a
+          # fully-warm cache state.
           $targets = New-Object System.Collections.Generic.List[string]
-          foreach ($u in @($inventory.rootSectionUrls       | Select-Object -First 1)) { if ($u) { $targets.Add($u) } }
-          foreach ($u in @($inventory.sampleContentUrls     | Where-Object { $_.docType -eq 'Category' } | Select-Object -First 1 -ExpandProperty url)) { if ($u) { $targets.Add($u) } }
-          foreach ($u in @($inventory.sampleContentUrls     | Where-Object { $_.docType -eq 'Page' }     | Select-Object -First 1 -ExpandProperty url)) { if ($u) { $targets.Add($u) } }
-          foreach ($u in @($inventory.sampleContentUrls     | Where-Object { $_.docType -eq 'Detail' }   | Select-Object -First 1 -ExpandProperty url)) { if ($u) { $targets.Add($u) } }
-          foreach ($u in @($inventory.sampleMediaUrls       | Select-Object -First 1)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.rootSectionUrls))                                                         { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Category' } | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Page' }     | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Detail' }   | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleMediaUrls))                                                         { if ($u) { $targets.Add($u) } }
+          Write-Host "  priming $($targets.Count) URL(s) across all buckets"
 
           foreach ($path in $targets) {
               $absolute = if ($path -match '^https?://') { $path } else { "$base$path" }
