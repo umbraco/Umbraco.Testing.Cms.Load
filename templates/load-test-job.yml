@@ -43,6 +43,7 @@ steps:
       # Env vars sidestep $(var) quote escaping.
       RESOLVED_TEST_CASES: $(resolvedTestCases)
       TEST_CASE_OUTPUTS: $(testCaseOutputs)
+      SEEDER_RESULTS: $(seederResults)
     inputs:
       targetType: 'inline'
       script: |
@@ -67,18 +68,27 @@ steps:
         Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
 
-        # Seeder result is written per-case by install-umbraco-cms-on-appservice.ps1.
-        # Empty string is fine: publish-load-test-results.ps1 treats missing/blank as "unknown".
-        $seederResultPath = Join-Path "$(System.DefaultWorkingDirectory)" ".seeder-results/$testCaseId.json"
+        # Seeder result is captured per-case by install-umbraco-cms-on-appservice.ps1
+        # during the provision stage's Terraform local-exec, aggregated into the
+        # `seederResults` pipeline output variable by the outputVars step, and
+        # surfaces here as $env:SEEDER_RESULTS. Filesystem isn't shared across
+        # stages, so this variable hop is how the value crosses the agent boundary.
         $seederDurationSeconds = ''
-        if (Test-Path $seederResultPath) {
-            $seeder = Get-Content $seederResultPath -Raw | ConvertFrom-Json
+        $seeder = $null
+        if (-not [string]::IsNullOrWhiteSpace($env:SEEDER_RESULTS)) {
+            try {
+                $seederMap = $env:SEEDER_RESULTS | ConvertFrom-Json
+                $seeder = $seederMap.$testCaseId
+            } catch {
+                Write-Host "##vso[task.logissue type=warning]Couldn't parse SEEDER_RESULTS: $($_.Exception.Message)"
+            }
+        }
+        if ($null -ne $seeder) {
             # Treat 0 (and any sub-second value that rounds to 0) the same as
             # null — Small/Medium/Large/Massive presets all take minutes, so a
-            # 0 reading means the seeder reported ElapsedMs incorrectly (status
-            # endpoint bug, field-name change, etc.). Letting 0s through would
-            # drag the dashboard median to 0 and hide the real value. Worth
-            # warning so the underlying cause gets diagnosed.
+            # 0 reading means the seeder reported ElapsedMs incorrectly. Letting
+            # 0s through would drag the dashboard median to 0 and hide the real
+            # value. Warn so the underlying cause gets diagnosed.
             if ($null -ne $seeder.duration_seconds -and [double]$seeder.duration_seconds -gt 0) {
                 $seederDurationSeconds = [string]$seeder.duration_seconds
             } elseif ($null -ne $seeder.duration_seconds) {
@@ -86,7 +96,7 @@ steps:
             }
             Write-Host "Seeder result for $testCaseId | status=$($seeder.status) raw=$($seeder.duration_seconds) used=$seederDurationSeconds"
         } else {
-            Write-Host "No seeder result file at $seederResultPath - publishing without duration."
+            Write-Host "No seeder result for $testCaseId in SEEDER_RESULTS - publishing without duration."
         }
         Write-Host "##vso[task.setvariable variable=seederDurationSeconds]$seederDurationSeconds"
 

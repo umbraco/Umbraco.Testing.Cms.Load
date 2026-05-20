@@ -404,6 +404,27 @@ stages:
                 $compact = ($raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10)
                 Write-Host "##vso[task.setvariable variable=testCaseOutputs;isOutput=true]$compact"
 
+                # Aggregate per-case seeder results into a single output variable
+                # so the loadTest stage (different agent, no shared filesystem)
+                # doesn't need a pipeline-artifact handoff just for one field per
+                # case. install-umbraco-cms-on-appservice.ps1 wrote
+                # .seeder-results/<testCaseId>.json during local-exec; we
+                # gather them all here and emit one compact JSON output var.
+                $seederResultsDir = Join-Path "$(System.DefaultWorkingDirectory)" ".seeder-results"
+                $seederMap = @{}
+                if (Test-Path $seederResultsDir) {
+                    foreach ($f in Get-ChildItem -Path $seederResultsDir -Filter '*.json') {
+                        try {
+                            $seederMap[$f.BaseName] = Get-Content $f.FullName -Raw | ConvertFrom-Json
+                        } catch {
+                            Write-Warning "Couldn't parse seeder result $($f.FullName): $($_.Exception.Message)"
+                        }
+                    }
+                }
+                $seederJson = ($seederMap | ConvertTo-Json -Compress -Depth 5)
+                Write-Host "Aggregated $($seederMap.Count) seeder result(s)"
+                Write-Host "##vso[task.setvariable variable=seederResults;isOutput=true]$seederJson"
+
   - stage: loadTest
     displayName: Run load tests
     dependsOn:
@@ -416,6 +437,7 @@ stages:
       # Stage-level fan-out: every job in this stage inherits these.
       # Resolved values come from validateTestCases; testCaseOutputs from provision.apply.
       testCaseOutputs:         $[ stageDependencies.provision.apply.outputs['outputVars.testCaseOutputs'] ]
+      seederResults:           $[ stageDependencies.provision.apply.outputs['outputVars.seederResults'] ]
       resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
       resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
