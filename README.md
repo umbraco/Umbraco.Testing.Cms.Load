@@ -4,12 +4,7 @@ A starting point for load testing Umbraco CMS on Azure using Terraform, Locust, 
 
 ## Goals
 
-- **Establish CMS performance baselines** — repeatable, comparable metrics for Umbraco under standard conditions across versions.
-- **Enable version comparison** — run the same scenario against multiple Umbraco versions to detect regressions or improvements.
-- **Build infrastructure capacity benchmarks** — what each App Service + SQL DTU combination can handle, as reference data for sizing decisions. (The shipped tiers mirror Umbraco Cloud's progression — dedicated App Service SKUs `P0v3 → P3v3` paired with per-DB DTU caps `20 / 50 / 100 / 200` in Standard-tier Elastic Pools. The `appSkuOverride` and `poolDtuOverride` queue parameters and `tiers.json` are the levers for sweeping other combinations.)
-- **Provide a reusable foundation** — a working pipeline + harness that other teams can extend without rebuilding infra.
-
-Thresholds (fail-the-pipeline gates) are intentionally **deferred** until baselines exist — once we know what "normal" looks like per scenario per tier, Locust thresholds can be wired in to fail on regression.
+Establish repeatable CMS performance baselines across Umbraco versions, infrastructure tiers (Cloud-aligned `P0v3 → P3v3` apps × `20/50/100/200` DTU SQL), and scenarios — and ship a reusable pipeline + harness other teams can extend without rebuilding infra. Pipeline-failing thresholds are deferred until baselines exist (the regression-check stage will activate per-cell as ≥3 stable runs accrue).
 
 ## Overview
 
@@ -181,9 +176,7 @@ The profile only encodes load intensity — the same profile can drive any combi
 | 17 | `v10.0` | `10.x` |
 | 18 | `v10.0` | `10.x` |
 
-The v18 mapping should be verified against the actual v18 release notes before relying on it.
-
-**For multi-version comparisons in a single queue** (e.g. 17.0.0 vs 17.0.1 on the same tier): queue the pipeline twice — once per version. The ALT Compare runs view aggregates across pipeline runs anyway (testId is per-scenario, not per-pipeline-run), so two queues end up in the same comparison view.
+**Multi-version comparisons:** queue the pipeline once per version. ALT's Compare runs view aggregates across pipeline runs (testId is per-scenario, not per-pipeline-run).
 
 **Run configuration (orthogonal knobs):**
 
