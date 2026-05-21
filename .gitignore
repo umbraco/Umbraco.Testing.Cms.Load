@@ -13,5 +13,4 @@
 
 .terraform/
 .idea/
-.build-cache/
 __pycache__/
