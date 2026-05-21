@@ -48,13 +48,16 @@ param(
     # Backoffice-only: seeder state discovered by the "Discover seeder member
     # state" step in load-test-job.yml (queries the SUT's
     # /umbraco/api/seederstatus/inventory?includeMemberPassword=true). These
-    # flow into the .properties file as totalOfMember / member_username /
-    # member_password so MemberLogin.jmx's Groovy preprocessor picks a real
-    # seeded member rather than a hardcoded TestMember_1..30 that may not
-    # exist when the seeder uses Small (10 members) or Custom presets.
+    # flow into the .properties file as totalOfMember + member_password so
+    # MemberLogin.jmx's Groovy preprocessor picks a real seeded member rather
+    # than a hardcoded count of 30 that may not exist when the seeder uses
+    # Small (10 members) or Custom presets.
+    # The seeded prefix isn't taken as a parameter — the .jmx Groovy hardcodes
+    # 'TestMember_' (matching the seeder default), so passing a discovered
+    # prefix through would be dead plumbing until the .jmx is updated to read
+    # the prefix from a property as well.
     # Optional with safe defaults — frontend mode never sets these.
     [int]$SeededMemberCount = 30,
-    [string]$SeededMemberPrefix = 'TestMember_',
     [string]$SeededMemberPassword = 'Test1234!',
 
     [string]$OutputDir = $PWD

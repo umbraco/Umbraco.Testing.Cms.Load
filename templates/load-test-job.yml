@@ -243,17 +243,21 @@ steps:
           }
           Write-Host "Warm-up complete."
 
-  # Query the seeder for actual member username pattern, count, and password
-  # via /umbraco/api/seederstatus/inventory. Without this, MemberLogin.jmx
+  # Query the seeder for actual member count and password via
+  # /umbraco/api/seederstatus/inventory. Without this, MemberLogin.jmx
   # would use its hardcoded totalOfMember=30 and assume the password matches
   # the static fallback — both of which drift silently when the seeder
   # preset (Small/Medium/Large/Massive) changes the member count, or when
   # someone overrides Configuration:Members:DefaultPassword. The discovered
   # values flow into generate-loadtest-config.ps1 via pipeline variables and
-  # land in the .properties file as totalOfMember / member_username /
-  # member_password. Skipped for frontend workloads (Locust doesn't read
-  # these). Failures fall back to safe defaults so the loop can still run —
-  # MemberLogin will just have a degraded hit-rate on member usernames.
+  # land in the .properties file as totalOfMember + member_password (the
+  # .jmx Groovy preprocessor builds member_username itself by picking a
+  # random index from 1..totalOfMember and prepending the hardcoded
+  # "TestMember_" prefix). The discovered prefix is emitted as a pipeline
+  # variable for log visibility but not consumed by generate-config —
+  # plumbing it through would be dead until the .jmx Groovy is updated to
+  # read the prefix from a property too. Skipped for frontend workloads.
+  # Failures fall back to safe defaults so the loop can still run.
   - ${{ if eq(parameters.workload, 'backoffice') }}:
     - task: PowerShell@2
       displayName: 'Discover seeder member state [${{ parameters.testCaseId }}]'
@@ -480,7 +484,6 @@ steps:
             -UmbracoVersion "${{ parameters.umbracoVersion }}"
             -JmxName "${{ jmxName }}"
             -SeededMemberCount "$(seededMemberCount)"
-            -SeededMemberPrefix "$(seededMemberPrefix)"
             -SeededMemberPassword "$(seededMemberPassword)"
             -OutputDir "$(System.DefaultWorkingDirectory)"
 
