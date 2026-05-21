@@ -13,37 +13,37 @@
         <collectionProp name="Arguments.arguments">
           <elementProp name="numberOfThread" elementType="Argument">
             <stringProp name="Argument.name">numberOfThread</stringProp>
-            <stringProp name="Argument.value">1</stringProp>
+            <stringProp name="Argument.value">${__P(numberOfThread,1)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="duration" elementType="Argument">
             <stringProp name="Argument.name">duration</stringProp>
-            <stringProp name="Argument.value">120</stringProp>
+            <stringProp name="Argument.value">${__P(duration,120)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="server" elementType="Argument">
             <stringProp name="Argument.name">server</stringProp>
-            <stringProp name="Argument.value">localhost</stringProp>
+            <stringProp name="Argument.value">${__P(server,localhost)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="protocol" elementType="Argument">
             <stringProp name="Argument.name">protocol</stringProp>
-            <stringProp name="Argument.value">https</stringProp>
+            <stringProp name="Argument.value">${__P(protocol,https)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="port" elementType="Argument">
             <stringProp name="Argument.name">port</stringProp>
-            <stringProp name="Argument.value">44322</stringProp>
+            <stringProp name="Argument.value">${__P(port,44322)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="backoffice_username" elementType="Argument">
             <stringProp name="Argument.name">backoffice_username</stringProp>
-            <stringProp name="Argument.value">hnd@acceptance.test</stringProp>
+            <stringProp name="Argument.value">${__P(backoffice_username,hnd@acceptance.test)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="backoffice_password" elementType="Argument">
             <stringProp name="Argument.name">backoffice_password</stringProp>
-            <stringProp name="Argument.value">0123456789</stringProp>
+            <stringProp name="Argument.value">${__P(backoffice_password,0123456789)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
