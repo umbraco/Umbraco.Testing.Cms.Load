@@ -75,6 +75,12 @@ $columns = @(
     @{ name = "infra_tier";                             type = "string"   }
     @{ name = "scenario";                               type = "string"   }
     @{ name = "scenario_name";                          type = "string"   }
+    # Backoffice JMeter mode emits one publish per .jmx file (ViewHomePage,
+    # MemberLogin, SaveContent, ...). jmeter_test_name carries the .jmx stem
+    # so the dashboard can split per-test results within a single (version ×
+    # tier) run. Empty for Locust runs and for backoffice runs that pre-date
+    # the multi-.jmx loop.
+    @{ name = "jmeter_test_name";                       type = "string"   }
     @{ name = "request_type";                           type = "string"   }
     @{ name = "parse_status";                           type = "string"   }
     @{ name = "user_count";                             type = "int"      }
@@ -123,13 +129,19 @@ $columns = @(
 # workbook needs run-level context (scenario / version / tier already replicated
 # here so the panel can render without a join for the common single-run drill).
 $seriesColumns = @(
-    @{ name = "TimeGenerated";   type = "datetime" }
-    @{ name = "run_id";          type = "string"   }
-    @{ name = "scenario";        type = "string"   }
-    @{ name = "umbraco_version"; type = "string"   }
-    @{ name = "infra_tier";      type = "string"   }
-    @{ name = "metric_name";     type = "string"   }
-    @{ name = "value";           type = "real"     }
+    @{ name = "TimeGenerated";    type = "datetime" }
+    @{ name = "run_id";           type = "string"   }
+    @{ name = "scenario";         type = "string"   }
+    @{ name = "umbraco_version";  type = "string"   }
+    @{ name = "infra_tier";       type = "string"   }
+    # Per-.jmx tag (matches LoadTestSummary_CL's jmeter_test_name column).
+    # Empty for Locust runs; populated for backoffice (JMeter) runs so the
+    # dashboard can filter per-minute metrics to one .jmx file's execution
+    # phase. Without this, the per-run drill-down chart shows all 6 .jmx
+    # iterations concatenated on the time axis with no way to slice.
+    @{ name = "jmeter_test_name"; type = "string"   }
+    @{ name = "metric_name";      type = "string"   }
+    @{ name = "value";            type = "real"     }
 )
 
 $streamName       = "Custom-$TableName"

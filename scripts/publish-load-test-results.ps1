@@ -47,6 +47,14 @@ param(
     # the field is then omitted from the row instead of being written as 0.
     [string]$SeederDurationSeconds = "",
 
+    # JMeter test plan stem (e.g. 'ViewHomePage', 'MemberLogin'). Empty for
+    # frontend (Locust) runs and the single-.jmx legacy backoffice path. When
+    # set, the publish step (a) suffixes the blob path with the .jmx stem so
+    # parallel .jmx publishes in the same pipeline don't overwrite each other,
+    # and (b) tags every LA row with jmeter_test_name so the dashboard can
+    # separate per-.jmx samplers when (and if) the DCR column is added.
+    [string]$JmeterTestName = "",
+
     # Optional Logs Ingestion API target. When DceUri + DcrImmutableId + the
     # SUMMARY stream name are provided, the script POSTs each summary row to
     # the Log Analytics custom table in addition to the blob upload (the
@@ -95,6 +103,13 @@ $metadata = [ordered]@{
     # (was warmup skipped, i.e. cold-start exercised). $SkipWarmup is the
     # procedural pipeline-side phrasing; both mean the same boolean.
     cold_start       = [bool]::Parse($SkipWarmup)
+}
+
+# Carry the .jmx stem on every row so future dashboard queries can split
+# per-.jmx data. Stays empty for Locust runs — KQL `isnotempty()` filters
+# pick out backoffice rows when needed.
+if (-not [string]::IsNullOrWhiteSpace($JmeterTestName)) {
+    $metadata.jmeter_test_name = $JmeterTestName
 }
 
 # Server-side metrics from Azure Monitor over the load-test window. Latency-only
@@ -255,13 +270,17 @@ function Send-SeriesToLogAnalytics {
         # workbook's time-series chart renders true minute-by-minute.
         $rows = $Points | ForEach-Object {
             [pscustomobject]@{
-                TimeGenerated   = [string]$_.TimeGenerated
-                run_id          = [string]$BuildId
-                scenario        = [string]$Scenario
-                umbraco_version = [string]$UmbracoVersion
-                infra_tier      = [string]$Tier
-                metric_name     = [string]$_.metric_name
-                value           = [double]$_.value
+                TimeGenerated     = [string]$_.TimeGenerated
+                run_id            = [string]$BuildId
+                scenario          = [string]$Scenario
+                umbraco_version   = [string]$UmbracoVersion
+                infra_tier        = [string]$Tier
+                # Keeps the per-minute table queryable by .jmx for backoffice
+                # runs. Empty string for Locust runs and pre-feature backoffice
+                # rows; KQL `isnotempty()` separates them.
+                jmeter_test_name  = [string]$JmeterTestName
+                metric_name       = [string]$_.metric_name
+                value             = [double]$_.value
             }
         }
         $body = ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress -AsArray
@@ -443,7 +462,13 @@ $datePart        = $pipelineStarted.ToString("yyyy-MM-dd", [System.Globalization
 # Major = first dot-segment (e.g. '17' for '17.0.0' and '17.0.0-rc.1').
 $majorVersion = (Get-UmbracoMajor $UmbracoVersion).ToString()
 
+# When backoffice mode iterates multiple .jmx files in one pipeline run, each
+# .jmx must land at its own blob path or iteration N overwrites iteration N-1's
+# raw/ artifacts. Frontend (Locust) runs keep the legacy prefix shape unchanged.
 $blobPrefix = "$Scenario/$majorVersion/$UmbracoVersion/$Tier/${datePart}_$BuildId"
+if (-not [string]::IsNullOrWhiteSpace($JmeterTestName)) {
+    $blobPrefix = "$blobPrefix/$JmeterTestName"
+}
 # Write the summary OUTSIDE $ResultsDir so the upload-batch below (which uploads
 # everything in $ResultsDir to /raw) doesn't end up duplicating it under raw/.
 $summaryFile = Join-Path (Split-Path -Parent $ResultsDir) "summary.ndjson"

@@ -471,6 +471,7 @@ stages:
                 tier: 'Starter'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -483,6 +484,7 @@ stages:
                 tier: 'Standard'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -495,6 +497,7 @@ stages:
                 tier: 'Pro'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -507,6 +510,7 @@ stages:
                 tier: 'Enterprise'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
