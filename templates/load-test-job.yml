@@ -252,24 +252,28 @@ steps:
         -UmbracoVersion "${{ parameters.umbracoVersion }}"
         -OutputDir "$(System.DefaultWorkingDirectory)"
 
-  # Capture the load-test window in UTC ISO 8601 so the publish step can query
-  # Azure Monitor for server-side metrics (CPU, DTU, memory) over the same time
-  # range. The window is slightly wider than the actual steady-state — it includes
-  # ALT engine provisioning and post-test artifact download — but those phases are
-  # near-zero load on the SUT, so averages aren't meaningfully skewed.
+  # Wall-clock capture of the load-test window — used as a fallback if the
+  # 'Resolve ALT TestRun timestamps' step below can't talk to ALT (transient
+  # network, permission, etc.). The wall-clock window is wider than the actual
+  # test (includes ALT engine provisioning + post-test polling + result upload)
+  # which dilutes Azure Monitor metric averages, so the ALT-derived times are
+  # preferred when available.
   - task: PowerShell@2
-    displayName: 'Capture load test start time [${{ parameters.testCaseId }}]'
+    displayName: 'Capture wall-clock start [${{ parameters.testCaseId }}]'
     condition: succeeded()
     inputs:
       targetType: 'inline'
       script: |
         $start = (Get-Date).ToUniversalTime().ToString("o")
         Write-Host "##vso[task.setvariable variable=loadTestStartTime]$start"
-        Write-Host "Load test window starts at: $start"
+        Write-Host "Wall-clock load-test window starts at: $start (will be replaced by ALT-derived time if available)"
 
   # continueOnError: an SLO breach here is meaningful data, not a reason to skip the rest.
   # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.
+  # name + outputVariableName: exposes the ALT TestRun ID to the next step so we
+  # can query the actual test start/end times via 'az load test-run show'.
   - task: AzureLoadTest@1
+    name: runLoadTest
     displayName: 'Load Test [${{ parameters.testCaseId }}]'
     condition: succeeded()
     continueOnError: true
@@ -278,6 +282,7 @@ steps:
       loadTestConfigFile: '$(loadTestConfigPath)'
       resourceGroup: '$(historyResourceGroup)'
       loadTestResource: '$(historyLoadTestName)'
+      outputVariableName: 'ALTTestRunId'
       # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
       # The per-DB DTU cap is in the name explicitly — when poolDtuOverride is set, the run
       # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
@@ -291,14 +296,63 @@ steps:
       loadTestRunDescription: '${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }} | $(appServiceSku)/$(poolDtuMax)DTU/$(resolvedSeederPreset) | $(userAmount)u/$(testDuration)s'
 
   - task: PowerShell@2
-    displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
+    displayName: 'Capture wall-clock end [${{ parameters.testCaseId }}]'
     condition: succeededOrFailed()
     inputs:
       targetType: 'inline'
       script: |
         $end = (Get-Date).ToUniversalTime().ToString("o")
         Write-Host "##vso[task.setvariable variable=loadTestEndTime]$end"
-        Write-Host "Load test window ends at: $end"
+        Write-Host "Wall-clock load-test window ends at: $end (will be replaced by ALT-derived time if available)"
+
+  # Tighten the Azure Monitor query window to the *actual* ALT TestRun start/end.
+  # Wall-clock times above include ALT engine provisioning + post-test polling
+  # which add ~5-7 minutes of zero-load period that dilutes metric averages.
+  # ALT's TestRun returns the real test-execution window via the data-plane API.
+  # Failures keep the wall-clock fallback — publish still runs with usable times.
+  - task: AzureCLI@2
+    displayName: 'Resolve ALT TestRun timestamps [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    continueOnError: true
+    inputs:
+      azureSubscription: '$(serviceConnection)'
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        $testRunId = '$(runLoadTest.ALTTestRunId)'
+        if ([string]::IsNullOrWhiteSpace($testRunId)) {
+            Write-Host "ALTTestRunId not set (load test likely didn't start). Keeping wall-clock window."
+            exit 0
+        }
+        try {
+            $prevPref = $PSNativeCommandUseErrorActionPreference
+            $PSNativeCommandUseErrorActionPreference = $false
+            $json = az load test-run show `
+                --test-run-id $testRunId `
+                --load-test-resource $(historyLoadTestName) `
+                --resource-group $(historyResourceGroup) `
+                -o json
+            $exit = $LASTEXITCODE
+            $PSNativeCommandUseErrorActionPreference = $prevPref
+            if ($exit -ne 0) {
+                Write-Host "##vso[task.logissue type=warning]az load test-run show exited $exit. Keeping wall-clock window."
+                exit 0
+            }
+            $run = $json | ConvertFrom-Json
+            # ALT TestRun shape: startDateTime + endDateTime (ISO 8601 UTC). If the
+            # API ever renames these, fail-safe to wall-clock instead of crashing.
+            if ($run.startDateTime -and $run.endDateTime) {
+                Write-Host "##vso[task.setvariable variable=loadTestStartTime]$($run.startDateTime)"
+                Write-Host "##vso[task.setvariable variable=loadTestEndTime]$($run.endDateTime)"
+                Write-Host "Overrode publish window with ALT TestRun times:"
+                Write-Host "  start = $($run.startDateTime)"
+                Write-Host "  end   = $($run.endDateTime)"
+            } else {
+                Write-Host "##vso[task.logissue type=warning]ALT TestRun response had no startDateTime/endDateTime fields. Keeping wall-clock window."
+            }
+        } catch {
+            Write-Host "##vso[task.logissue type=warning]Failed to resolve ALT TestRun timestamps: $($_.Exception.Message). Keeping wall-clock window."
+        }
 
   # Pipeline artifact: per-build, expires with build retention. continueOnError so a
   # blob upload hiccup doesn't lose the rest of the run; history publish below is the
