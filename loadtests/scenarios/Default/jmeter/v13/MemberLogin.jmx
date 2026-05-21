@@ -46,12 +46,12 @@
           </elementProp>
           <elementProp name="totalOfMember" elementType="Argument">
             <stringProp name="Argument.name">totalOfMember</stringProp>
-            <stringProp name="Argument.value">30</stringProp>
+            <stringProp name="Argument.value">${__P(totalOfMember,30)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="member_password" elementType="Argument">
             <stringProp name="Argument.name">member_password</stringProp>
-            <stringProp name="Argument.value">Test1234!</stringProp>
+            <stringProp name="Argument.value">${__P(member_password,Test1234!)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>

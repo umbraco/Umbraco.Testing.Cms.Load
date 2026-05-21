@@ -243,6 +243,46 @@ steps:
           }
           Write-Host "Warm-up complete."
 
+  # Query the seeder for actual member username pattern, count, and password
+  # via /umbraco/api/seederstatus/inventory. Without this, MemberLogin.jmx
+  # would use its hardcoded totalOfMember=30 and assume the password matches
+  # the static fallback — both of which drift silently when the seeder
+  # preset (Small/Medium/Large/Massive) changes the member count, or when
+  # someone overrides Configuration:Members:DefaultPassword. The discovered
+  # values flow into generate-loadtest-config.ps1 via pipeline variables and
+  # land in the .properties file as totalOfMember / member_username /
+  # member_password. Skipped for frontend workloads (Locust doesn't read
+  # these). Failures fall back to safe defaults so the loop can still run —
+  # MemberLogin will just have a degraded hit-rate on member usernames.
+  - ${{ if eq(parameters.workload, 'backoffice') }}:
+    - task: PowerShell@2
+      displayName: 'Discover seeder member state [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $hostname = "$(hostName)"
+          $url = "https://$hostname/umbraco/api/seederstatus/inventory?includeMemberPassword=true"
+          $count = 30
+          $prefix = "TestMember_"
+          $password = "Test1234!"
+          try {
+              $inv = Invoke-RestMethod -Uri $url -TimeoutSec 30
+              if ($inv.memberUsernamePattern -match '^(.+?)\{1\.\.(\d+)\}$') {
+                  $prefix = $matches[1]
+                  $count = [int]$matches[2]
+              } else {
+                  Write-Host "##vso[task.logissue type=warning]Inventory.memberUsernamePattern '$($inv.memberUsernamePattern)' didn't match expected '<prefix>{1..N}' shape; using defaults."
+              }
+              if ($inv.memberPassword) { $password = $inv.memberPassword }
+              Write-Host "Discovered seeder state: prefix='$prefix' count=$count password=<from inventory>"
+          } catch {
+              Write-Host "##vso[task.logissue type=warning]Could not query seeder inventory ($($_.Exception.Message)); using fallback defaults prefix=$prefix count=$count. MemberLogin may have degraded hit-rate."
+          }
+          Write-Host "##vso[task.setvariable variable=seededMemberCount]$count"
+          Write-Host "##vso[task.setvariable variable=seededMemberPrefix]$prefix"
+          Write-Host "##vso[task.setvariable variable=seededMemberPassword]$password"
+
   # FRONTEND (Locust) PATH — single test plan, single ALT run, single publish.
   # Compile-time gated so backoffice runs don't carry an inert frontend block
   # through the pipeline log.
@@ -427,6 +467,9 @@ steps:
             -Workload "backoffice"
             -UmbracoVersion "${{ parameters.umbracoVersion }}"
             -JmxName "${{ jmxName }}"
+            -SeededMemberCount "$(seededMemberCount)"
+            -SeededMemberPrefix "$(seededMemberPrefix)"
+            -SeededMemberPassword "$(seededMemberPassword)"
             -OutputDir "$(System.DefaultWorkingDirectory)"
 
       # Wipe any results from a previous .jmx iteration before ALT writes new

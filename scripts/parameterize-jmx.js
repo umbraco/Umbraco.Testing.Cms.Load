@@ -8,8 +8,13 @@ const fs = require('fs');
 const path = require('path');
 
 // Only parameterize values that the harness needs to override at runtime.
-// test-data-shape parameters (totalOfMember, member_password) stay as-is —
-// they're test-design choices, not deployment knobs.
+// totalOfMember and member_password ARE overridable because the seeder's
+// member count varies by preset (Small=10, Medium=50, Large=…) and the
+// member password is configurable via Configuration:Members:DefaultPassword.
+// The harness discovers actual values via /umbraco/api/seederstatus/inventory
+// at warmup time (see "Discover seeder member state" step in
+// templates/load-test-job.yml). MemberLogin.jmx already has these as
+// properties — listed here so the parameterize script doesn't strip them.
 const OVERRIDABLE = new Set([
     'server',
     'protocol',
@@ -18,6 +23,8 @@ const OVERRIDABLE = new Set([
     'duration',
     'backoffice_username',
     'backoffice_password',
+    'totalOfMember',
+    'member_password',
 ]);
 
 const JMETER_ROOT = path.join(__dirname, '..', 'loadtests', 'scenarios', 'Default', 'jmeter');

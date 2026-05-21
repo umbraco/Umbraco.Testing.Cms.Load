@@ -45,6 +45,18 @@ param(
     # PublishContent.jmx on v13 where it doesn't exist.
     [string]$JmxName = '',
 
+    # Backoffice-only: seeder state discovered by the "Discover seeder member
+    # state" step in load-test-job.yml (queries the SUT's
+    # /umbraco/api/seederstatus/inventory?includeMemberPassword=true). These
+    # flow into the .properties file as totalOfMember / member_username /
+    # member_password so MemberLogin.jmx's Groovy preprocessor picks a real
+    # seeded member rather than a hardcoded TestMember_1..30 that may not
+    # exist when the seeder uses Small (10 members) or Custom presets.
+    # Optional with safe defaults — frontend mode never sets these.
+    [int]$SeededMemberCount = 30,
+    [string]$SeededMemberPrefix = 'TestMember_',
+    [string]$SeededMemberPassword = 'Test1234!',
+
     [string]$OutputDir = $PWD
 )
 
@@ -209,25 +221,26 @@ if ($Workload -eq 'backoffice') {
     # YAML so ALT uploads both. The .jmx files reference each property via
     # \${__P(name,default)} — see scripts/parameterize-jmx.js.
     #
-    # Credentials situation (confirmed against Umbraco.Cms.TestDataSeeder source):
+    # Two credential pairs are written because the .jmx files split cleanly:
     #
-    #   - The .jmx defaults (hnd@acceptance.test / 0123456789) are STALE — they
-    #     don't match any user the current seeder creates.
-    #   - The seeder creates MEMBERS as TestMember_1..N with password Test1234!
-    #     (Configuration:Members:DefaultPassword, configurable).
-    #   - The seeder creates BACKOFFICE USERS as TestUser_1..N but UserSeeder.cs
-    #     never sets a password, so they can't authenticate via password flows.
-    #   - The only password-bearing backoffice account is the Terraform
-    #     unattended-install admin: loadtest@example.invalid / LoadTest123!
-    #     (from Terraform/modules/umbraco/versions/main.tf,
-    #     Umbraco__CMS__Unattended__UnattendedUser{Email,Password}).
+    #   - MemberLogin.jmx uses a Groovy preprocessor to construct
+    #     `member_username = "<prefix><random 1..totalOfMember>"` and reads
+    #     `member_password` for the frontend /umbraco/api/memberlogin/login
+    #     endpoint. Values come from the SUT's seeder inventory (queried by
+    #     load-test-job.yml's "Discover seeder member state" step), so they
+    #     track whatever the seeder actually created — no drift when presets
+    #     or DefaultPassword change.
     #
-    # The .jmx files use a single 'backoffice_username' for both MemberLogin
-    # (frontend member endpoint, needs a member) AND SaveContent / Publish*
-    # (backoffice management endpoints, needs an admin) — there's no single
-    # credential pair that satisfies both. Choosing the admin path here so the
-    # Save/Publish tests can run; MemberLogin will fail until the .jmx files
-    # are split into separate member_/backoffice_ properties (see roadmap).
+    #   - SaveContent / SaveAndPublishContent / SaveDocumentType / PublishContent
+    #     authenticate against the backoffice management API. The seeder's
+    #     TestUser_* accounts have no password (UserSeeder.cs never sets one),
+    #     so the only usable account is the Terraform unattended-install admin
+    #     (loadtest@example.invalid / LoadTest123! from
+    #     Terraform/modules/umbraco/versions/main.tf).
+    #
+    # If the discovery step fell back to defaults (seeder endpoint unreachable),
+    # these values are still the safe defaults a fresh seeder uses, so the loop
+    # can still attempt to run — MemberLogin may have a degraded hit rate.
     $propsFileName = "jmeter-$safeKey.properties"
     $propsPath = Join-Path $OutputDir $propsFileName
     $propsBody = @"
@@ -236,6 +249,9 @@ protocol=https
 port=443
 numberOfThread=$UserAmount
 duration=$TestDuration
+totalOfMember=$SeededMemberCount
+member_username=${SeededMemberPrefix}1
+member_password=$SeededMemberPassword
 backoffice_username=loadtest@example.invalid
 backoffice_password=LoadTest123!
 "@
