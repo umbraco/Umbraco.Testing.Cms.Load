@@ -56,6 +56,18 @@ function Parse-JmeterCsv {
     $allElapsed = if ($BuildAggregate) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
     $totalErrors = 0
 
+    # JMeter Transaction Controllers with parent="true" emit a parent-transaction
+    # row in the CSV in addition to the HTTP-sampler row for each request. The
+    # parent's success/fail tracking can diverge from the child's (we've seen
+    # TCs report ~100% failure while every child HTTP request returns 200 OK,
+    # likely due to redirect-chain accounting on the parent). Since the TC row
+    # duplicates the underlying HTTP measurement with less reliable success
+    # flags, skip it at parse time and let the HTTP-sampler row speak for itself.
+    # Heuristic: TC labels in our .jmx files follow a "NN. Description" pattern
+    # (e.g. "01. Open Home page"). Locust samplers use plain names ("Homepage",
+    # "Detail") that won't match. Adjust if naming conventions change.
+    $tcLabelPattern = '^\d+\.\s+'
+
     $reader = [System.IO.StreamReader]::new($Path)
     try {
         $reader.ReadLine() | Out-Null  # discard header
@@ -65,6 +77,7 @@ function Parse-JmeterCsv {
             $elapsed = 0
             if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
             $label   = $cols[2]
+            if ($label -match $tcLabelPattern) { continue }
             $success = $cols[7] -ieq 'true'
 
             $bucket = $byLabel[$label]
