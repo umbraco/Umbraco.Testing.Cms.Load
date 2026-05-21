@@ -13,13 +13,13 @@ Thresholds (fail-the-pipeline gates) are intentionally **deferred** until baseli
 
 ## Overview
 
-This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs Locust load tests via Azure Load Testing service.
+This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario × workload)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs load tests via Azure Load Testing service. Two workload modes ship: **frontend** (Locust — anonymous reads + contact-form submissions against rendered pages and the Delivery API) and **backoffice** (JMeter — authenticated backoffice writes: SaveContent, PublishContent, SaveDocumentType, MemberLogin). See "Workload modes" below.
 
 **Supported Umbraco versions: v13–v18 (subject to seeder availability).** Each major maps to a specific .NET runtime (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map) below). Today only **v17** has a published `Umbraco.Cms.TestDataSeeder` build (`17.0.0-beta.2`); v13–v16 and v18 queues fail at validation with a clear message until the seeder ships for those majors. Update the maps in `scripts/resolve-run-config.ps1` (validator-side) and `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` (install-side) in lockstep when a new seeder version ships.
 
 The `DeliveryApi` scenario is **v17+ only** — its `Program.cs` overlay uses v17's builder shape. The validator rejects the `DeliveryApi` + < v17 combination before provisioning. Use the `Default` scenario for older majors.
 
-Locust tests execute on Azure Load Testing's managed infrastructure (dedicated Standard_D4d_v4 VMs), not on the pipeline agent. This ensures consistent, reliable performance measurements.
+Locust (frontend) and JMeter (backoffice) tests both execute on Azure Load Testing's managed infrastructure (dedicated Standard_D4d_v4 VMs), not on the pipeline agent. This ensures consistent, reliable performance measurements.
 
 A pipeline run is parameterised by a list of **test cases**. Each case picks:
 
@@ -80,12 +80,16 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │   ├── prepare-test-cases.ps1          # Validator: validates testCases, flattens scenario appsettings,
 │   │                                   #            resolves load profile, emits testCasesJson + resolvedTestCases
 │   ├── ensure-history-infra.ps1        # Idempotently provisions long-lived RG, Azure Load Testing, storage
+│   ├── ensure-monitoring-infra.ps1     # Idempotently provisions Log Analytics + custom tables + DCR/DCE
+│   ├── deploy-workbook.ps1             # Idempotently deploys/updates the Azure Workbook from JSON
+│   ├── backfill-monitoring.ps1         # Replay older blob-storage summary.ndjson into Log Analytics
 │   ├── generate-loadtest-config.ps1    # Per-case ALT YAML config (testId, appComponents, failureCriteria)
 │   ├── stop-all-app-services.ps1       # Pre-test and end-of-run sweep: stop App Services in the case set
 │   ├── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
 │   ├── compare-runs.ps1                # Markdown delta report between two runs (CSV or history)
 │   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
+│   ├── parameterize-jmx.js             # One-time rewriter: convert hardcoded JMeter Arguments to ${__P()} refs
 │   ├── _helpers.ps1                    # Shared helpers dot-sourced by other scripts (Get-Pct, Get-StorageAccountKey, …)
 │   └── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
 │
@@ -97,7 +101,10 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │       ├── Default/
 │       │   ├── AdditionalSetup/
 │       │   │   └── appsettings.json     # {} — identity overlay
-│       │   ├── locustfile.py
+│       │   ├── jmeter/                  # backoffice workload (JMeter) — see "Workload modes" below
+│       │   │   ├── v13/                 # one .jmx file per backoffice test (ViewHomePage, SaveContent, …)
+│       │   │   └── v17/                 # v18 reuses v17/ via fallback
+│       │   ├── locustfile.py            # frontend workload (Locust)
 │       │   └── scenario.yaml
 │       └── DeliveryApi/
 │           ├── AdditionalSetup/
@@ -138,6 +145,7 @@ The queue UI splits into three concerns: **what to test**, **which tiers to test
 |-----------|-------------|---------|---------|
 | `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator accepts v13, v17, v18 today (the majors with a published `Umbraco.Cms.TestDataSeeder` build — v18 reuses the v17 seeder as a fallback); v14/v15/v16 fail validation with a "seeder hasn't shipped" message. The major segment maps to the .NET runtime automatically (see table below). | 17.0.0 | free text |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
+| `workload` | Which workload to run. `frontend` runs the scenario's `locustfile.py` (anonymous reads + contact form). `backoffice` runs every `.jmx` under `scenarios/{scenario}/jmeter/v{major}/` sequentially (authenticated backoffice writes). See "Workload modes" below. The validator rejects backoffice when the chosen scenario has no `jmeter/v{major}/` folder. | frontend | `frontend`, `backoffice` |
 
 **Which tiers:**
 
@@ -407,11 +415,128 @@ The non-homepage tasks are **inventory-driven**: at test start, locust calls `/u
 
 `loadtests/_helpers.py` seeds Python's `random` at module import (fixed seed `42` by default), so `random.choice()` over the seeded URL inventory follows the same sequence across runs. Cell-to-cell variance from "this run happened to hit Detail-7 a lot, that run hit Detail-23" drops out — leaving infrastructure jitter as the dominant signal in run-to-run deltas (which is the comparison you actually want for regression checks). Set the `LOCUST_RANDOM_SEED` env var to a different integer if you specifically want randomised content selection (e.g. to validate that the harness ISN'T sensitive to URL choice). Caveat: each Locust engine/worker process re-seeds at import, so full request-by-request reproducibility isn't promised; the aggregate URL distribution per run is what stays stable.
 
+### Workload modes: frontend (Locust) vs backoffice (JMeter)
+
+The `workload` queue-time parameter selects which load harness runs against the provisioned App Service. The two modes are intentionally separate — they exercise different code paths (rendering pipeline vs management API), have different auth models (anonymous vs OAuth/PKCE), and produce different perf signatures that aren't meaningfully comparable head-to-head.
+
+**Frontend (`workload: frontend`, default).** Single Locust test plan (`loadtests/scenarios/{scenario}/locustfile.py`) runs against the App Service. Mix is weighted `@task` methods (Homepage / Section / Category / Page / Detail / Media / submit_contact_form). One ALT testId per scenario (`umbraco-lt-{scenario}`); one TestRun per (version × tier) pipeline run.
+
+**Backoffice (`workload: backoffice`).** For each `.jmx` under `loadtests/scenarios/{scenario}/jmeter/v{major}/`, the pipeline runs a separate ALT test sequentially on the same warm App Service. v18 deployments fall back to `jmeter/v17/` (matching the seeder's v17→v18 reuse). Default shipped backoffice tests:
+
+| .jmx | Hits | Auth |
+|---|---|---|
+| `ViewHomePage` | `GET /` | none (sanity / baseline) |
+| `MemberLogin` | `POST /umbraco/api/memberlogin/login` (frontend member endpoint) | form + anti-forgery (currently unhandled — known limitation, see below) |
+| `SaveContent` | `/umbraco/management/api/v1/.../authorize` then `POST /content/PostSave` | OAuth + PKCE (admin) |
+| `SaveAndPublishContent` | same as SaveContent + publish step | same |
+| `SaveDocumentType` | schema mutation API | same |
+| `PublishContent` (v17+ only) | publish flow | same |
+
+Each `.jmx` gets its own ALT testId (`umbraco-lt-{scenario}-bo-{jmxStem}`), its own metric-capture window, its own blob path (`{scenario}/{major}/{version}/{tier}/{date}_{buildId}/{JmxName}/`), and its own row in `LoadTestSummary_CL` tagged with `jmeter_test_name`. Iterations are sequential within one tier-job and skip cleanly when a `.jmx` isn't present for the resolved major (e.g. `PublishContent` on v13).
+
+**State across the loop is intentionally shared.** Iterations run against the same warm App Service without re-seeding between them. SaveContent.jmx creates content; SaveDocumentType.jmx modifies schema; PublishContent.jmx runs against the cumulative state. This mirrors mixed-workload backoffice use, but means later iterations don't measure clean isolated performance. To compare a single `.jmx` cleanly across runs, treat each `jmeter_test_name` row as its own series.
+
+**Seeder member discovery.** Before the backoffice loop, the pipeline queries `GET /umbraco/api/seederstatus/inventory?includeMemberPassword=true` and extracts the actual seeded member count + password. These are written to the per-iteration `.properties` file as `totalOfMember` and `member_password` so MemberLogin.jmx's Groovy preprocessor picks an existing seeded member rather than guessing. Discovery falls back to defaults (`TestMember_`, count=30, `Test1234!`) if the endpoint is unreachable, so the loop still runs — just with degraded MemberLogin hit-rate. The discovered prefix is emitted as a pipeline variable (`seededMemberPrefix`) for log visibility but isn't consumed by the .properties file (the .jmx Groovy hardcodes the prefix; documented limitation below).
+
+**Run cost / timing.** Each `.jmx` iteration ≈ test duration + ~3 minutes ALT overhead (engine provisioning + result download). At `standard` profile (5-min tests) × 6 .jmx files, the backoffice loop is ~50 minutes per tier; 4 tiers in parallel still completes in ~50 minutes wall-clock. At `smoke` (1-min tests), ~25 min per tier.
+
+#### Known backoffice limitations
+
+These are documented for the next person — fixes are in scope for follow-up work, not in any of the current commits.
+
+- **MemberLogin always fails 100%.** `MemberLoginController.Login` has `[ValidateAntiForgeryToken]` but the `.jmx` doesn't extract or send `__RequestVerificationToken`. Every POST returns 400 before reaching the controller. Fix requires either (a) adding a `RegexExtractor` to the `.jmx` after the GET, or (b) switching the `.jmx` to the JSON endpoint `/umbraco/api/memberauth/login` (which is anti-forgery-exempt — see the [TestDataSeeder README](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/) for the table of endpoints).
+- **`TestUser_*` accounts have no password.** `UserSeeder.cs` creates them but never calls `SetPasswordAsync`. The only backoffice account that can authenticate is the Terraform unattended-install admin (`loadtest@example.invalid` / `LoadTest123!`), so all auth-requiring `.jmx` files use that single credential. The `.jmx` files happen to use a property named `backoffice_username` for this — misleading but accurate to what works.
+- **Member prefix is hardcoded in the Groovy preprocessor.** `MemberLogin.jmx` builds `member_username = "TestMember_<random index>"` with `"TestMember_"` as a string literal. The seeder default IS `TestMember_`, so this works in practice — but if someone customizes `Configuration:Prefixes:Member`, MemberLogin would target a non-existent user pattern. Fix is straightforward: add `memberPrefix` to the .jmx User Defined Variables as `${__P(memberPrefix,TestMember_)}` and update the Groovy to read it.
+
+#### Adding a new backoffice `.jmx` test
+
+1. Drop the `.jmx` under `loadtests/scenarios/{Scenario}/jmeter/v{major}/` (one copy per Umbraco major you want to test against).
+2. Add the file's stem (no extension) to the `jmxNames` default list at the top of `templates/load-test-job.yml`. The order matters — iterations run in this order, and later iterations see state mutations from earlier ones.
+3. Run `node scripts/parameterize-jmx.js` to rewrite hardcoded `<server>`/`<port>`/`<numberOfThread>`/auth-cred values to `${__P()}` property references. Idempotent — re-runs skip already-parameterized values. If your `.jmx` introduces a new parameter that the harness should override at runtime, add it to the `OVERRIDABLE` set in that script.
+4. Decide which credentials it needs:
+   - **No auth** (e.g. a `GET /something-public`): no `.properties` entry needed.
+   - **Member login**: use `member_username` (built by Groovy from `totalOfMember`) and `member_password` (sourced from seeder discovery).
+   - **Backoffice admin**: use `backoffice_username` and `backoffice_password` (Terraform unattended-install admin).
+5. Queue with `workload: backoffice`. The new `.jmx` runs as an additional iteration.
+
 ### Cold-cache vs warm-cache testing
 
 By default, the pipeline **warms up** the App Service (5-minute poll for `200` on `/`) before starting the load test, so measurements reflect steady-state cache-warm behaviour — the most stable comparison surface across tiers and versions.
 
 Set `skipWarmup: true` to skip the warmup. The load test then hits a freshly-started App Service with cold caches, measuring the full delivery pipeline including initial cache population — useful for understanding cache warm-up latency, restart behaviour, and the front-edge of a request burst against a cold app.
+
+## Debugging failed runs
+
+The pipeline has six stages and most failures isolate cleanly to one of them. Start by looking at which stage failed in the AzDO run summary, then follow the playbook for that stage. Common symptoms by stage:
+
+### `validateTestCases` failed
+
+Queue-time validator (`scripts/prepare-test-cases.ps1` + `scripts/resolve-run-config.ps1`) rejects the configuration before any Azure resource is provisioned. Common causes and exact log messages:
+
+- **Unsupported Umbraco major**: "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major N yet…" — extend the maps in `resolve-run-config.ps1` AND `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` in lockstep.
+- **Unknown scenario**: "Scenario 'X' has no folder under loadtests/scenarios/" — folder names are case-strict.
+- **Backoffice + scenario without .jmx**: "Workload=backoffice selected but scenario 'X' has no jmeter/vN/ folder" — drop a `.jmx` under `loadtests/scenarios/{X}/jmeter/v{N}/` or pick a different workload.
+- **All tier checkboxes off**: "At least one tier must be selected" — tick at least one of `runStarter` / `runStandard` / `runPro` / `runEnterprise`.
+
+### `provision` failed
+
+Terraform fan-out broke. Look at the `Apply (testCase X)` job's logs.
+
+- **`A resource with the ID … already exists`**: a previous run's ephemeral RG wasn't cleaned up. Either delete it manually in the portal or pick a different `resourcePrefix`.
+- **App Service name too long**: provisioning fails ~10 minutes in with an Azure error about the 60-char cap. Shorten the prefix (≤16 chars), the scenario name (≤15), or the Umbraco prerelease tag. See [Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap) in Pitfalls.
+- **`dotnet build` failed**: the scenario's code overlay (Program.cs, Composers, etc.) has a compile error. Check the install-script log under `local-exec`.
+- **Seeder timeout**: install script polls `/umbraco/api/seederstatus/status` and gives up after the per-preset cap (10/30/60/120 min for Small/Medium/Large/Massive). Pick a smaller preset or raise the cap in the install script.
+- **`az webapp stop` returned 503**: transient — the install script retries 3× with 5/10/20s backoff and fails the apply only after all retries exhaust. Re-queue.
+
+### `loadTest` failed (or completed with errors)
+
+The ALT run finished but data quality is questionable.
+
+- **`displayName must be a string of length between 2 to 50`**: scenario + .jmx name combined overflows 50 chars. `generate-loadtest-config.ps1` enforces this with a defensive check that errors out earlier — if it still slips through, shorten the scenario name.
+- **`Test window unusable (Ns)` warning in publish**: ALT fast-failed (engine provisioning, auth, validation) so the wall-clock window is < 30s and metric query is skipped. Look for the AzureLoadTest@1 step's error a few lines up.
+- **`Could not query seeder inventory … using fallback defaults`**: the "Discover seeder member state" step couldn't reach the App Service. MemberLogin.jmx will run with `totalOfMember=30` and `password=Test1234!` regardless of what the seeder actually created — degraded hit-rate. Usually means the App Service isn't fully started; investigate the Start App Service step.
+- **`Posting N row(s) to Log Analytics` followed by silence in the Workbook**: new custom tables take 5–10 minutes to surface after first ingest. Wait, then re-query. If still empty after 30 min, check Service Principal has Monitoring Metrics Publisher on the DCR.
+
+### `regression` failed
+
+`scripts/check-regression.ps1` flagged a regression OR reported a baseline-evolution event.
+
+- **"Cell `<sampler>` insufficient baseline (N < 3 runs)"**: not a failure — exits 0. Means this cell needs more runs before the gate has teeth. See "Establishing a baseline".
+- **"Cell `<sampler>` regressed: p95 ratio 1.12 > 1.10"**: candidate p95 exceeded 110% of baseline-median. Check whether it's a real perf regression, infrastructure variance, or a baseline-decay event (after Umbraco major bump or SKU change, the old baseline doesn't apply).
+
+### `cleanup` was rejected / timed out
+
+By design — `validationTimeoutMinutes` is the window operators have to inspect the ephemeral environment. After it elapses (or you reject explicitly), Terraform destroys the RG.
+
+If you need the environment longer: re-queue with a higher `validationTimeoutMinutes` (max 240). To make a deployment permanent: queue with `validationTimeoutMinutes=240`, then before it expires, copy whatever you need to a different RG. There's no "promote to permanent" path — by design, every load-test environment is intended to be ephemeral.
+
+### Where to find raw data when the dashboard says nothing
+
+Even when the Workbook is empty, the pipeline writes results to **four** places. In rough order of timeliness / detail:
+
+1. **Pipeline build artifacts** (immediate, per-build) — under "Artifacts" on the AzDO run. Each tier × .jmx gets a `loadtest-results-{safeTestCaseId}` artifact with the raw `results.zip` from ALT.
+2. **Azure Load Testing portal** (immediate, per-run) — `https://portal.azure.com → umbraco-loadtest-runs`. Run name format `{version} {tier} {jmxName} #{buildId}` for backoffice runs, `{version} {tier} {poolDtuMax}DTU #{buildId}` for frontend.
+3. **History storage account** (immediate, long-lived) — `{scenario}/{major}/{version}/{tier}/{date}_{buildId}/[{jmxName}/]summary.ndjson` plus raw `engine*_results.csv` under `raw/`.
+4. **Log Analytics workspace** (5–10 min lag on first ingest, ~1 min thereafter) — `LoadTestSummary_CL` for per-sampler aggregates, `LoadTestSeries_CL` for per-minute metric series.
+
+If LA is empty but blob storage has data, run `scripts/backfill-monitoring.ps1` to replay the blobs into LA (dedupes against existing rows by run_id).
+
+### Re-extracting a result locally
+
+To inspect a single run's raw CSV without re-running:
+
+```powershell
+# Download the build artifact from AzDO
+# Or pull from history storage:
+az storage blob download `
+    --account-name $env:HISTORY_STORAGE_ACCOUNT --account-key $key `
+    --container-name results `
+    --name "Default/17/17.0.0/Starter/2026-05-21_264394/ViewHomePage/raw/results.zip" `
+    --file results.zip
+
+Expand-Archive results.zip -DestinationPath extracted/
+# extracted/engine1_results.csv is JMeter format: timeStamp,elapsed,label,...
+```
 
 ## Results
 
@@ -420,7 +545,7 @@ The pipeline writes results to four places:
 - **Azure Load Testing portal**: dashboard with client-side metrics (response time, throughput, errors) and server-side metrics (CPU, memory, network, disk). The Azure Load Testing resource lives in a **long-lived, shared resource group** (see "Infrastructure" below) so run history accumulates across pipeline runs. There's **one load test per scenario** (testId `umbraco-lt-{scenario}`), with every (version, tier) run nested under it — so the portal's "Compare runs" view lets you pick multiple runs and overlay their metrics natively. Each run is named `{umbracoVersion} {tier} {poolDtuMax}DTU #{buildId}` — the per-DB DTU cap is in the name so override runs (e.g. `Standard 100DTU`) are distinguishable from default-pairing runs (`Standard 50DTU`) in the portal's Compare view.
 - **Pipeline artifacts**: per-case ZIP under `loadtest-results-{sanitised-testCaseId}` on the build, useful for forensic deep-dives. Expires with the pipeline's build retention policy.
 - **History storage account** (long-lived): per-case NDJSON summary at `{scenario}/{major}/{umbracoVersion}/{tier}/{yyyy-MM-dd}_{buildId}/summary.ndjson` plus the raw artifact dump under `raw/`. Scenario is top-level because it defines what's *comparable* — different scenarios hit different endpoints / seed different data, so their numbers can't be compared directly. Within a scenario, prefix-listing maps to the natural pivots: `Default/17/` trends a major, `Default/17/17.0.0/` is all tiers in one build, `Default/17/*/Starter/` sweeps versions on one tier. Each row carries the full run metadata (commit, version, tier, scenario, SKUs, seeder preset, user count), so cross-run queries don't need joins.
-- **Log Analytics workspace** (long-lived): the same NDJSON rows mirrored into the `LoadTestSummary_CL` custom table for KQL querying. The Workbook (see "Dashboard" below) reads from here. Blob storage remains source of truth — Log Analytics is a queryable mirror.
+- **Log Analytics workspace** (long-lived): the same NDJSON rows mirrored into the `LoadTestSummary_CL` custom table for KQL querying, plus per-minute Azure Monitor datapoints (plan CPU/memory, SQL DTU/log-write, HTTP 4xx/5xx) in the companion `LoadTestSeries_CL` table feeding the Workbook's per-run drill-down panel. Backoffice runs tag every row with `jmeter_test_name` so per-`.jmx` slices stay queryable. The Workbook (see "Dashboard" below) reads from both tables. Blob storage remains source of truth — Log Analytics is a queryable mirror.
 
 NDJSON is ingestible directly by Azure Data Explorer, pandas, Postgres `COPY`, etc. — pick whatever query layer fits, the data shape stays the same.
 
