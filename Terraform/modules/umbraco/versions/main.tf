@@ -87,6 +87,14 @@ resource "azurerm_windows_web_app" "app_service" {
       "Umbraco.Cms.TestDataSeeder__Options__Enabled"      = "true"
       "Umbraco.Cms.TestDataSeeder__Options__Preset"       = var.seeder_preset
       "Umbraco.Cms.TestDataSeeder__Options__DomainSuffix" = local.app_service_hostname_predict
+      # Pin Faker's PRNG to a fixed seed so every pipeline run generates
+      # byte-identical seeded data (same page titles, word counts, content
+      # tree shape). Without this, Faker defaults to current-time seeding,
+      # baking a layer of cross-run variance into measurements that's
+      # indistinguishable from real perf regressions. With the seed pinned,
+      # any cross-run delta is attributable to code/infra changes only.
+      # The exact value doesn't matter — any constant works.
+      "Umbraco.Cms.TestDataSeeder__Options__FakerSeed"    = "42"
     },
     var.app_settings_overlay
   )
