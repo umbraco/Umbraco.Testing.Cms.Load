@@ -269,8 +269,20 @@ steps:
           try {
               $inv = Invoke-RestMethod -Uri $url -TimeoutSec 30
               if ($inv.memberUsernamePattern -match '^(.+?)\{1\.\.(\d+)\}$') {
-                  $prefix = $matches[1]
-                  $count = [int]$matches[2]
+                  $discoveredPrefix = $matches[1]
+                  $discoveredCount = [int]$matches[2]
+                  # Guard against count<=0 (seeder configured with
+                  # Members.Count=0 or Members disabled entirely): MemberLogin's
+                  # Groovy preprocessor calls Random().nextInt(total) which
+                  # throws IllegalArgumentException on 0/negative. Keep the
+                  # fallback count so the test attempts members (will fail at
+                  # auth time with a clear error rather than crash mid-iteration).
+                  if ($discoveredCount -gt 0) {
+                      $prefix = $discoveredPrefix
+                      $count = $discoveredCount
+                  } else {
+                      Write-Host "##vso[task.logissue type=warning]Seeder reports memberUsernamePattern='$($inv.memberUsernamePattern)' (count=$discoveredCount); seeder isn't creating members. Keeping fallback count=$count so MemberLogin doesn't crash on Random.nextInt(0)."
+                  }
               } else {
                   Write-Host "##vso[task.logissue type=warning]Inventory.memberUsernamePattern '$($inv.memberUsernamePattern)' didn't match expected '<prefix>{1..N}' shape; using defaults."
               }

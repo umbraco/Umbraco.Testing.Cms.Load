@@ -224,12 +224,14 @@ if ($Workload -eq 'backoffice') {
     # Two credential pairs are written because the .jmx files split cleanly:
     #
     #   - MemberLogin.jmx uses a Groovy preprocessor to construct
-    #     `member_username = "<prefix><random 1..totalOfMember>"` and reads
-    #     `member_password` for the frontend /umbraco/api/memberlogin/login
-    #     endpoint. Values come from the SUT's seeder inventory (queried by
-    #     load-test-job.yml's "Discover seeder member state" step), so they
-    #     track whatever the seeder actually created — no drift when presets
-    #     or DefaultPassword change.
+    #     `member_username = "TestMember_<random 1..totalOfMember>"` per
+    #     iteration. We provide totalOfMember + member_password from the
+    #     seeder inventory (queried by load-test-job.yml's "Discover seeder
+    #     member state" step), so they track whatever the seeder actually
+    #     created. The Groovy still hardcodes "TestMember_" — if the seeder
+    #     prefix is ever customized away from the default, the Groovy needs
+    #     to read a memberPrefix variable too. (Not done yet — the seeder
+    #     default IS "TestMember_" and we don't customize it.)
     #
     #   - SaveContent / SaveAndPublishContent / SaveDocumentType / PublishContent
     #     authenticate against the backoffice management API. The seeder's
@@ -250,7 +252,6 @@ port=443
 numberOfThread=$UserAmount
 duration=$TestDuration
 totalOfMember=$SeededMemberCount
-member_username=${SeededMemberPrefix}1
 member_password=$SeededMemberPassword
 backoffice_username=loadtest@example.invalid
 backoffice_password=LoadTest123!
