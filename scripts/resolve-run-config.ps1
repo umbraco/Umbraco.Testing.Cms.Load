@@ -23,6 +23,7 @@ param (
     [Parameter(Mandatory = $true)] [string]$PoolDtuOverride,
     [Parameter(Mandatory = $true)] [string]$AppSkuOverride,
     [Parameter(Mandatory = $true)] [ValidateSet('Auto', 'Small', 'Medium', 'Large', 'Massive')] [string]$SeederPresetOverride,
+    [Parameter(Mandatory = $true)] [ValidateSet('frontend', 'backoffice')] [string]$Workload,
     [Parameter(Mandatory = $true)] [string]$WorkspaceRoot
 )
 
@@ -109,6 +110,7 @@ Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$
 Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
 Write-Host "##vso[task.setvariable variable=resolvedPoolDtuOverride;isOutput=true]$poolDtuOverrideValue"
 Write-Host "##vso[task.setvariable variable=resolvedAppSkuOverride;isOutput=true]$appSkuOverrideValue"
+Write-Host "##vso[task.setvariable variable=resolvedWorkload;isOutput=true]$Workload"
 
 # prepare-test-cases.ps1 expands one entry × N tiers into N test cases and
 # emits the final testCasesJson + resolvedTestCases output variables.

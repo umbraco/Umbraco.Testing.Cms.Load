@@ -129,6 +129,19 @@ parameters:
       - 'Large'
       - 'Massive'
 
+  # Workload selects what kind of traffic the load test generates against the
+  # provisioned Umbraco. 'frontend' runs the scenario's locustfile.py (the
+  # default path, unchanged from prior versions). 'backoffice' runs the JMeter
+  # tests under loadtests/scenarios/<scenario>/jmeter/v<major>/. v17 JMeter
+  # files are used for v18 deployments (matches the seeder fallback).
+  - name: workload
+    displayName: Workload (frontend = Locust, backoffice = JMeter)
+    type: string
+    default: 'frontend'
+    values:
+      - 'frontend'
+      - 'backoffice'
+
 variables:
   # Variable group `umbraco-loadtest-history` provides all history* variables:
   # historyResourceGroup, historyLocation, historyLoadTestName,
@@ -175,6 +188,7 @@ stages:
                 -PoolDtuOverride '${{ parameters.poolDtuOverride }}'
                 -AppSkuOverride '${{ parameters.appSkuOverride }}'
                 -SeederPresetOverride '${{ parameters.seederPresetOverride }}'
+                -Workload '${{ parameters.workload }}'
                 -WorkspaceRoot '$(System.DefaultWorkingDirectory)'
 
   - stage: ensureHistoryInfra
@@ -430,6 +444,7 @@ stages:
       resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
+      resolvedWorkload:        $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedWorkload'] ]
       monitoringDceUri:           $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
       monitoringDcrImmutableId:   $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
       monitoringStreamName:       $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]

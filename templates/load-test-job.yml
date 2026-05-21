@@ -248,6 +248,8 @@ steps:
         -AppServicePlanId "$(appServicePlanId)"
         -SqlDatabaseId "$(sqlDatabaseId)"
         -SqlDatabaseName "$(sqlDatabaseName)"
+        -Workload "$(resolvedWorkload)"
+        -UmbracoVersion "${{ parameters.umbracoVersion }}"
         -OutputDir "$(System.DefaultWorkingDirectory)"
 
   # Capture the load-test window in UTC ISO 8601 so the publish step can query

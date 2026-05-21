@@ -29,6 +29,13 @@ param(
     [Parameter(Mandatory = $true)] [string]$SqlDatabaseId,
     [Parameter(Mandatory = $true)] [string]$SqlDatabaseName,
 
+    # Workload selector: 'frontend' (Locust) or 'backoffice' (JMeter). For
+    # backoffice mode, UmbracoVersion is required to pick the right .jmx
+    # subfolder (v17 .jmx files are also used for v18 — matches the seeder
+    # fallback in install-umbraco-cms-on-appservice.ps1).
+    [ValidateSet('frontend', 'backoffice')] [string]$Workload = 'frontend',
+    [string]$UmbracoVersion = '',
+
     [string]$OutputDir = $PWD
 )
 
@@ -79,25 +86,20 @@ $sqlComponent = @"
         aggregation: Total
 "@
 
-# testId must match ^[a-z0-9_-]{2,50}$. One testId per scenario so the portal's
-# 'Compare runs' view groups all (version × tier) runs of the same scenario.
+# testId must match ^[a-z0-9_-]{2,50}$. The workload suffix keeps frontend and
+# backoffice runs in separate testIds so ALT's 'Compare runs' view doesn't
+# overlay fundamentally different traffic shapes.
 $scenarioSafe = (($Scenario.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
-$testId = "umbraco-lt-$scenarioSafe"
+$workloadSuffix = if ($Workload -eq 'backoffice') { '-backoffice' } else { '' }
+$testId = "umbraco-lt-$scenarioSafe$workloadSuffix"
 
 # safeTestCaseId identifies this specific case for the artifact name + config filename.
 $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
 if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 
-$config = @"
-version: v0.1
-testId: $testId
-displayName: Umbraco load test - $Scenario
-testPlan: loadtests/scenarios/$Scenario/locustfile.py
-testType: Locust
-description: Holds all version/tier runs for the '$Scenario' scenario; pick runs in 'Compare' to overlay.
-engineInstances: $EngineInstances
-configurationFiles:
-  - loadtests/_helpers.py
+# Shared ALT failure criteria + autoStop + appComponents — applied regardless
+# of runner so cross-workload runs stay comparable on those axes.
+$sharedTail = @"
 failureCriteria:
   - avg(response_time_ms) > 2000
   - p95(response_time_ms) > 5000
@@ -105,15 +107,6 @@ failureCriteria:
 autoStop:
   errorPercentage: 80
   timeWindow: 60
-env:
-  - name: LOCUST_HOST
-    value: "https://$HostName"
-  - name: LOCUST_USERS
-    value: "$UserAmount"
-  - name: LOCUST_SPAWN_RATE
-    value: "$SpawnRate"
-  - name: LOCUST_RUN_TIME
-    value: "$TestDuration"
 appComponents:
   - resourceId: "$appServiceResourceId"
     resourceName: "$AppServiceName"
@@ -134,6 +127,80 @@ appComponents:
 $planComponent
 $sqlComponent
 "@
+
+if ($Workload -eq 'backoffice') {
+    # JMeter mode. v17 .jmx files are used for v18 deployments — matches the
+    # seeder fallback in install-umbraco-cms-on-appservice.ps1.
+    if (-not $UmbracoVersion) {
+        Write-Error "Workload=backoffice requires -UmbracoVersion to pick the .jmx subfolder."
+        exit 1
+    }
+    $umbracoMajor = [int](($UmbracoVersion -split '\.')[0])
+    $jmeterMajor  = if ($umbracoMajor -eq 18) { 17 } else { $umbracoMajor }
+    $jmeterDir    = "loadtests/scenarios/$Scenario/jmeter/v$jmeterMajor"
+
+    # PoC: run ONE .jmx (ViewHomePage — frontend GET, no auth needed).
+    # Multi-.jmx looping comes after this validates end-to-end.
+    $testPlanRel = "$jmeterDir/ViewHomePage.jmx"
+    $testPlanAbs = Join-Path $PWD $testPlanRel
+    if (-not (Test-Path -LiteralPath $testPlanAbs)) {
+        Write-Error "JMeter test plan not found: $testPlanAbs (resolved jmeter major: v$jmeterMajor)"
+        exit 1
+    }
+
+    # ALT passes per-run values via a user-properties file. Sibling to the
+    # YAML so ALT uploads both. The .jmx files reference each property via
+    # \${__P(name,default)} — see scripts/parameterize-jmx.js.
+    $propsFileName = "jmeter-$safeKey.properties"
+    $propsPath = Join-Path $OutputDir $propsFileName
+    $propsBody = @"
+server=$HostName
+protocol=https
+port=443
+numberOfThread=$UserAmount
+duration=$TestDuration
+backoffice_username=admin@umbraco
+backoffice_password=1234567890
+"@
+    $propsBody | Out-File -FilePath $propsPath -Encoding utf8
+
+    $config = @"
+version: v0.1
+testId: $testId
+displayName: Umbraco load test - $Scenario (backoffice)
+testPlan: $testPlanRel
+testType: JMX
+description: Backoffice (JMeter) runs for the '$Scenario' scenario.
+engineInstances: $EngineInstances
+configurationFiles: []
+properties:
+  userPropertyFile: $propsFileName
+$sharedTail
+"@
+} else {
+    # Frontend (Locust) mode — unchanged from prior behaviour.
+    $config = @"
+version: v0.1
+testId: $testId
+displayName: Umbraco load test - $Scenario
+testPlan: loadtests/scenarios/$Scenario/locustfile.py
+testType: Locust
+description: Holds all version/tier runs for the '$Scenario' scenario; pick runs in 'Compare' to overlay.
+engineInstances: $EngineInstances
+configurationFiles:
+  - loadtests/_helpers.py
+env:
+  - name: LOCUST_HOST
+    value: "https://$HostName"
+  - name: LOCUST_USERS
+    value: "$UserAmount"
+  - name: LOCUST_SPAWN_RATE
+    value: "$SpawnRate"
+  - name: LOCUST_RUN_TIME
+    value: "$TestDuration"
+$sharedTail
+"@
+}
 
 $configPath = Join-Path $OutputDir "loadtest-config-$safeKey.yaml"
 $config | Out-File -FilePath $configPath -Encoding utf8
