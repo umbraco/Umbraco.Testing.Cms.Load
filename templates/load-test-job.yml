@@ -314,16 +314,26 @@ steps:
     displayName: 'Resolve ALT TestRun timestamps [${{ parameters.testCaseId }}]'
     condition: succeededOrFailed()
     continueOnError: true
+    # AzureLoadTest@1 sets the test-run ID as a plain pipeline variable (not an
+    # 'isOutput=true' output variable), so we reference it without the step-name
+    # prefix: $(ALTTestRunId) rather than $(runLoadTest.ALTTestRunId).
     inputs:
       azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |
-        $testRunId = '$(runLoadTest.ALTTestRunId)'
-        if ([string]::IsNullOrWhiteSpace($testRunId)) {
-            Write-Host "ALTTestRunId not set (load test likely didn't start). Keeping wall-clock window."
+        $testRunId = '$(ALTTestRunId)'
+        Write-Host "Resolved ALT TestRun ID: '$testRunId'"
+
+        # Validate GUID shape before calling az. If the load test never ran
+        # (skipped, failed pre-execution), the variable is empty or literal;
+        # don't pass garbage to az.
+        $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+        if ([string]::IsNullOrWhiteSpace($testRunId) -or $testRunId -notmatch $guidPattern) {
+            Write-Host "ALTTestRunId not a valid GUID (load test likely didn't start). Keeping wall-clock window."
             exit 0
         }
+
         try {
             $prevPref = $PSNativeCommandUseErrorActionPreference
             $PSNativeCommandUseErrorActionPreference = $false
