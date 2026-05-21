@@ -20,6 +20,22 @@ parameters:
       - 'Default'
       - 'DeliveryApi'
 
+  # Workload selects what kind of traffic the load test generates against the
+  # provisioned Umbraco. 'frontend' runs the scenario's locustfile.py (the
+  # default path, unchanged from prior versions). 'backoffice' runs the JMeter
+  # tests under loadtests/scenarios/<scenario>/jmeter/v<major>/. v17 JMeter
+  # files are used for v18 deployments (matches the seeder fallback).
+  # resolve-run-config validates that the chosen (scenario, workload) pair has
+  # the required files — e.g. workload=backoffice on a scenario without a
+  # jmeter/ folder fails fast at queue-time, not 15 minutes into provisioning.
+  - name: workload
+    displayName: Workload (frontend = Locust, backoffice = JMeter)
+    type: string
+    default: 'frontend'
+    values:
+      - 'frontend'
+      - 'backoffice'
+
   - name: runStarter
     displayName: Run Starter tier
     type: boolean
@@ -128,19 +144,6 @@ parameters:
       - 'Medium'
       - 'Large'
       - 'Massive'
-
-  # Workload selects what kind of traffic the load test generates against the
-  # provisioned Umbraco. 'frontend' runs the scenario's locustfile.py (the
-  # default path, unchanged from prior versions). 'backoffice' runs the JMeter
-  # tests under loadtests/scenarios/<scenario>/jmeter/v<major>/. v17 JMeter
-  # files are used for v18 deployments (matches the seeder fallback).
-  - name: workload
-    displayName: Workload (frontend = Locust, backoffice = JMeter)
-    type: string
-    default: 'frontend'
-    values:
-      - 'frontend'
-      - 'backoffice'
 
 variables:
   # Variable group `umbraco-loadtest-history` provides all history* variables:

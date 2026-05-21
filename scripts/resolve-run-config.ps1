@@ -73,6 +73,33 @@ if (-not $dotnetVersion) {
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 
+# Validate that the chosen (scenario, workload) pair has the files the runner
+# will look for. Failing here costs nothing; failing 15 minutes into the
+# provision stage when generate-loadtest-config can't find a .jmx wastes
+# real Azure time and money.
+$scenarioRoot = Join-Path $WorkspaceRoot "loadtests/scenarios/$Scenario"
+if (-not (Test-Path -LiteralPath $scenarioRoot -PathType Container)) {
+    Write-PipelineError "Scenario '$Scenario' has no folder under loadtests/scenarios/. Available scenarios are the subfolders of loadtests/scenarios/."
+}
+if ($Workload -eq 'frontend') {
+    $locustfilePath = Join-Path $scenarioRoot 'locustfile.py'
+    if (-not (Test-Path -LiteralPath $locustfilePath)) {
+        Write-PipelineError "Workload=frontend selected but scenario '$Scenario' has no locustfile.py. Either add one or pick a different workload."
+    }
+} elseif ($Workload -eq 'backoffice') {
+    # Mirror the v17→v18 fallback used in generate-loadtest-config.ps1 and the
+    # seeder package map in install-umbraco-cms-on-appservice.ps1.
+    $jmeterMajor = if ($umbracoMajor -eq 18) { 17 } else { $umbracoMajor }
+    $jmeterDir = Join-Path $scenarioRoot "jmeter/v$jmeterMajor"
+    if (-not (Test-Path -LiteralPath $jmeterDir -PathType Container)) {
+        Write-PipelineError "Workload=backoffice selected but scenario '$Scenario' has no jmeter/v$jmeterMajor/ folder (looked at $jmeterDir). Add JMeter test plans there or pick a different scenario."
+    }
+    $jmxFiles = @(Get-ChildItem -Path $jmeterDir -Filter '*.jmx' -File -ErrorAction SilentlyContinue)
+    if ($jmxFiles.Count -eq 0) {
+        Write-PipelineError "Workload=backoffice selected but $jmeterDir contains no .jmx files."
+    }
+}
+
 # Mirror of $seederPackageVersions in
 # Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1.
 # Listed here so a major without a published seeder build fails at validation
