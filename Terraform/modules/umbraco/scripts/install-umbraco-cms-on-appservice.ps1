@@ -73,239 +73,127 @@ $pathToApp          = "./NewUmbracoProject$updatedVersionName"
 $nameToApp          = "NewUmbracoProject$updatedVersionName"
 $absoluteBuildDir   = Join-Path $terraformCwd $updatedVersionName
 
-# Hash the scenario's AdditionalSetup folder so a code-overlay edit (e.g.
-# Program.cs) invalidates the cache. Manifest is "{relpath}={file-sha}|..."
-# so renames also invalidate. appsettings.json edits invalidate too — slight
-# over-invalidation since appsettings is applied at the App Service level
-# (not baked into the binary), but the extra rebuild is quick and the simpler
-# cache key beats teaching the function which files matter.
-function Get-OverlayHash([string] $rootPath) {
-    if (-not (Test-Path -LiteralPath $rootPath -PathType Container)) { return "noverlay" }
-    # Canonicalize so $_.FullName below shares the same form (no `..` segments)
-    # and Substring math gives a clean relative path.
-    $rootPath = (Resolve-Path -LiteralPath $rootPath).Path
-    $files = @(Get-ChildItem -Path $rootPath -Recurse -File | Sort-Object FullName)
-    if ($files.Count -eq 0) { return "empty" }
-    $manifest = ($files | ForEach-Object {
-        $rel = $_.FullName.Substring($rootPath.Length)
-        $h   = (Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash
-        "$rel=$h"
-    }) -join "|"
-    $stream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes($manifest))
-    try {
-        return (Get-FileHash -InputStream $stream -Algorithm SHA256).Hash.Substring(0, 12)
-    } finally {
-        $stream.Dispose()
-    }
-}
-
-$additionalSetupPath = Join-Path $terraformCwd "../loadtests/scenarios/$Scenario/AdditionalSetup"
-$overlayHash         = Get-OverlayHash $additionalSetupPath
-
-# Build artifact cache. Identical (version, scenario, seeder-package, overlay-hash)
-# combos produce identical binaries; reusing the zip across same-build cases on
-# different tiers eliminates per-case build noise (NuGet restore order, compiler
-# timestamp jitter) so a tier comparison only varies infra, not the binary under
-# test. Bumping the seeder package, editing the scenario overlay, or changing the
-# Umbraco version all auto-invalidate the cache.
-$cacheDir     = Join-Path $terraformCwd ".build-cache"
-$safeCacheKey = "${UmbracoVersion}__${Scenario}__seeder-${seederPackageVersion}__overlay-${overlayHash}" -replace '[^A-Za-z0-9._-]', '-'
-$cachedZip    = Join-Path $cacheDir "$safeCacheKey.zip"
-
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Deploying Umbraco $UmbracoVersion ($Scenario)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 
-# Shared build cache (history-RG storage). The local .build-cache/ folder only
-# survives within a single pipeline run — fresh hosted agents start empty, so
-# every run currently re-runs `dotnet publish` for the first case of each
-# (version, scenario) combination. Promoting cache zips to history storage and
-# downloading them on demand removes that minute-tax across runs. Gated on the
-# three BUILD_CACHE_* env vars (set by the pipeline's Terraform Apply task); a
-# missing env var just falls through to the existing local-cache-only path.
-if (-not (Test-Path -LiteralPath $cachedZip) -and
-    $env:BUILD_CACHE_STORAGE_ACCOUNT -and
-    $env:BUILD_CACHE_STORAGE_KEY -and
-    $env:BUILD_CACHE_CONTAINER) {
-    Write-Host "Local build cache miss; checking shared cache in $($env:BUILD_CACHE_STORAGE_ACCOUNT)..."
-    if (-not (Test-Path -LiteralPath $cacheDir)) {
-        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
-    }
-    # Disable throw-on-nonzero locally so we can branch on $LASTEXITCODE — az's
-    # exit code is the cleanest "is this blob there" signal.
-    $prevPref = $PSNativeCommandUseErrorActionPreference
-    $PSNativeCommandUseErrorActionPreference = $false
-    try {
-        az storage blob download `
-            --account-name $env:BUILD_CACHE_STORAGE_ACCOUNT `
-            --account-key $env:BUILD_CACHE_STORAGE_KEY `
-            --container-name $env:BUILD_CACHE_CONTAINER `
-            --name "build-cache/$safeCacheKey.zip" `
-            --file $cachedZip `
-            --no-progress 2>$null | Out-Null
-        $downloadExit = $LASTEXITCODE
-    } finally {
-        $PSNativeCommandUseErrorActionPreference = $prevPref
-    }
-    if ($downloadExit -eq 0 -and (Test-Path -LiteralPath $cachedZip)) {
-        Write-Host "Shared cache HIT: downloaded build-cache/$safeCacheKey.zip" -ForegroundColor Green
-    } else {
-        # Remove partial file so the build path runs cleanly.
-        Remove-Item -LiteralPath $cachedZip -Force -ErrorAction SilentlyContinue
-        Write-Host "Shared cache MISS: build-cache/$safeCacheKey.zip not found (or download failed)."
-    }
+# Always build from scratch — the local/shared build cache was removed because
+# the time saving didn't materialise in practice. Each pipeline run pays the
+# ~5-8 minute build cost once per (version, scenario) the first time it's
+# touched. Cleanup happens in the finally{} block regardless of outcome.
+
+# Clean any leftover from a previous failed run, otherwise dotnet new would fail.
+if (Test-Path -LiteralPath $updatedVersionName) {
+    Write-Host "Cleaning leftover build dir: $updatedVersionName"
+    Remove-Item -Recurse -Force -LiteralPath $updatedVersionName
 }
 
-if (Test-Path -LiteralPath $cachedZip) {
-    Write-Host "Build cache HIT: reusing $cachedZip" -ForegroundColor Green
-}
-else {
-    Write-Host "Build cache MISS: building from scratch."
+try {
+    New-Item -ItemType Directory -Path $updatedVersionName -Force | Out-Null
+    Set-Location -LiteralPath $updatedVersionName
 
-    # Clean any leftover from a previous failed run, otherwise dotnet new would fail.
-    if (Test-Path -LiteralPath $updatedVersionName) {
-        Write-Host "Cleaning leftover build dir: $updatedVersionName"
-        Remove-Item -Recurse -Force -LiteralPath $updatedVersionName
+    # Prerelease and nightly feeds — needed for Umbraco versions not yet on nuget.org.
+    # `dotnet nuget add source` returns non-zero when the source name already
+    # exists, which would throw under $PSNativeCommandUseErrorActionPreference.
+    # Wrap so a re-run on a warm agent (or local-dev re-apply) is a no-op.
+    try { dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases" 2>$null | Out-Null } catch {}
+    try { dotnet nuget add source "https://www.myget.org/F/umbraconightly/api/v3/index.json" -n "Umbraco Nightly" 2>$null | Out-Null } catch {}
+
+    Write-Host "Installing Umbraco.Templates::$UmbracoVersion..."
+    dotnet new install Umbraco.Templates::$UmbracoVersion
+
+    Write-Host "Creating new Umbraco project: $nameToApp..."
+    dotnet new umbraco -n $nameToApp
+
+    Set-Location -LiteralPath $nameToApp
+
+    Write-Host "Adding Umbraco.Cms.TestDataSeeder $seederPackageVersion..."
+    dotnet add package Umbraco.Cms.TestDataSeeder --version $seederPackageVersion
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "dotnet add package Umbraco.Cms.TestDataSeeder failed (exit $LASTEXITCODE)."
+        exit 1
     }
 
-    try {
-        New-Item -ItemType Directory -Path $updatedVersionName -Force | Out-Null
-        Set-Location -LiteralPath $updatedVersionName
+    # Copy scenario code overlay (everything except appsettings.json) into the project tree.
+    $additionalSetupCandidate = Join-Path $terraformCwd "../loadtests/scenarios/$Scenario/AdditionalSetup"
+    $resolvedAdditional = $null
+    if (Test-Path -LiteralPath $additionalSetupCandidate) {
+        $resolvedAdditional = (Resolve-Path -LiteralPath $additionalSetupCandidate).Path
+    }
 
-        # Prerelease and nightly feeds — needed for Umbraco versions not yet on nuget.org.
-        # `dotnet nuget add source` returns non-zero when the source name already
-        # exists, which would throw under $PSNativeCommandUseErrorActionPreference.
-        # Wrap so a re-run on a warm agent (or local-dev re-apply) is a no-op.
-        try { dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases" 2>$null | Out-Null } catch {}
-        try { dotnet nuget add source "https://www.myget.org/F/umbraconightly/api/v3/index.json" -n "Umbraco Nightly" 2>$null | Out-Null } catch {}
+    if ($resolvedAdditional) {
+        $overlayFiles = @(Get-ChildItem -Path $resolvedAdditional -Recurse -File |
+            Where-Object { $_.Name -ne 'appsettings.json' })
 
-        Write-Host "Installing Umbraco.Templates::$UmbracoVersion..."
-        dotnet new install Umbraco.Templates::$UmbracoVersion
-
-        Write-Host "Creating new Umbraco project: $nameToApp..."
-        dotnet new umbraco -n $nameToApp
-
-        Set-Location -LiteralPath $nameToApp
-
-        Write-Host "Adding Umbraco.Cms.TestDataSeeder $seederPackageVersion..."
-        dotnet add package Umbraco.Cms.TestDataSeeder --version $seederPackageVersion
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "dotnet add package Umbraco.Cms.TestDataSeeder failed (exit $LASTEXITCODE)."
-            exit 1
-        }
-
-        # Copy scenario code overlay (everything except appsettings.json) into the project tree.
-        $additionalSetupCandidate = Join-Path $terraformCwd "../loadtests/scenarios/$Scenario/AdditionalSetup"
-        $resolvedAdditional = $null
-        if (Test-Path -LiteralPath $additionalSetupCandidate) {
-            $resolvedAdditional = (Resolve-Path -LiteralPath $additionalSetupCandidate).Path
-        }
-
-        if ($resolvedAdditional) {
-            $overlayFiles = @(Get-ChildItem -Path $resolvedAdditional -Recurse -File |
-                Where-Object { $_.Name -ne 'appsettings.json' })
-
-            if ($overlayFiles.Count -gt 0) {
-                Write-Host ""
-                Write-Host "Applying scenario '$Scenario' code overlay ($($overlayFiles.Count) file(s))..." -ForegroundColor Cyan
-                $projectRoot = (Get-Location).Path
-                foreach ($f in $overlayFiles) {
-                    $rel = $f.FullName.Substring($resolvedAdditional.Length).TrimStart([IO.Path]::DirectorySeparatorChar, '/', '\')
-                    $dest = Join-Path $projectRoot $rel
-                    $destDir = Split-Path -Parent $dest
-                    if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
-                        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-                    }
-                    Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
-                    Write-Host "  + $rel"
+        if ($overlayFiles.Count -gt 0) {
+            Write-Host ""
+            Write-Host "Applying scenario '$Scenario' code overlay ($($overlayFiles.Count) file(s))..." -ForegroundColor Cyan
+            $projectRoot = (Get-Location).Path
+            foreach ($f in $overlayFiles) {
+                $rel = $f.FullName.Substring($resolvedAdditional.Length).TrimStart([IO.Path]::DirectorySeparatorChar, '/', '\')
+                $dest = Join-Path $projectRoot $rel
+                $destDir = Split-Path -Parent $dest
+                if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
                 }
-            } else {
-                Write-Host "Scenario '$Scenario' has no code-overlay files."
+                Copy-Item -LiteralPath $f.FullName -Destination $dest -Force
+                Write-Host "  + $rel"
             }
-        }
-        else {
-            Write-Host "Scenario '$Scenario' has no AdditionalSetup folder - skipping code overlay."
-        }
-
-        Write-Host "Building project..."
-        dotnet build --configuration Release
-
-        Set-Location -LiteralPath ..
-
-        Write-Host "Publishing application..."
-        dotnet publish $pathToApp -c Release -o $pathToApp/publish
-
-        Write-Host "Creating deployment package..."
-        Compress-Archive -Path $pathToApp/publish/* -DestinationPath $pathToApp/publish.zip -Force
-
-        # Promote the zip into the cache so sibling cases (same version+scenario,
-        # different tier) skip the build and deploy this exact artifact.
-        if (-not (Test-Path -LiteralPath $cacheDir)) {
-            New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
-        }
-        Copy-Item -LiteralPath "$pathToApp/publish.zip" -Destination $cachedZip -Force
-        Write-Host "Cached build artifact at: $cachedZip"
-
-        # Promote to shared cache so the next pipeline run on a fresh agent (or
-        # a sibling case in this run that hits the cache after we cleared the
-        # local copy) skips the build entirely. Failure is non-fatal — the
-        # local cache still serves same-run siblings, and the next-build path
-        # is correct, just slower.
-        if ($env:BUILD_CACHE_STORAGE_ACCOUNT -and $env:BUILD_CACHE_STORAGE_KEY -and $env:BUILD_CACHE_CONTAINER) {
-            Write-Host "Uploading build to shared cache..."
-            $prevPref = $PSNativeCommandUseErrorActionPreference
-            $PSNativeCommandUseErrorActionPreference = $false
-            try {
-                az storage blob upload `
-                    --account-name $env:BUILD_CACHE_STORAGE_ACCOUNT `
-                    --account-key $env:BUILD_CACHE_STORAGE_KEY `
-                    --container-name $env:BUILD_CACHE_CONTAINER `
-                    --file $cachedZip `
-                    --name "build-cache/$safeCacheKey.zip" `
-                    --overwrite `
-                    --no-progress 2>$null | Out-Null
-                $uploadExit = $LASTEXITCODE
-            } finally {
-                $PSNativeCommandUseErrorActionPreference = $prevPref
-            }
-            if ($uploadExit -eq 0) {
-                Write-Host "Shared cache updated: build-cache/$safeCacheKey.zip"
-            } else {
-                Write-Host "Shared cache upload failed (exit $uploadExit) — local cache still good for siblings in this run."
-            }
+        } else {
+            Write-Host "Scenario '$Scenario' has no code-overlay files."
         }
     }
-    finally {
-        # Restore cwd and clean the build dir on every path (success and failure).
-        # The cache zip lives outside the build dir so it survives this cleanup.
-        Set-Location -LiteralPath $terraformCwd -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $absoluteBuildDir) {
-            Write-Host "Cleaning up build artifacts..."
-            Remove-Item -Recurse -Force -LiteralPath $absoluteBuildDir -ErrorAction SilentlyContinue
-        }
+    else {
+        Write-Host "Scenario '$Scenario' has no AdditionalSetup folder - skipping code overlay."
+    }
+
+    Write-Host "Building project..."
+    dotnet build --configuration Release
+
+    Set-Location -LiteralPath ..
+
+    Write-Host "Publishing application..."
+    dotnet publish $pathToApp -c Release -o $pathToApp/publish
+
+    Write-Host "Creating deployment package..."
+    Compress-Archive -Path $pathToApp/publish/* -DestinationPath $pathToApp/publish.zip -Force
+
+    # Auth + deploy happen INSIDE the try block so publish.zip is still present
+    # (the finally cleanup below removes the whole build dir). Previously the
+    # build cache kept a copy of the zip outside the build dir; without the
+    # cache, we must complete the deploy before tearing down the build tree.
+    Set-Location -LiteralPath $terraformCwd
+
+    # WIF (federated token) takes priority over client-secret auth when both are set.
+    Write-Host "Authenticating to Azure..."
+    if ($env:ARM_OIDC_TOKEN) {
+        az login --service-principal --username $env:ARM_CLIENT_ID --tenant $env:ARM_TENANT_ID --federated-token $env:ARM_OIDC_TOKEN | Out-Null
+    } else {
+        az login --service-principal --username $env:ARM_CLIENT_ID --password $env:ARM_CLIENT_SECRET --tenant $env:ARM_TENANT_ID | Out-Null
+    }
+
+    # Pin the subscription explicitly — `az login` defaults to whichever sub the SP
+    # happens to land on, which for multi-sub SPs is not necessarily the one Terraform
+    # just provisioned the App Service in. ARM_SUBSCRIPTION_ID is set by the pipeline
+    # and inherits into this local-exec process.
+    if ($env:ARM_SUBSCRIPTION_ID) {
+        az account set --subscription $env:ARM_SUBSCRIPTION_ID
+    } else {
+        Write-Warning "ARM_SUBSCRIPTION_ID not set; deploy will target the SP's default subscription."
+    }
+
+    $deployZip = Join-Path $absoluteBuildDir "$nameToApp/publish.zip"
+    Write-Host "Deploying to App Service: $AppServiceName..."
+    az webapp deployment source config-zip --src $deployZip -n $AppServiceName -g $ResourceGroupName
+}
+finally {
+    # Restore cwd and clean the build dir on every path (success and failure).
+    Set-Location -LiteralPath $terraformCwd -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $absoluteBuildDir) {
+        Write-Host "Cleaning up build artifacts..."
+        Remove-Item -Recurse -Force -LiteralPath $absoluteBuildDir -ErrorAction SilentlyContinue
     }
 }
-
-# WIF (federated token) takes priority over client-secret auth when both are set.
-Write-Host "Authenticating to Azure..."
-if ($env:ARM_OIDC_TOKEN) {
-    az login --service-principal --username $env:ARM_CLIENT_ID --tenant $env:ARM_TENANT_ID --federated-token $env:ARM_OIDC_TOKEN | Out-Null
-} else {
-    az login --service-principal --username $env:ARM_CLIENT_ID --password $env:ARM_CLIENT_SECRET --tenant $env:ARM_TENANT_ID | Out-Null
-}
-
-# Pin the subscription explicitly — `az login` defaults to whichever sub the SP
-# happens to land on, which for multi-sub SPs is not necessarily the one Terraform
-# just provisioned the App Service in. ARM_SUBSCRIPTION_ID is set by the pipeline
-# and inherits into this local-exec process.
-if ($env:ARM_SUBSCRIPTION_ID) {
-    az account set --subscription $env:ARM_SUBSCRIPTION_ID
-} else {
-    Write-Warning "ARM_SUBSCRIPTION_ID not set; deploy will target the SP's default subscription."
-}
-
-Write-Host "Deploying to App Service: $AppServiceName..."
-az webapp deployment source config-zip --src $cachedZip -n $AppServiceName -g $ResourceGroupName
 
 function Write-SeederResult {
     param(
@@ -390,6 +278,36 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
     }
 }
 
+# Best-effort `az webapp stop` with retries. Azure's management API can return
+# a transient 503 ('Service Unavailable') right after a deployment finishes,
+# even though the resource is healthy. Retrying with short backoff handles the
+# common case; if all retries fail, log a warning and continue — the App
+# Service stays running but the load-test stage's `az webapp start` is
+# idempotent, so nothing functional breaks downstream.
+function Stop-AppServiceBestEffort {
+    param([Parameter(Mandatory)] [string]$Name, [Parameter(Mandatory)] [string]$ResourceGroup)
+    $delays = @(5, 10, 20)
+    for ($i = 0; $i -lt $delays.Count; $i++) {
+        $prevPref = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+        try {
+            az webapp stop -n $Name -g $ResourceGroup
+            $exit = $LASTEXITCODE
+        } finally {
+            $PSNativeCommandUseErrorActionPreference = $prevPref
+        }
+        if ($exit -eq 0) { return $true }
+        $isLast = ($i -eq $delays.Count - 1)
+        if ($isLast) {
+            Write-Host "##vso[task.logissue type=warning]az webapp stop failed after $($delays.Count) attempts (last exit $exit). App Service stays running until the load-test stage starts it."
+            return $false
+        }
+        Write-Host "  az webapp stop exit $exit; retrying in $($delays[$i])s..."
+        Start-Sleep -Seconds $delays[$i]
+    }
+    return $false
+}
+
 if (-not $seederSuccess) {
     Write-Host ""
     Write-Host "Seeder did not complete - stopping App Service and exiting non-zero" -ForegroundColor Red
@@ -397,14 +315,14 @@ if (-not $seederSuccess) {
     if (-not (Test-Path $SeederResultPath)) {
         Write-SeederResult -Status "TimedOut"
     }
-    az webapp stop -n $AppServiceName -g $ResourceGroupName
+    Stop-AppServiceBestEffort -Name $AppServiceName -ResourceGroup $ResourceGroupName | Out-Null
     exit 1
 }
 
 # Stop the app service until the load-test step starts it again.
 Write-Host ""
 Write-Host "Stopping App Service until load test..." -ForegroundColor Cyan
-az webapp stop -n $AppServiceName -g $ResourceGroupName
+Stop-AppServiceBestEffort -Name $AppServiceName -ResourceGroup $ResourceGroupName | Out-Null
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green

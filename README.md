@@ -572,12 +572,6 @@ cleanup              checkResourceGroupForCleanup → manualValidation (configur
                      deleteResourceGroup if rejected/cancelled/expired. Always runs.
 ```
 
-### Build cache
-
-The install script writes each `dotnet publish` output to `.build-cache/<key>.zip` where the cache key encodes `umbraco-version + scenario + seeder-package + overlay-hash`. Sibling cases in the same pipeline run (e.g. four tiers, same version + scenario) share the local cache, so the rebuild cost is paid once per (version × scenario) combo instead of once per case.
-
-Across runs, hosted agents start fresh and the local cache is gone. To recover that cost, the pipeline promotes cache zips to the history storage account (`build-cache/<key>.zip` under the same container) and downloads matching zips at the start of `provision.apply`. Gated on the `BUILD_CACHE_STORAGE_ACCOUNT / _KEY / _CONTAINER` env vars — populated automatically by `FetchBuildCacheKey` from `historyStorageAccount` + `historyContainer`. Fetch failure warns and continues (pipeline rebuilds from scratch); upload failure warns and continues (same-run siblings still hit local). Cache invalidation is automatic on any input change — bumping seeder version, editing `AdditionalSetup/`, or moving to a new Umbraco version all produce a fresh key.
-
 ## Data Seeder Presets
 
 | Preset | Documents | Media | Members | Approx. Time |
@@ -760,10 +754,6 @@ You can run either script manually if you need to provision monitoring outside a
     -HistoryLocation "West Europe" `
     -WorkspaceName umbraco-loadtest-laws
 ```
-
-### Cost
-
-$0/month at this volume. Log Analytics gives 5 GB/month free per billing account (each `summary.ndjson` is a few KB, so you'd need ~100,000+ runs/month to dent the free tier). 31-day retention is included free; longer is ~$0.10/GB/month — also negligible. Workbooks themselves are free.
 
 ### Maintenance
 
