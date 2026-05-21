@@ -209,20 +209,25 @@ if ($Workload -eq 'backoffice') {
     # YAML so ALT uploads both. The .jmx files reference each property via
     # \${__P(name,default)} — see scripts/parameterize-jmx.js.
     #
-    # backoffice_username/_password match the defaults baked into every .jmx
-    # file (e.g. ${__P(backoffice_username,hnd@acceptance.test)}). The .jmx
-    # files use this single variable for BOTH front-end member login (e.g.
-    # MemberLogin.jmx POSTs to /umbraco/api/memberlogin/login) and backoffice
-    # admin login (e.g. SaveContent.jmx hits /umbraco/management/api/v1/...),
-    # which implies the original authors expected one seeded fixture user with
-    # both roles. Whether Umbraco.Cms.TestDataSeeder actually creates a user
-    # named 'hnd@acceptance.test' / '0123456789' is unverified — if MemberLogin
-    # and SaveContent show 100% errors in the first end-to-end run, the seeder
-    # likely creates a different fixture user and this needs updating.
+    # Credentials situation (confirmed against Umbraco.Cms.TestDataSeeder source):
     #
-    # The Terraform unattended-install admin ('loadtest@example.invalid' /
-    # 'LoadTest123!' from Terraform/modules/umbraco/versions/main.tf) is a
-    # SEPARATE user and is NOT what the .jmx files expect.
+    #   - The .jmx defaults (hnd@acceptance.test / 0123456789) are STALE — they
+    #     don't match any user the current seeder creates.
+    #   - The seeder creates MEMBERS as TestMember_1..N with password Test1234!
+    #     (Configuration:Members:DefaultPassword, configurable).
+    #   - The seeder creates BACKOFFICE USERS as TestUser_1..N but UserSeeder.cs
+    #     never sets a password, so they can't authenticate via password flows.
+    #   - The only password-bearing backoffice account is the Terraform
+    #     unattended-install admin: loadtest@example.invalid / LoadTest123!
+    #     (from Terraform/modules/umbraco/versions/main.tf,
+    #     Umbraco__CMS__Unattended__UnattendedUser{Email,Password}).
+    #
+    # The .jmx files use a single 'backoffice_username' for both MemberLogin
+    # (frontend member endpoint, needs a member) AND SaveContent / Publish*
+    # (backoffice management endpoints, needs an admin) — there's no single
+    # credential pair that satisfies both. Choosing the admin path here so the
+    # Save/Publish tests can run; MemberLogin will fail until the .jmx files
+    # are split into separate member_/backoffice_ properties (see roadmap).
     $propsFileName = "jmeter-$safeKey.properties"
     $propsPath = Join-Path $OutputDir $propsFileName
     $propsBody = @"
@@ -231,8 +236,8 @@ protocol=https
 port=443
 numberOfThread=$UserAmount
 duration=$TestDuration
-backoffice_username=hnd@acceptance.test
-backoffice_password=0123456789
+backoffice_username=loadtest@example.invalid
+backoffice_password=LoadTest123!
 "@
     $propsBody | Out-File -FilePath $propsPath -Encoding utf8
 
