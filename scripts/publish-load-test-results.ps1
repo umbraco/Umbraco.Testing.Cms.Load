@@ -256,7 +256,13 @@ function Send-RowsToLogAnalytics {
 # the summary scalars (plan_*/sql_*/app_* in LoadTestSummary_CL) remain
 # authoritative for capacity verdicts.
 function Send-SeriesToLogAnalytics {
-    param([Parameter(Mandatory)] [object[]]$Points)
+    # AllowEmptyCollection because the window guard above legitimately produces
+    # zero points when the test fast-failed — without this attribute,
+    # PowerShell's strict array binding rejects empty arrays BEFORE the function
+    # body's early-return can fire, crashing the publish step (Bug B from the
+    # first end-to-end run, exposed when a downstream .jmx iteration had a
+    # ~2-second unusable window after an ALT validation failure).
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Points)
     if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsSeriesStreamName)) {
         return
     }

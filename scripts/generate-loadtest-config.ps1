@@ -122,6 +122,20 @@ if ($testId.Length -gt 50) {
     exit 1
 }
 
+# ALT enforces a SEPARATE 50-char limit on displayName (config YAML key).
+# Previously this was "Umbraco load test - {Scenario} / {JmxName}" which
+# overflowed for the longest .jmx ('SaveAndPublishContent' = 21 chars):
+# "Umbraco load test - Default / SaveAndPublishContent" = 51 chars → ALT
+# rejected the YAML and the whole iteration died (Bug A from the
+# first end-to-end run). Drop the redundant prefix — the test list is
+# already inside an ALT resource named "umbraco-loadtest-runs", so the
+# "Umbraco load test" preamble was just noise.
+$displayName = if ($Workload -eq 'backoffice') { "$Scenario / $JmxName" } else { "$Scenario" }
+if ($displayName.Length -gt 50) {
+    Write-Error "Computed ALT displayName '$displayName' is $($displayName.Length) chars; ALT max is 50. Shorten scenario or .jmx stem."
+    exit 1
+}
+
 # safeTestCaseId identifies this specific case for the artifact name + config filename.
 # For backoffice runs we append the .jmx stem so each .jmx in a single pipeline
 # run lands on a unique artifact name + config file (otherwise iteration N would
@@ -225,7 +239,7 @@ backoffice_password=0123456789
     $config = @"
 version: v0.1
 testId: $testId
-displayName: Umbraco load test - $Scenario / $JmxName
+displayName: $displayName
 testPlan: $testPlanRel
 testType: JMX
 description: Backoffice JMeter run ($JmxName) for the '$Scenario' scenario.
@@ -240,7 +254,7 @@ $sharedTail
     $config = @"
 version: v0.1
 testId: $testId
-displayName: Umbraco load test - $Scenario
+displayName: $displayName
 testPlan: loadtests/scenarios/$Scenario/locustfile.py
 testType: Locust
 description: Holds all version/tier runs for the '$Scenario' scenario; pick runs in 'Compare' to overlay.
