@@ -2195,7 +2195,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
                 <elementProp name="post_logout_redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">post_logout_redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/logout</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/logout</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
               </collectionProp>

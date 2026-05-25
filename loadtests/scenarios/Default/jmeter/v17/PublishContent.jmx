@@ -1606,7 +1606,7 @@ try {
                 <elementProp name="post_logout_redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">post_logout_redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/logout</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/logout</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                   <boolProp name="HTTPArgument.use_equals">true</boolProp>
                 </elementProp>
