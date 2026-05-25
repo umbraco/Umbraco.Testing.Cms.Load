@@ -53,7 +53,7 @@
           </elementProp>
           <elementProp name="member_password" elementType="Argument">
             <stringProp name="Argument.name">member_password</stringProp>
-            <stringProp name="Argument.value">{__P(member_password,Test1234$)}</stringProp>
+            <stringProp name="Argument.value">${__P(member_password,Test1234$)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
@@ -81,7 +81,7 @@
         <boolProp name="CacheManager.controlledByThread">false</boolProp>
       </CacheManager>
       <hashTree/>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. View Home Page">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. View Home Page" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>

@@ -5,6 +5,8 @@
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
         <collectionProp name="Arguments.arguments"/>
       </elementProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
+      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
     </TestPlan>
     <hashTree>
       <Arguments guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
@@ -69,7 +71,7 @@
         <boolProp name="CacheManager.controlledByThread">false</boolProp>
       </CacheManager>
       <hashTree/>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Publish an existing content">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Publish an existing content" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
