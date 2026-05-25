@@ -30,14 +30,19 @@ function Convert-LeafValue($value) {
 }
 
 # Flatten an appsettings.json tree to App Service envvar form (Section__Sub__Key).
+# Null leaves are skipped (not emitted as empty-string env vars) — writing `null`
+# in the overlay JSON means "leave the package's default in place", and an empty
+# env var would override that default instead.
 function ConvertTo-FlatAppSettings {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory)] $Node,
+        [Parameter(Mandatory)] [AllowNull()] $Node,
         [string] $Prefix = ''
     )
 
     $result = @{}
+
+    if ($null -eq $Node) { return $result }
 
     if ($Node -is [System.Collections.IDictionary]) {
         foreach ($key in $Node.Keys) {
