@@ -198,7 +198,7 @@
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="client_id" elementType="HTTPArgument">
@@ -356,7 +356,7 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="client_id" elementType="HTTPArgument">
@@ -462,7 +462,7 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="code" elementType="HTTPArgument">
@@ -575,7 +575,7 @@ try {
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="refresh_token" elementType="HTTPArgument">
