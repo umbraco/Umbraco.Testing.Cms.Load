@@ -40,13 +40,27 @@ if ($engineFiles.Count -eq 0) {
     exit 0
 }
 
-# Local parse — keeps Transaction Controller rows (publish-load-test-results.ps1's
-# shared parser intentionally drops them; we WANT them here to drive grouping).
-# TC heuristic matches the convention used in our .jmx test plans: '<NN>. Description'.
-$tcPattern = '^\d+\.\s+'
-$byLabel = @{}
+# Two parallel buckets:
+#   $byLabel — every label (HTTP child + TC parent), used for grouping order
+#              (FirstTs) and HTTP-child stats.
+#   $tcRecomputed — TC stats RECOMPUTED from children rather than read from the
+#              JMeter TC row. The TC row's `success` flag is unreliable (we've
+#              seen TCs report 100% fail while children were all 200 OK due to
+#              JMeter assertion / redirect accounting on the parent). Real
+#              transaction semantics: iteration fails iff any child failed,
+#              iteration elapsed = sum of children's elapsed.
+$tcPattern    = '^\d+\.\s+'
+$byLabel      = @{}
+$tcRecomputed = @{}
 
+# CSV column layout (JMeter / ALT): timeStamp, elapsed, label, responseCode,
+# responseMessage, threadName, dataType, success, failureMessage, ...
 foreach ($file in $engineFiles) {
+    # Per-thread iteration accumulator. Reset per engine file because thread
+    # names are NOT unique across engines in multi-engine runs (each ALT engine
+    # restarts the thread-number counter). Without this reset, engine2's
+    # threadName "1. Member Login 1-1" would inherit engine1's pending children.
+    $threadStates = @{}
     $reader = [System.IO.StreamReader]::new($file.FullName)
     try {
         $reader.ReadLine() | Out-Null  # header
@@ -57,22 +71,65 @@ foreach ($file in $engineFiles) {
             if (-not [long]::TryParse($cols[0], [ref]$ts)) { continue }
             $elapsed = 0
             if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
-            $label   = $cols[2]
-            $success = $cols[7] -ieq 'true'
+            $label        = $cols[2]
+            $responseCode = $cols[3]
+            $threadName   = $cols[5]
+            $success      = $cols[7] -ieq 'true'
+            $isTc         = ($label -match $tcPattern)
 
+            # Per-label bucket: used for grouping order (FirstTs) and for HTTP
+            # child stats. For TC labels, only FirstTs matters — TC stats come
+            # from $tcRecomputed below.
             $bucket = $byLabel[$label]
             if (-not $bucket) {
                 $bucket = @{
-                    Samples = (New-Object 'System.Collections.Generic.List[int]')
-                    Errors  = 0
-                    FirstTs = $ts
-                    IsTC    = ($label -match $tcPattern)
+                    Samples       = (New-Object 'System.Collections.Generic.List[int]')
+                    Errors        = 0
+                    FirstTs       = $ts
+                    IsTC          = $isTc
+                    # responseCode → count, only for non-2xx (debugging fast-fails).
+                    # 2xx kept out so the summary doesn't list "200: 100" noise.
+                    NonSuccessCodes = @{}
                 }
                 $byLabel[$label] = $bucket
             }
             $bucket.Samples.Add($elapsed)
             if ($ts -lt $bucket.FirstTs) { $bucket.FirstTs = $ts }
-            if (-not $success) { $bucket.Errors++ }
+            if (-not $success) {
+                $bucket.Errors++
+                $codeKey = if ([string]::IsNullOrWhiteSpace($responseCode)) { '(blank)' } else { $responseCode }
+                if (-not $bucket.NonSuccessCodes.ContainsKey($codeKey)) { $bucket.NonSuccessCodes[$codeKey] = 0 }
+                $bucket.NonSuccessCodes[$codeKey]++
+            }
+
+            # Per-thread state machine that recomputes TCs from children.
+            # JMeter emits TC parent row AFTER all its children for the same
+            # iteration on the same thread, so a TC row closes the pending
+            # iteration's elapsed-sum + failure-flag accumulated since the
+            # previous TC (or start of thread).
+            $state = $threadStates[$threadName]
+            if (-not $state) {
+                $state = @{ FailedFlag = $false; ElapsedSum = 0 }
+                $threadStates[$threadName] = $state
+            }
+
+            if ($isTc) {
+                $tcBucket = $tcRecomputed[$label]
+                if (-not $tcBucket) {
+                    $tcBucket = @{
+                        Samples = (New-Object 'System.Collections.Generic.List[int]')
+                        Errors  = 0
+                    }
+                    $tcRecomputed[$label] = $tcBucket
+                }
+                $tcBucket.Samples.Add($state.ElapsedSum)
+                if ($state.FailedFlag) { $tcBucket.Errors++ }
+                $state.FailedFlag = $false
+                $state.ElapsedSum = 0
+            } else {
+                $state.ElapsedSum += $elapsed
+                if (-not $success) { $state.FailedFlag = $true }
+            }
         }
     } finally { $reader.Dispose() }
 }
@@ -151,13 +208,30 @@ Write-Host ("  {0,-55} {1,-6} {2,-7} {3,-8} {4,-8} {5}" -f "Sampler", "n", "err"
 # `[char]` cast avoids PS6+-only `\u` escape — works on any PowerShell parser.
 $branchPrefix = "$([char]0x2514)$([char]0x2500)"
 
+# Render the response-code distribution for a label as "  codes: 400=100, 503=2"
+# (sorted by count desc). Empty string when the label had no failures, so the
+# happy-path summary stays one line per sampler.
+function Format-ResponseCodes {
+    param([Parameter(Mandatory)] $Bucket)
+    if (-not $Bucket.NonSuccessCodes -or $Bucket.NonSuccessCodes.Count -eq 0) { return '' }
+    $pairs = $Bucket.NonSuccessCodes.GetEnumerator() |
+        Sort-Object -Property Value -Descending |
+        ForEach-Object { "$($_.Key)=$($_.Value)" }
+    return "  codes: $($pairs -join ', ')"
+}
+
 if ($groups.Count -gt 0) {
     foreach ($g in $groups) {
-        $tcStats = Format-Stats -Bucket $byLabel[$g.TC]
+        # TC stats come from $tcRecomputed (children-derived) rather than the
+        # JMeter TC row in $byLabel, which can disagree with reality.
+        $tcBucket = if ($tcRecomputed.ContainsKey($g.TC)) { $tcRecomputed[$g.TC] } else { $byLabel[$g.TC] }
+        $tcStats  = Format-Stats -Bucket $tcBucket
         Write-Host ("  [TC] {0,-50} {1}" -f $g.TC, $tcStats)
         foreach ($child in $g.Children) {
-            $cStats = Format-Stats -Bucket $byLabel[$child]
-            Write-Host ("       {0} {1,-47} {2}" -f $branchPrefix, $child, $cStats)
+            $cBucket = $byLabel[$child]
+            $cStats  = Format-Stats -Bucket $cBucket
+            $cCodes  = Format-ResponseCodes -Bucket $cBucket
+            Write-Host ("       {0} {1,-47} {2}{3}" -f $branchPrefix, $child, $cStats, $cCodes)
         }
     }
 }
@@ -168,8 +242,10 @@ if ($orphans.Count -gt 0) {
         Write-Host "Other:"
     }
     foreach ($label in $orphans) {
-        $oStats = Format-Stats -Bucket $byLabel[$label]
-        Write-Host ("  {0,-55} {1}" -f $label, $oStats)
+        $oBucket = $byLabel[$label]
+        $oStats  = Format-Stats -Bucket $oBucket
+        $oCodes  = Format-ResponseCodes -Bucket $oBucket
+        Write-Host ("  {0,-55} {1}{2}" -f $label, $oStats, $oCodes)
     }
 }
 
