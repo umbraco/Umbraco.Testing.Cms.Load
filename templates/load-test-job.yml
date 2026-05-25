@@ -385,6 +385,21 @@ steps:
           Write-Host "##vso[task.setvariable variable=loadTestEndTime]$end"
           Write-Host "Load test window ends at: $end"
 
+    # Custom-ordered summary on top of AzureLoadTest@1's built-in one (which prints
+    # samplers in dictionary-iteration order, interleaving TC parents and child
+    # HTTP rows unpredictably). continueOnError so a malformed CSV doesn't fail
+    # the run — the canonical numbers live in publish-load-test-results.ps1 below.
+    - task: PowerShell@2
+      displayName: 'Custom summary [${{ parameters.testCaseId }}]'
+      condition: succeededOrFailed()
+      continueOnError: true
+      inputs:
+        targetType: 'filePath'
+        filePath: '$(System.DefaultWorkingDirectory)/scripts/print-load-test-summary.ps1'
+        arguments: >
+          -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
+          -TestCaseId "${{ parameters.testCaseId }}"
+
     # Pipeline artifact: per-build, expires with build retention. continueOnError so a
     # blob upload hiccup doesn't lose the rest of the run; history publish below is the
     # long-lived copy.
@@ -536,6 +551,19 @@ steps:
             $end = (Get-Date).ToUniversalTime().ToString("o")
             Write-Host "##vso[task.setvariable variable=loadTestEndTime]$end"
             Write-Host "Load test window ends at: $end"
+
+      # See the frontend path for the rationale — same script, per-.jmx test-case
+      # id so the summary header lines up with which iteration produced it.
+      - task: PowerShell@2
+        displayName: 'Custom summary [${{ jmxName }}]'
+        condition: and(succeededOrFailed(), ne(variables['loadTestConfigPath'], ''))
+        continueOnError: true
+        inputs:
+          targetType: 'filePath'
+          filePath: '$(System.DefaultWorkingDirectory)/scripts/print-load-test-summary.ps1'
+          arguments: >
+            -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
+            -TestCaseId "${{ parameters.testCaseId }} / ${{ jmxName }}"
 
       - task: PublishBuildArtifacts@1
         displayName: 'Publish artifacts [${{ jmxName }}]'
