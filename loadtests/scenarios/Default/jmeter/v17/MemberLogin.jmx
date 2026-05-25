@@ -13,47 +13,47 @@
         <collectionProp name="Arguments.arguments">
           <elementProp name="numberOfThread" elementType="Argument">
             <stringProp name="Argument.name">numberOfThread</stringProp>
-            <stringProp name="Argument.value">1</stringProp>
+            <stringProp name="Argument.value">${__P(numberOfThread,1)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="duration" elementType="Argument">
             <stringProp name="Argument.name">duration</stringProp>
-            <stringProp name="Argument.value">120</stringProp>
+            <stringProp name="Argument.value">${__P(duration,120)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="server" elementType="Argument">
             <stringProp name="Argument.name">server</stringProp>
-            <stringProp name="Argument.value">localhost</stringProp>
+            <stringProp name="Argument.value">${__P(server,localhost)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="protocol" elementType="Argument">
             <stringProp name="Argument.name">protocol</stringProp>
-            <stringProp name="Argument.value">https</stringProp>
+            <stringProp name="Argument.value">${__P(protocol,https)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="port" elementType="Argument">
             <stringProp name="Argument.name">port</stringProp>
-            <stringProp name="Argument.value">44363</stringProp>
+            <stringProp name="Argument.value">${__P(port,44322)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="backoffice_username" elementType="Argument">
             <stringProp name="Argument.name">backoffice_username</stringProp>
-            <stringProp name="Argument.value">hnd@acceptance.test</stringProp>
+            <stringProp name="Argument.value">${__P(backoffice_username,hnd@acceptance.test)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="backoffice_password" elementType="Argument">
             <stringProp name="Argument.name">backoffice_password</stringProp>
-            <stringProp name="Argument.value">0123456789</stringProp>
+            <stringProp name="Argument.value">${__P(backoffice_password,0123456789)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="totalOfMember" elementType="Argument">
             <stringProp name="Argument.name">totalOfMember</stringProp>
-            <stringProp name="Argument.value">30</stringProp>
+            <stringProp name="Argument.value">${__P(totalOfMember,30)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
           <elementProp name="member_password" elementType="Argument">
             <stringProp name="Argument.name">member_password</stringProp>
-            <stringProp name="Argument.value">Test1234!</stringProp>
+            <stringProp name="Argument.value">{__P(member_password,Test1234$)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
@@ -81,7 +81,7 @@
         <boolProp name="CacheManager.controlledByThread">false</boolProp>
       </CacheManager>
       <hashTree/>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Member Login">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Member Login" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
