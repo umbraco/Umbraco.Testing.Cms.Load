@@ -57,12 +57,12 @@ parameters:
     default: false
 
   - name: loadProfile
-    displayName: 'Load profile (intensity) — smoke: 50 VUs / 60s, standard: 100 VUs / 300s, stress: 300 VUs / 600s'
+    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s'
     type: string
     default: 'standard'
     values:
-      - 'smoke'      # Small,  50 VUs,  60s, 1 engine  -- quick "does it work" probe
-      - 'standard'   # Medium, 100 VUs, 300s, 1 engine -- typical comparison run
+      - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
+      - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
       - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
 
   - name: azureRegion
