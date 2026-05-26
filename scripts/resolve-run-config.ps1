@@ -42,7 +42,7 @@ if ($tiers.Count -eq 0) {
 }
 
 switch ($Profile) {
-    'smoke'    { $preset = 'Small';  $users = 15;  $spawn = 10; $duration = 60;  $engines = 1 }
+    'smoke'    { $preset = 'Small';  $users = 50;  $spawn = 10; $duration = 60;  $engines = 1 }
     'standard' { $preset = 'Medium'; $users = 100; $spawn = 10; $duration = 300; $engines = 1 }
     'stress'   { $preset = 'Large';  $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
 }
