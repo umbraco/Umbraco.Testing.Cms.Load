@@ -157,8 +157,8 @@ At least one tier must be selected — the validator fails the run if all are un
 
 | Profile | Seeder preset | VUs | Spawn rate | Duration | Engines |
 |---|---|---|---|---|---|
-| `smoke` | Small | 50 | 10/s | 60s | 1 |
-| `standard` | Medium | 100 | 10/s | 300s | 1 |
+| `smoke` | Small | 20 | 10/s | 60s | 1 |
+| `standard` | Medium | 50 | 10/s | 300s | 1 |
 | `stress` | Large | 300 | 50/s | 600s | 2 |
 
 The profile only encodes load intensity — the same profile can drive any combination of tiers. Tuning a profile is a single-place edit to the inline `switch` in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step.
@@ -382,7 +382,7 @@ The validator (`scripts/prepare-test-cases.ps1`) is the source-of-truth check �
 
 Every test follows a **ramp-up → steady-state → ramp-down** shape so the measurement window reflects sustained behaviour, not arrival shock:
 
-- **Ramp-up** — Locust spawns VUs at the profile's `spawn rate` until all `users` are active (e.g. `standard` profile = 100 VUs at 10/s ≈ 10 s ramp).
+- **Ramp-up** — Locust spawns VUs at the profile's `spawn rate` until all `users` are active (e.g. `standard` profile = 50 VUs at 10/s ≈ 5 s ramp).
 - **Steady-state** — all VUs run their weighted task mix for the profile's `duration` (the metric window).
 - **Ramp-down** — Azure Load Testing terminates VUs when the duration expires.
 
