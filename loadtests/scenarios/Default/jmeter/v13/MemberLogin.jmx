@@ -53,7 +53,7 @@
           </elementProp>
           <elementProp name="member_password" elementType="Argument">
             <stringProp name="Argument.name">member_password</stringProp>
-            <stringProp name="Argument.value">${__P(member_password,Test1234$)}</stringProp>
+            <stringProp name="Argument.value">${__P(member_password,Test1234!)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
         </collectionProp>
@@ -87,7 +87,7 @@
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
-        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">startnextloop</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
           <intProp name="LoopController.loops">-1</intProp>
           <boolProp name="LoopController.continue_forever">false</boolProp>
