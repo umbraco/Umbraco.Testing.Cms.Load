@@ -63,7 +63,7 @@ function Parse-JmeterCsv {
     # JMeter Transaction Controllers with parent="true" emit a parent-transaction
     # row in the CSV in addition to the HTTP-sampler row for each request.
     # Heuristic: TC labels in our .jmx files follow a "NN. Description" pattern
-    # (e.g. "01. Open Home page"). Locust samplers use plain names ("Homepage",
+    # (e.g. "01. Open Homepage"). Locust samplers use plain names ("Homepage",
     # "Detail") that won't match. Adjust if naming conventions change.
     #
     # Default mode (Locust / legacy backoffice): drop TC rows and keep the
