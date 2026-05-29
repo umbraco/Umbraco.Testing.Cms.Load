@@ -395,9 +395,16 @@ if ($engineFiles.Count -gt 0) {
     # Parse each engine CSV via the shared parser (Parse-JmeterCsv in _helpers.ps1);
     # merge the per-label buckets across engines. Single-engine runs trivially
     # become one parse call; multi-engine runs concatenate samples per label.
+    #
+    # Backoffice (JMeter) runs always set $JmeterTestName (the .jmx stem),
+    # while frontend (Locust) runs leave it empty. Use that as the signal to
+    # flip Parse-JmeterCsv into TC-only mode so the workbook shows the
+    # "01. <step>" transaction-controller rows instead of the dozens of
+    # underlying GET/POST sampler rows per .jmx.
+    $onlyTC = -not [string]::IsNullOrWhiteSpace($JmeterTestName)
     $byLabel = @{}
     foreach ($file in $engineFiles) {
-        $parsed = Parse-JmeterCsv -Path $file.FullName
+        $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC
         foreach ($kv in $parsed.ByLabel.GetEnumerator()) {
             $merged = $byLabel[$kv.Key]
             if (-not $merged) {

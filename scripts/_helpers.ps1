@@ -49,7 +49,11 @@ function Parse-JmeterCsv {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$Path,
-        [switch]$BuildAggregate
+        [switch]$BuildAggregate,
+        # Inverts the TC/sampler filter (see comment below). Default off keeps
+        # the historical Locust/HTTP-sampler-only behaviour; backoffice (JMeter)
+        # callers pass this to keep TC rows and drop the per-request rows.
+        [switch]$OnlyTransactionControllers
     )
 
     $byLabel = @{}
@@ -57,15 +61,26 @@ function Parse-JmeterCsv {
     $totalErrors = 0
 
     # JMeter Transaction Controllers with parent="true" emit a parent-transaction
-    # row in the CSV in addition to the HTTP-sampler row for each request. The
-    # parent's success/fail tracking can diverge from the child's (we've seen
-    # TCs report ~100% failure while every child HTTP request returns 200 OK,
-    # likely due to redirect-chain accounting on the parent). Since the TC row
-    # duplicates the underlying HTTP measurement with less reliable success
-    # flags, skip it at parse time and let the HTTP-sampler row speak for itself.
+    # row in the CSV in addition to the HTTP-sampler row for each request.
     # Heuristic: TC labels in our .jmx files follow a "NN. Description" pattern
     # (e.g. "01. Open Homepage"). Locust samplers use plain names ("Homepage",
     # "Detail") that won't match. Adjust if naming conventions change.
+    #
+    # Default mode (Locust / legacy backoffice): drop TC rows and keep the
+    # HTTP-sampler rows. Rationale: the TC parent row's success/fail flag can
+    # diverge from the child's (we've seen TCs report ~100% failure while every
+    # child HTTP request returned 200 OK, likely due to redirect-chain
+    # accounting on the parent), so the HTTP-sampler row is the more reliable
+    # source of latency + success when both exist.
+    #
+    # -OnlyTransactionControllers mode (backoffice JMeter runs): invert the
+    # filter — keep TC rows and drop the per-HTTP-request rows. Backoffice
+    # .jmx files are organised as "01. <step>", "02. <step>", … sequences;
+    # showing every underlying GET/POST in the workbook clutters the sampler
+    # picker with dozens of low-signal rows per .jmx. The TC row is the unit
+    # of business-meaningful work for those tests. Trade-off: the success/fail
+    # caveat above now drives error_rate for backoffice runs; revisit by
+    # deriving TC success from child rows if it becomes a false-positive issue.
     $tcLabelPattern = '^\d+\.\s+'
 
     $reader = [System.IO.StreamReader]::new($Path)
@@ -77,7 +92,11 @@ function Parse-JmeterCsv {
             $elapsed = 0
             if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
             $label   = $cols[2]
-            if ($label -match $tcLabelPattern) { continue }
+            if ($OnlyTransactionControllers) {
+                if ($label -notmatch $tcLabelPattern) { continue }
+            } else {
+                if ($label -match $tcLabelPattern) { continue }
+            }
             $success = $cols[7] -ieq 'true'
 
             $bucket = $byLabel[$label]
