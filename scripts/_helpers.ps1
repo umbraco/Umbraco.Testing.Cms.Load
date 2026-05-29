@@ -64,7 +64,7 @@ function Parse-JmeterCsv {
     # duplicates the underlying HTTP measurement with less reliable success
     # flags, skip it at parse time and let the HTTP-sampler row speak for itself.
     # Heuristic: TC labels in our .jmx files follow a "NN. Description" pattern
-    # (e.g. "01. Open Home page"). Locust samplers use plain names ("Homepage",
+    # (e.g. "01. Open Homepage"). Locust samplers use plain names ("Homepage",
     # "Detail") that won't match. Adjust if naming conventions change.
     $tcLabelPattern = '^\d+\.\s+'
 
