@@ -559,6 +559,13 @@ stages:
               inlineScript: |
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
                 $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                # -NoFailOnRegression: report-only, never hard-fails the stage.
+                # TEMPORARY. The scenario_name discriminator (publish step) just
+                # reset the backoffice baseline keys, and the baseline window
+                # still holds pre-auth-fix runs (~100% error / multi-minute p95),
+                # so the gate would fire on bookkeeping noise, not real regressions.
+                # Re-enable blocking (drop this flag) once each cell has >=3 clean
+                # post-fix runs (matches check-regression's MinBaselineRuns).
                 & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" `
                     -Scenario '${{ parameters.scenario }}' `
                     -Major $major `
@@ -568,7 +575,8 @@ stages:
                     -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md" `
                     -LogAnalyticsDceUri '$(monitoringDceUri)' `
                     -LogAnalyticsDcrImmutableId '$(monitoringDcrImmutableId)' `
-                    -LogAnalyticsStreamName '$(monitoringStreamName)'
+                    -LogAnalyticsStreamName '$(monitoringStreamName)' `
+                    -NoFailOnRegression
           - task: PublishBuildArtifacts@1
             displayName: Publish regression report
             condition: succeededOrFailed()
