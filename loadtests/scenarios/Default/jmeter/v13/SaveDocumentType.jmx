@@ -219,6 +219,18 @@
               <boolProp name="RegexExtractor.default_empty_value">false</boolProp>
             </RegexExtractor>
             <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert xsrf_token extracted (auth ok)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="auth_sentinel">TOKEN_NOT_FOUND</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">xsrf_token not extracted - auth chain failed (got TOKEN_NOT_FOUND)</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">20</intProp>
+              <stringProp name="Assertion.scope">variable</stringProp>
+              <stringProp name="Scope.variable">xsrf_token</stringProp>
+            </ResponseAssertion>
+            <hashTree/>
             <BeanShellPostProcessor guiclass="TestBeanGUI" testclass="BeanShellPostProcessor" testname="set property UMB-XSRF-TOKEN" enabled="true">
               <stringProp name="filename"></stringProp>
               <stringProp name="parameters"></stringProp>

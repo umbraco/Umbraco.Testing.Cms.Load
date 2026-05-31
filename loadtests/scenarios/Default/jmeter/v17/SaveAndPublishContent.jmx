@@ -345,6 +345,7 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/security/back-office/authorize (capture code)" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/security/back-office/authorize</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">false</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
             <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
             <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
@@ -434,6 +435,18 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
               <stringProp name="RegexExtractor.match_number">1</stringProp>
               <boolProp name="RegexExtractor.default_empty_value">false</boolProp>
             </RegexExtractor>
+            <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert oauth_code extracted (auth ok)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="auth_sentinel">CODE_NOT_FOUND</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">oauth_code not extracted - auth chain failed (got CODE_NOT_FOUND)</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">20</intProp>
+              <stringProp name="Assertion.scope">variable</stringProp>
+              <stringProp name="Scope.variable">oauth_code</stringProp>
+            </ResponseAssertion>
             <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST /umbraco/management/api/v1/security/back-office/token (authorization_code)" enabled="true">
@@ -1161,7 +1174,7 @@ try {
               </hashTree>
             </hashTree>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/document/${target_document_id}" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET document/{id}" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/document/${target_document_id}</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
@@ -1292,7 +1305,7 @@ try {
             </HeaderManager>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/document-type/${document_type_id}" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET document-type/{id}" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/document-type/${document_type_id}</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
@@ -1356,7 +1369,7 @@ try {
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
         <hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT /umbraco/management/api/v1.1/document/${target_document_id}/validate" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT document/{id}/validate" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1.1/document/${target_document_id}/validate</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">PUT</stringProp>
@@ -1399,7 +1412,7 @@ try {
             </HeaderManager>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT /umbraco/management/api/v1/document/${target_document_id} (save)" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT document/{id} (save)" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/document/${target_document_id}</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">PUT</stringProp>
@@ -1442,7 +1455,7 @@ try {
             </HeaderManager>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/document/${target_document_id} (after save)" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET document/{id} (after save)" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/document/${target_document_id}</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
@@ -1471,7 +1484,7 @@ try {
             </HeaderManager>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT /umbraco/management/api/v1/document/${target_document_id}/publish" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT document/{id}/publish" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/document/${target_document_id}/publish</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">PUT</stringProp>
@@ -1639,7 +1652,7 @@ try {
             </JSR223PostProcessor>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET ${content_url}" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET published page (frontend verify)" enabled="true">
             <stringProp name="HTTPSampler.path">${content_url}</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>

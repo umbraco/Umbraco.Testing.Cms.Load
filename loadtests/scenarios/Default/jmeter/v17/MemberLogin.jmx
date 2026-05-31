@@ -178,6 +178,18 @@ vars.put(&quot;member_username&quot;, &quot;TestMember_&quot; + idx)</stringProp
               <boolProp name="RegexExtractor.default_empty_value">false</boolProp>
             </RegexExtractor>
             <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert csrfToken extracted (auth ok)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="auth_sentinel">TOKEN_NOT_FOUND</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">csrfToken not extracted - auth chain failed (got TOKEN_NOT_FOUND)</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">20</intProp>
+              <stringProp name="Assertion.scope">variable</stringProp>
+              <stringProp name="Scope.variable">csrfToken</stringProp>
+            </ResponseAssertion>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="02. Login with valid member account" enabled="true">
