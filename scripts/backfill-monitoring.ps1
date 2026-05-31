@@ -112,15 +112,27 @@ if ($blobs.Count -eq 0) {
     return
 }
 
-# 4. Token for the Logs Ingestion API. Lifetime is ~1h — fine for any realistic
-#    run count. If you somehow have thousands of blobs, refresh in the loop.
-$token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
+# 4. Token for the Logs Ingestion API. Lifetime is ~1h. A bulk historical
+#    backfill (this script's main use) can run longer than that, so refresh on
+#    a timer inside the loop — an expired token would otherwise surface only as
+#    per-blob "ingestion failed" warnings that look like a data problem.
+function Get-IngestionToken {
+    az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
+}
+$token = Get-IngestionToken
+$tokenAcquiredAt = Get-Date
 
 # 5. Per-blob: download, parse NDJSON, dedup by run_id, mirror the publish
 #    script's TimeGenerated logic (one timestamp per run = the run start), POST.
 $stats = @{ ingested = 0; skipped = 0; failed = 0; rows = 0 }
 foreach ($blob in $blobs) {
     $blobName = $blob.name
+    # Refresh well before the ~1h token lifetime so a long backfill never POSTs
+    # with an expired token.
+    if (((Get-Date) - $tokenAcquiredAt).TotalMinutes -ge 45) {
+        $token = Get-IngestionToken
+        $tokenAcquiredAt = Get-Date
+    }
     $tmp = Join-Path ([IO.Path]::GetTempPath()) "loadtest-backfill-$([Guid]::NewGuid()).ndjson"
     try {
         az storage blob download `
