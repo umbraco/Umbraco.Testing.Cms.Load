@@ -45,6 +45,33 @@ function Get-UmbracoMajor([string] $Version) {
 #      AllElapsed = List[int]    # only when -BuildAggregate
 #      TotalErrors = int         # only when -BuildAggregate
 #   }
+# Split one CSV line into fields, honoring RFC-4180 double-quoting (a quoted
+# field may contain commas; "" is a literal quote). JMeter quotes any field
+# containing the delimiter, so responseMessage/failureMessage/URL values with
+# commas would otherwise shift later columns and corrupt the success flag.
+# Note: still assumes one sample per physical line — a quoted field containing
+# a newline (rare; only some failureMessages) is not reassembled.
+function Split-CsvLine ([string]$Line) {
+    $fields = New-Object 'System.Collections.Generic.List[string]'
+    $sb = New-Object System.Text.StringBuilder
+    $inQuotes = $false
+    for ($i = 0; $i -lt $Line.Length; $i++) {
+        $c = $Line[$i]
+        if ($inQuotes) {
+            if ($c -eq '"') {
+                if ($i + 1 -lt $Line.Length -and $Line[$i + 1] -eq '"') { [void]$sb.Append('"'); $i++ }
+                else { $inQuotes = $false }
+            } else { [void]$sb.Append($c) }
+        } else {
+            if ($c -eq '"') { $inQuotes = $true }
+            elseif ($c -eq ',') { $fields.Add($sb.ToString()); [void]$sb.Clear() }
+            else { [void]$sb.Append($c) }
+        }
+    }
+    $fields.Add($sb.ToString())
+    return $fields
+}
+
 function Parse-JmeterCsv {
     [CmdletBinding()]
     param(
@@ -85,19 +112,34 @@ function Parse-JmeterCsv {
 
     $reader = [System.IO.StreamReader]::new($Path)
     try {
-        $reader.ReadLine() | Out-Null  # discard header
+        # Resolve columns by header name rather than fixed position — JMeter
+        # column order is configurable. Fall back to the conventional indices
+        # (elapsed=1, label=2, success=7) if a header field is missing.
+        $headerLine = $reader.ReadLine()
+        $idxElapsed = 1; $idxLabel = 2; $idxSuccess = 7
+        if ($headerLine) {
+            $header = Split-CsvLine $headerLine
+            for ($h = 0; $h -lt $header.Count; $h++) {
+                switch ($header[$h]) {
+                    'elapsed' { $idxElapsed = $h }
+                    'label'   { $idxLabel   = $h }
+                    'success' { $idxSuccess = $h }
+                }
+            }
+        }
+        $minCols = [Math]::Max($idxSuccess, [Math]::Max($idxElapsed, $idxLabel)) + 1
         while ($null -ne ($line = $reader.ReadLine())) {
-            $cols = $line.Split(',')
-            if ($cols.Length -lt 8) { continue }
+            $cols = Split-CsvLine $line
+            if ($cols.Count -lt $minCols) { continue }
             $elapsed = 0
-            if (-not [int]::TryParse($cols[1], [ref]$elapsed)) { continue }
-            $label   = $cols[2]
+            if (-not [int]::TryParse($cols[$idxElapsed], [ref]$elapsed)) { continue }
+            $label   = $cols[$idxLabel]
             if ($OnlyTransactionControllers) {
                 if ($label -notmatch $tcLabelPattern) { continue }
             } else {
                 if ($label -match $tcLabelPattern) { continue }
             }
-            $success = $cols[7] -ieq 'true'
+            $success = $cols[$idxSuccess] -ieq 'true'
 
             $bucket = $byLabel[$label]
             if (-not $bucket) {

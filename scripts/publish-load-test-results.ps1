@@ -102,7 +102,10 @@ $metadata = [ordered]@{
     # Schema name stays `cold_start` — it describes the test condition
     # (was warmup skipped, i.e. cold-start exercised). $SkipWarmup is the
     # procedural pipeline-side phrasing; both mean the same boolean.
-    cold_start       = [bool]::Parse($SkipWarmup)
+    # Tolerant parse: the pipeline passes 'True'/'False', but any other/empty
+    # value should degrade to $false, not hard-throw the whole publish before a
+    # single row is emitted (which [bool]::Parse would do under -ErrorAction Stop).
+    cold_start       = ($SkipWarmup -ieq 'true')
 }
 
 # Carry the .jmx stem on every row so future dashboard queries can split
@@ -127,15 +130,24 @@ function Get-MetricSummary {
         # 'plan_CpuPercentage'). Summary keys still come back unprefixed so the
         # caller does its own `plan_*` prefixing of $metadata, matching prior
         # behaviour and the DCR column names on LoadTestSummary_CL.
-        [string]$Prefix = ''
+        [string]$Prefix = '',
+        # Aggregation to request from Azure Monitor. CPU/DTU are gauges → Average
+        # (the default). Count metrics like Http5xx/Http4xx are only meaningful as
+        # Total: their Average is a near-zero per-minute mean and is inconsistent
+        # with the ALT appComponents config, which registers them as Total. Azure
+        # Monitor names the per-point property after the aggregation, so we read
+        # $_.$aggProp rather than a hardcoded .average.
+        [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
+        [string]$Aggregation = 'Average'
     )
+    $aggProp = $Aggregation.ToLowerInvariant()
     $summary = @{}
     $series  = New-Object System.Collections.Generic.List[object]
     try {
         $json = az monitor metrics list `
             --resource $ResourceId `
             --metric ($Metrics -join ',') `
-            --aggregation Average `
+            --aggregation $Aggregation `
             --start-time $StartTime `
             --end-time $EndTime `
             --interval PT1M `
@@ -151,7 +163,7 @@ function Get-MetricSummary {
             # (instance × minute) points; _max is the peak load on any instance
             # at any minute (the saturation lens).
             $points = @($metric.timeseries | ForEach-Object { $_.data } |
-                Where-Object { $null -ne $_.average })
+                Where-Object { $null -ne $_.$aggProp })
             if ($points.Count -eq 0) {
                 $summary["${name}_avg"] = $null
                 $summary["${name}_max"] = $null
@@ -171,10 +183,10 @@ function Get-MetricSummary {
                 $series.Add([pscustomobject]@{
                     TimeGenerated = [string]$p.timeStamp
                     metric_name   = $prefixedName
-                    value         = [double]$p.average
+                    value         = [double]$p.$aggProp
                 })
             }
-            $values = @($points | ForEach-Object { [double]$_.average })
+            $values = @($points | ForEach-Object { [double]$_.$aggProp })
             $summary["${name}_avg"] = [math]::Round((($values | Measure-Object -Average).Average), 2)
             $summary["${name}_max"] = [math]::Round((($values | Measure-Object -Maximum).Maximum), 2)
         }
@@ -356,7 +368,8 @@ if ($windowSec -ge $minWindowSec) {
         -ResourceId $AppServiceResourceId `
         -Metrics @("Http5xx", "Http4xx") `
         -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
-        -Prefix 'app'
+        -Prefix 'app' `
+        -Aggregation Total
     foreach ($k in $appResult.Summary.Keys) { $metadata["app_$k"] = $appResult.Summary[$k] }
     foreach ($p in $appResult.Series) { $seriesPoints.Add($p) }
 }
@@ -436,7 +449,14 @@ if ($engineFiles.Count -gt 0) {
 
         $merged = [ordered]@{}
         foreach ($k in $metadata.Keys) { $merged[$k] = $metadata[$k] }
-        $merged.scenario_name    = $label
+        # Backoffice runs iterate multiple .jmx files whose Transaction
+        # Controllers share labels ("01. Open backoffice", "02. Login", ...).
+        # The workbook groups the sampler dimension on scenario_name and does
+        # not read jmeter_test_name, so without a discriminator the same-named
+        # TCs from different .jmx merge into one cell. Prefix the .jmx stem for
+        # backoffice (JmeterTestName set) to keep them distinct; frontend
+        # (Locust) rows keep the bare label.
+        $merged.scenario_name    = if ([string]::IsNullOrWhiteSpace($JmeterTestName)) { $label } else { "$JmeterTestName / $label" }
         $merged.request_type     = "HTTP"  # JMeter format doesn't carry the Locust task type
         $merged.request_count    = $reqCount
         $merged.failure_count    = $failCount
