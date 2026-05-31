@@ -419,7 +419,7 @@ The `workload` queue-time parameter selects which load harness runs against the 
 | .jmx | Hits | Auth |
 |---|---|---|
 | `ViewHomePage` | `GET /` | none (sanity / baseline) |
-| `MemberLogin` | `POST /umbraco/api/memberlogin/login` (frontend member endpoint) | form + anti-forgery (currently unhandled — known limitation, see below) |
+| `MemberLogin` | `POST /umbraco/api/memberlogin/login` (frontend member endpoint) | form + anti-forgery token (extracted from the login page and sent) |
 | `SaveContent` | `/umbraco/management/api/v1/.../authorize` then `POST /content/PostSave` | OAuth + PKCE (admin) |
 | `SaveAndPublishContent` | same as SaveContent + publish step | same |
 | `SaveDocumentType` | schema mutation API | same |
@@ -437,7 +437,6 @@ Each `.jmx` gets its own ALT testId (`umbraco-lt-{scenario}-bo-{jmxStem}`), its 
 
 These are documented for the next person — fixes are in scope for follow-up work, not in any of the current commits.
 
-- **MemberLogin always fails 100%.** `MemberLoginController.Login` has `[ValidateAntiForgeryToken]` but the `.jmx` doesn't extract or send `__RequestVerificationToken`. Every POST returns 400 before reaching the controller. Fix requires either (a) adding a `RegexExtractor` to the `.jmx` after the GET, or (b) switching the `.jmx` to the JSON endpoint `/umbraco/api/memberauth/login` (which is anti-forgery-exempt — see the [TestDataSeeder README](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/) for the table of endpoints).
 - **`TestUser_*` accounts have no password.** `UserSeeder.cs` creates them but never calls `SetPasswordAsync`. The only backoffice account that can authenticate is the Terraform unattended-install admin (`loadtest@example.invalid` / `LoadTest123!`), so all auth-requiring `.jmx` files use that single credential. The `.jmx` files happen to use a property named `backoffice_username` for this — misleading but accurate to what works.
 - **Member prefix is hardcoded in the Groovy preprocessor.** `MemberLogin.jmx` builds `member_username = "TestMember_<random index>"` with `"TestMember_"` as a string literal. The seeder default IS `TestMember_`, so this works in practice — but if someone customizes `Configuration:Prefixes:Member`, MemberLogin would target a non-existent user pattern. Fix is straightforward: add `memberPrefix` to the .jmx User Defined Variables as `${__P(memberPrefix,TestMember_)}` and update the Groovy to read it.
 
