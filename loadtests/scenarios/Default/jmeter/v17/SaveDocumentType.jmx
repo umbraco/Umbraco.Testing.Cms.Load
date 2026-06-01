@@ -5,8 +5,6 @@
       <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
         <collectionProp name="Arguments.arguments"/>
       </elementProp>
-      <boolProp name="TestPlan.functional_mode">false</boolProp>
-      <boolProp name="TestPlan.serialize_threadgroups">false</boolProp>
     </TestPlan>
     <hashTree>
       <Arguments guiclass="ArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
@@ -76,85 +74,13 @@
         <boolProp name="CacheManager.controlledByThread">false</boolProp>
       </CacheManager>
       <hashTree/>
-      <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="View Results Tree" enabled="true">
-        <boolProp name="ResultCollector.error_logging">false</boolProp>
-        <objProp>
-          <name>saveConfig</name>
-          <value class="SampleSaveConfiguration">
-            <time>true</time>
-            <latency>true</latency>
-            <timestamp>true</timestamp>
-            <success>true</success>
-            <label>true</label>
-            <code>true</code>
-            <message>true</message>
-            <threadName>true</threadName>
-            <dataType>false</dataType>
-            <encoding>false</encoding>
-            <assertions>true</assertions>
-            <subresults>false</subresults>
-            <responseData>false</responseData>
-            <samplerData>false</samplerData>
-            <xml>false</xml>
-            <fieldNames>true</fieldNames>
-            <responseHeaders>false</responseHeaders>
-            <requestHeaders>false</requestHeaders>
-            <responseDataOnError>true</responseDataOnError>
-            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
-            <assertionsResultsToSave>0</assertionsResultsToSave>
-            <bytes>true</bytes>
-            <hostname>true</hostname>
-            <threadCounts>true</threadCounts>
-            <sampleCount>true</sampleCount>
-          </value>
-        </objProp>
-        <stringProp name="filename"></stringProp>
-      </ResultCollector>
-      <hashTree/>
-      <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Aggregate Report" enabled="true">
-        <boolProp name="ResultCollector.error_logging">false</boolProp>
-        <objProp>
-          <name>saveConfig</name>
-          <value class="SampleSaveConfiguration">
-            <time>true</time>
-            <latency>true</latency>
-            <timestamp>true</timestamp>
-            <success>true</success>
-            <label>true</label>
-            <code>true</code>
-            <message>true</message>
-            <threadName>true</threadName>
-            <dataType>true</dataType>
-            <encoding>false</encoding>
-            <assertions>true</assertions>
-            <subresults>true</subresults>
-            <responseData>false</responseData>
-            <samplerData>false</samplerData>
-            <xml>false</xml>
-            <fieldNames>true</fieldNames>
-            <responseHeaders>false</responseHeaders>
-            <requestHeaders>false</requestHeaders>
-            <responseDataOnError>false</responseDataOnError>
-            <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
-            <assertionsResultsToSave>0</assertionsResultsToSave>
-            <bytes>true</bytes>
-            <sentBytes>true</sentBytes>
-            <url>true</url>
-            <threadCounts>true</threadCounts>
-            <idleTime>true</idleTime>
-            <connectTime>true</connectTime>
-          </value>
-        </objProp>
-        <stringProp name="filename"></stringProp>
-      </ResultCollector>
-      <hashTree/>
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Save document type">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
-        <stringProp name="ThreadGroup.on_sample_error">stopthread</stringProp>
+        <stringProp name="ThreadGroup.on_sample_error">startnextloop</stringProp>
         <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="Loop Controller">
           <intProp name="LoopController.loops">-1</intProp>
           <boolProp name="LoopController.continue_forever">false</boolProp>
@@ -272,7 +198,7 @@
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="client_id" elementType="HTTPArgument">
@@ -422,6 +348,7 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/security/back-office/authorize" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/security/back-office/authorize</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">false</boolProp>
             <stringProp name="HTTPSampler.method">GET</stringProp>
             <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
             <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
@@ -430,7 +357,7 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="client_id" elementType="HTTPArgument">
@@ -512,6 +439,18 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
               <boolProp name="RegexExtractor.default_empty_value">false</boolProp>
             </RegexExtractor>
             <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert oauth_code extracted (auth ok)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="auth_sentinel">CODE_NOT_FOUND</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">oauth_code not extracted - auth chain failed (got CODE_NOT_FOUND)</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">20</intProp>
+              <stringProp name="Assertion.scope">variable</stringProp>
+              <stringProp name="Scope.variable">oauth_code</stringProp>
+            </ResponseAssertion>
+            <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="POST /umbraco/management/api/v1/security/back-office/token" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/security/back-office/token</stringProp>
@@ -536,7 +475,7 @@ vars.put(&quot;code_challenge&quot;, Base64.urlEncoder.withoutPadding().encodeTo
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="code" elementType="HTTPArgument">
@@ -649,7 +588,7 @@ try {
                 <elementProp name="redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/oauth_complete</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/oauth_complete</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
                 <elementProp name="refresh_token" elementType="HTTPArgument">
@@ -1636,7 +1575,7 @@ try {
             </JSONPostProcessor>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/document-type/${randomDocTypeId}" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET document-type/{id} (open)" enabled="true">
             <stringProp name="HTTPSampler.domain">${server}</stringProp>
             <stringProp name="HTTPSampler.port">${port}</stringProp>
             <stringProp name="HTTPSampler.protocol">${protocol}</stringProp>
@@ -1705,7 +1644,7 @@ import groovy.json.JsonOutput
 
 def body = prev.getResponseDataAsString()
 def json = new JsonSlurper().parseText(body)
-// new name = 'LoadTest_' + timestamp
+// new name = &apos;LoadTest_&apos; + timestamp
 json.name = &quot;LoadTest_&quot; + System.currentTimeMillis()
 vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
             </JSR223PostProcessor>
@@ -1724,7 +1663,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
             <boolProp name="ForeachController.useSeparator">true</boolProp>
           </ForeachController>
           <hashTree>
-            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/data-type/${currentDataTypeId}" enabled="true">
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET data-type/{id}" enabled="true">
               <stringProp name="HTTPSampler.domain">${server}</stringProp>
               <stringProp name="HTTPSampler.port">${port}</stringProp>
               <stringProp name="HTTPSampler.protocol">${protocol}</stringProp>
@@ -1928,7 +1867,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
           <boolProp name="TransactionController.includeTimers">false</boolProp>
         </TransactionController>
         <hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT /umbraco/management/api/v1/document-type/${randomDocTypeId}" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="PUT document-type/{id}" enabled="true">
             <stringProp name="HTTPSampler.domain">${server}</stringProp>
             <stringProp name="HTTPSampler.port">${port}</stringProp>
             <stringProp name="HTTPSampler.protocol">${protocol}</stringProp>
@@ -2002,7 +1941,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
             </HeaderManager>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/document-type/${randomDocTypeId}" enabled="true">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET document-type/{id} (after save)" enabled="true">
             <stringProp name="HTTPSampler.domain">${server}</stringProp>
             <stringProp name="HTTPSampler.port">${port}</stringProp>
             <stringProp name="HTTPSampler.protocol">${protocol}</stringProp>
@@ -2269,7 +2208,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
                 <elementProp name="post_logout_redirect_uri" elementType="HTTPArgument">
                   <boolProp name="HTTPArgument.always_encode">true</boolProp>
                   <stringProp name="Argument.name">post_logout_redirect_uri</stringProp>
-                  <stringProp name="Argument.value">${protocol}://${server}:${port}/umbraco/logout</stringProp>
+                  <stringProp name="Argument.value">${protocol}://${server}/umbraco/logout</stringProp>
                   <stringProp name="Argument.metadata">=</stringProp>
                 </elementProp>
               </collectionProp>

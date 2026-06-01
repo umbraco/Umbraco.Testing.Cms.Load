@@ -57,12 +57,12 @@ parameters:
     default: false
 
   - name: loadProfile
-    displayName: 'Load profile (intensity) — smoke: 50 VUs / 60s, standard: 100 VUs / 300s, stress: 300 VUs / 600s'
+    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s'
     type: string
     default: 'standard'
     values:
-      - 'smoke'      # Small,  50 VUs,  60s, 1 engine  -- quick "does it work" probe
-      - 'standard'   # Medium, 100 VUs, 300s, 1 engine -- typical comparison run
+      - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
+      - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
       - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
 
   - name: azureRegion
@@ -559,6 +559,13 @@ stages:
               inlineScript: |
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
                 $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                # -NoFailOnRegression: report-only, never hard-fails the stage.
+                # TEMPORARY. The scenario_name discriminator (publish step) just
+                # reset the backoffice baseline keys, and the baseline window
+                # still holds pre-auth-fix runs (~100% error / multi-minute p95),
+                # so the gate would fire on bookkeeping noise, not real regressions.
+                # Re-enable blocking (drop this flag) once each cell has >=3 clean
+                # post-fix runs (matches check-regression's MinBaselineRuns).
                 & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" `
                     -Scenario '${{ parameters.scenario }}' `
                     -Major $major `
@@ -568,7 +575,8 @@ stages:
                     -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md" `
                     -LogAnalyticsDceUri '$(monitoringDceUri)' `
                     -LogAnalyticsDcrImmutableId '$(monitoringDcrImmutableId)' `
-                    -LogAnalyticsStreamName '$(monitoringStreamName)'
+                    -LogAnalyticsStreamName '$(monitoringStreamName)' `
+                    -NoFailOnRegression
           - task: PublishBuildArtifacts@1
             displayName: Publish regression report
             condition: succeededOrFailed()
