@@ -69,7 +69,9 @@ $dotnetVersion = switch ($umbracoMajor) {
     default { $null }
 }
 if (-not $dotnetVersion) {
-    Write-PipelineError "Umbraco $UmbracoVersion is unsupported (this pipeline targets v13–v18). Extend the major→runtime map in resolve-run-config.ps1 when a new major is supported."
+    # Note the runnable set is narrower than this TFM map: the seeder gate below
+    # blocks 14/15/16. The honest "what can actually run" answer is v13, v17, v18.
+    Write-PipelineError "Umbraco $UmbracoVersion is unsupported. This pipeline supports v13, v17, and v18 (the majors with a published TestDataSeeder build; v18 reuses v17's). Extend the major→runtime map in resolve-run-config.ps1 when a new major is supported."
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 
