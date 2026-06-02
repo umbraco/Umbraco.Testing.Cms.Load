@@ -531,12 +531,19 @@ az storage blob upload `
     --name "$blobPrefix/summary.ndjson" `
     --overwrite | Out-Null
 
-# Drop the *-extracted working dirs before the raw upload. We unpacked them only
-# to scan engine_results.csv; their contents already live inside the results.zip
-# that --pattern "*" uploads, so keeping them would double every engine CSV in
-# blob storage (and the history container has no expiry beyond the lifecycle tier).
+# Trim redundant artifacts before the raw upload (the history container has no
+# expiry beyond the lifecycle tier, so anything uploaded here is kept forever):
+#  - *-extracted working dirs: unpacked only to scan engine_results.csv; their
+#    contents already live inside results.zip, so keeping them doubles every CSV.
+#  - report.zip: ALT's generated HTML report. Nothing in this repo consumes it
+#    (the parser reads results.zip) and the same report is in the Azure portal
+#    run view, so archiving it here is pure bloat.
+# results.zip is deliberately kept — it carries the raw per-request data that
+# re-analysis may need beyond what summary.ndjson surfaces.
 Get-ChildItem -Path $ResultsDir -Recurse -Directory -Filter '*-extracted' -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $ResultsDir -Recurse -File -Filter 'report.zip' -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 
 # Raw artifacts kept for analyses that need fields the summary doesn't surface.
 az storage blob upload-batch `
