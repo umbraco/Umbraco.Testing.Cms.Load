@@ -491,7 +491,7 @@ try {
     def json = new JsonSlurper().parseText(body)
     def nodes = json.children?.findAll { it.id != &quot;-20&quot; }
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def node = nodes[new Random().nextInt(nodes.size()-4)]
+        def node = nodes[new Random().nextInt(nodes.size())]
         def id = node.id.toString()
         def cssClasses = node.cssClasses
         def isNotPublished = false
@@ -683,7 +683,7 @@ try {
         </TransactionController>
         <hashTree>
           <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published" enabled="true">
-            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_root&quot;) == &quot;true&quot;)}</stringProp>
+            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
             <boolProp name="IfController.useExpression">true</boolProp>
           </IfController>
@@ -856,7 +856,7 @@ try {
               <hashTree/>
             </hashTree>
             <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l1 found and published" enabled="true">
-              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_L1_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l1&quot;) == &quot;true&quot;)}</stringProp>
+              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_L1_NOT_FOUND&quot;)}</stringProp>
               <boolProp name="IfController.evaluateAll">false</boolProp>
               <boolProp name="IfController.useExpression">true</boolProp>
             </IfController>
@@ -1021,7 +1021,7 @@ try {
                 <hashTree/>
               </hashTree>
               <IfController guiclass="IfControllerPanel" testclass="IfController" testname="IF node_id_l2 found and published" enabled="true">
-                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_L2_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l2&quot;) == &quot;true&quot;)}</stringProp>
+                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_L2_NOT_FOUND&quot;)}</stringProp>
                 <boolProp name="IfController.evaluateAll">false</boolProp>
                 <boolProp name="IfController.useExpression">true</boolProp>
               </IfController>

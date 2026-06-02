@@ -858,7 +858,7 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def item = items[new Random().nextInt(items.size()-4)]
+        def item = items[new Random().nextInt(items.size())]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -882,6 +882,18 @@ try {
               </stringProp>
             </JSR223PostProcessor>
             <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert root content discovered (seed ok)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="discovery_sentinel">ROOT_CONTENT_ID_NOT_FOUND</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">root_content_id not discovered - seeded content missing (got ROOT_CONTENT_ID_NOT_FOUND); the save block would otherwise be silently skipped</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">20</intProp>
+              <stringProp name="Assertion.scope">variable</stringProp>
+              <stringProp name="Scope.variable">root_content_id</stringProp>
+            </ResponseAssertion>
+            <hashTree/>
           </hashTree>
         </hashTree>
         <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="04. Open an existing content" enabled="true">
@@ -890,7 +902,7 @@ try {
         </TransactionController>
         <hashTree>
           <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published" enabled="true">
-            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_root&quot;) == &quot;true&quot;)}</stringProp>
+            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
             <boolProp name="IfController.useExpression">true</boolProp>
           </IfController>
@@ -984,7 +996,7 @@ try {
               <hashTree/>
             </hashTree>
             <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l1 found and published" enabled="true">
-              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_ID_L1_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l1&quot;) == &quot;true&quot;)}</stringProp>
+              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_ID_L1_NOT_FOUND&quot;)}</stringProp>
               <boolProp name="IfController.evaluateAll">false</boolProp>
               <boolProp name="IfController.useExpression">true</boolProp>
             </IfController>
@@ -1078,7 +1090,7 @@ try {
                 <hashTree/>
               </hashTree>
               <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l2 found and published" enabled="true">
-                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_ID_L2_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l2&quot;) == &quot;true&quot;)}</stringProp>
+                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_ID_L2_NOT_FOUND&quot;)}</stringProp>
                 <boolProp name="IfController.evaluateAll">false</boolProp>
                 <boolProp name="IfController.useExpression">true</boolProp>
               </IfController>
