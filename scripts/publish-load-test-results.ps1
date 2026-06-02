@@ -47,6 +47,14 @@ param(
     # the field is then omitted from the row instead of being written as 0.
     [string]$SeederDurationSeconds = "",
 
+    # JMeter test plan stem (e.g. 'ViewHomePage', 'MemberLogin'). Empty for
+    # frontend (Locust) runs and the single-.jmx legacy backoffice path. When
+    # set, the publish step (a) suffixes the blob path with the .jmx stem so
+    # parallel .jmx publishes in the same pipeline don't overwrite each other,
+    # and (b) tags every LA row with jmeter_test_name so the dashboard can
+    # separate per-.jmx samplers when (and if) the DCR column is added.
+    [string]$JmeterTestName = "",
+
     # Optional Logs Ingestion API target. When DceUri + DcrImmutableId + the
     # SUMMARY stream name are provided, the script POSTs each summary row to
     # the Log Analytics custom table in addition to the blob upload (the
@@ -94,7 +102,17 @@ $metadata = [ordered]@{
     # Schema name stays `cold_start` — it describes the test condition
     # (was warmup skipped, i.e. cold-start exercised). $SkipWarmup is the
     # procedural pipeline-side phrasing; both mean the same boolean.
-    cold_start       = [bool]::Parse($SkipWarmup)
+    # Tolerant parse: the pipeline passes 'True'/'False', but any other/empty
+    # value should degrade to $false, not hard-throw the whole publish before a
+    # single row is emitted (which [bool]::Parse would do under -ErrorAction Stop).
+    cold_start       = ($SkipWarmup -ieq 'true')
+}
+
+# Carry the .jmx stem on every row so future dashboard queries can split
+# per-.jmx data. Stays empty for Locust runs — KQL `isnotempty()` filters
+# pick out backoffice rows when needed.
+if (-not [string]::IsNullOrWhiteSpace($JmeterTestName)) {
+    $metadata.jmeter_test_name = $JmeterTestName
 }
 
 # Server-side metrics from Azure Monitor over the load-test window. Latency-only
@@ -112,15 +130,24 @@ function Get-MetricSummary {
         # 'plan_CpuPercentage'). Summary keys still come back unprefixed so the
         # caller does its own `plan_*` prefixing of $metadata, matching prior
         # behaviour and the DCR column names on LoadTestSummary_CL.
-        [string]$Prefix = ''
+        [string]$Prefix = '',
+        # Aggregation to request from Azure Monitor. CPU/DTU are gauges → Average
+        # (the default). Count metrics like Http5xx/Http4xx are only meaningful as
+        # Total: their Average is a near-zero per-minute mean and is inconsistent
+        # with the ALT appComponents config, which registers them as Total. Azure
+        # Monitor names the per-point property after the aggregation, so we read
+        # $_.$aggProp rather than a hardcoded .average.
+        [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
+        [string]$Aggregation = 'Average'
     )
+    $aggProp = $Aggregation.ToLowerInvariant()
     $summary = @{}
     $series  = New-Object System.Collections.Generic.List[object]
     try {
         $json = az monitor metrics list `
             --resource $ResourceId `
             --metric ($Metrics -join ',') `
-            --aggregation Average `
+            --aggregation $Aggregation `
             --start-time $StartTime `
             --end-time $EndTime `
             --interval PT1M `
@@ -136,7 +163,7 @@ function Get-MetricSummary {
             # (instance × minute) points; _max is the peak load on any instance
             # at any minute (the saturation lens).
             $points = @($metric.timeseries | ForEach-Object { $_.data } |
-                Where-Object { $null -ne $_.average })
+                Where-Object { $null -ne $_.$aggProp })
             if ($points.Count -eq 0) {
                 $summary["${name}_avg"] = $null
                 $summary["${name}_max"] = $null
@@ -156,10 +183,10 @@ function Get-MetricSummary {
                 $series.Add([pscustomobject]@{
                     TimeGenerated = [string]$p.timeStamp
                     metric_name   = $prefixedName
-                    value         = [double]$p.average
+                    value         = [double]$p.$aggProp
                 })
             }
-            $values = @($points | ForEach-Object { [double]$_.average })
+            $values = @($points | ForEach-Object { [double]$_.$aggProp })
             $summary["${name}_avg"] = [math]::Round((($values | Measure-Object -Average).Average), 2)
             $summary["${name}_max"] = [math]::Round((($values | Measure-Object -Maximum).Maximum), 2)
         }
@@ -241,7 +268,13 @@ function Send-RowsToLogAnalytics {
 # the summary scalars (plan_*/sql_*/app_* in LoadTestSummary_CL) remain
 # authoritative for capacity verdicts.
 function Send-SeriesToLogAnalytics {
-    param([Parameter(Mandatory)] [object[]]$Points)
+    # AllowEmptyCollection because the window guard above legitimately produces
+    # zero points when the test fast-failed — without this attribute,
+    # PowerShell's strict array binding rejects empty arrays BEFORE the function
+    # body's early-return can fire, crashing the publish step (Bug B from the
+    # first end-to-end run, exposed when a downstream .jmx iteration had a
+    # ~2-second unusable window after an ALT validation failure).
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Points)
     if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsSeriesStreamName)) {
         return
     }
@@ -255,13 +288,17 @@ function Send-SeriesToLogAnalytics {
         # workbook's time-series chart renders true minute-by-minute.
         $rows = $Points | ForEach-Object {
             [pscustomobject]@{
-                TimeGenerated   = [string]$_.TimeGenerated
-                run_id          = [string]$BuildId
-                scenario        = [string]$Scenario
-                umbraco_version = [string]$UmbracoVersion
-                infra_tier      = [string]$Tier
-                metric_name     = [string]$_.metric_name
-                value           = [double]$_.value
+                TimeGenerated     = [string]$_.TimeGenerated
+                run_id            = [string]$BuildId
+                scenario          = [string]$Scenario
+                umbraco_version   = [string]$UmbracoVersion
+                infra_tier        = [string]$Tier
+                # Keeps the per-minute table queryable by .jmx for backoffice
+                # runs. Empty string for Locust runs and pre-feature backoffice
+                # rows; KQL `isnotempty()` separates them.
+                jmeter_test_name  = [string]$JmeterTestName
+                metric_name       = [string]$_.metric_name
+                value             = [double]$_.value
             }
         }
         $body = ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress -AsArray
@@ -331,7 +368,8 @@ if ($windowSec -ge $minWindowSec) {
         -ResourceId $AppServiceResourceId `
         -Metrics @("Http5xx", "Http4xx") `
         -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
-        -Prefix 'app'
+        -Prefix 'app' `
+        -Aggregation Total
     foreach ($k in $appResult.Summary.Keys) { $metadata["app_$k"] = $appResult.Summary[$k] }
     foreach ($p in $appResult.Series) { $seriesPoints.Add($p) }
 }
@@ -370,9 +408,16 @@ if ($engineFiles.Count -gt 0) {
     # Parse each engine CSV via the shared parser (Parse-JmeterCsv in _helpers.ps1);
     # merge the per-label buckets across engines. Single-engine runs trivially
     # become one parse call; multi-engine runs concatenate samples per label.
+    #
+    # Backoffice (JMeter) runs always set $JmeterTestName (the .jmx stem),
+    # while frontend (Locust) runs leave it empty. Use that as the signal to
+    # flip Parse-JmeterCsv into TC-only mode so the workbook shows the
+    # "01. <step>" transaction-controller rows instead of the dozens of
+    # underlying GET/POST sampler rows per .jmx.
+    $onlyTC = -not [string]::IsNullOrWhiteSpace($JmeterTestName)
     $byLabel = @{}
     foreach ($file in $engineFiles) {
-        $parsed = Parse-JmeterCsv -Path $file.FullName
+        $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC
         foreach ($kv in $parsed.ByLabel.GetEnumerator()) {
             $merged = $byLabel[$kv.Key]
             if (-not $merged) {
@@ -404,7 +449,14 @@ if ($engineFiles.Count -gt 0) {
 
         $merged = [ordered]@{}
         foreach ($k in $metadata.Keys) { $merged[$k] = $metadata[$k] }
-        $merged.scenario_name    = $label
+        # Backoffice runs iterate multiple .jmx files whose Transaction
+        # Controllers share labels ("01. Open backoffice", "02. Login", ...).
+        # The workbook groups the sampler dimension on scenario_name and does
+        # not read jmeter_test_name, so without a discriminator the same-named
+        # TCs from different .jmx merge into one cell. Prefix the .jmx stem for
+        # backoffice (JmeterTestName set) to keep them distinct; frontend
+        # (Locust) rows keep the bare label.
+        $merged.scenario_name    = if ([string]::IsNullOrWhiteSpace($JmeterTestName)) { $label } else { "$JmeterTestName / $label" }
         $merged.request_type     = "HTTP"  # JMeter format doesn't carry the Locust task type
         $merged.request_count    = $reqCount
         $merged.failure_count    = $failCount
@@ -443,7 +495,13 @@ $datePart        = $pipelineStarted.ToString("yyyy-MM-dd", [System.Globalization
 # Major = first dot-segment (e.g. '17' for '17.0.0' and '17.0.0-rc.1').
 $majorVersion = (Get-UmbracoMajor $UmbracoVersion).ToString()
 
+# When backoffice mode iterates multiple .jmx files in one pipeline run, each
+# .jmx must land at its own blob path or iteration N overwrites iteration N-1's
+# raw/ artifacts. Frontend (Locust) runs keep the legacy prefix shape unchanged.
 $blobPrefix = "$Scenario/$majorVersion/$UmbracoVersion/$Tier/${datePart}_$BuildId"
+if (-not [string]::IsNullOrWhiteSpace($JmeterTestName)) {
+    $blobPrefix = "$blobPrefix/$JmeterTestName"
+}
 # Write the summary OUTSIDE $ResultsDir so the upload-batch below (which uploads
 # everything in $ResultsDir to /raw) doesn't end up duplicating it under raw/.
 $summaryFile = Join-Path (Split-Path -Parent $ResultsDir) "summary.ndjson"

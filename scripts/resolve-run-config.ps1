@@ -23,6 +23,7 @@ param (
     [Parameter(Mandatory = $true)] [string]$PoolDtuOverride,
     [Parameter(Mandatory = $true)] [string]$AppSkuOverride,
     [Parameter(Mandatory = $true)] [ValidateSet('Auto', 'Small', 'Medium', 'Large', 'Massive')] [string]$SeederPresetOverride,
+    [Parameter(Mandatory = $true)] [ValidateSet('frontend', 'backoffice')] [string]$Workload,
     [Parameter(Mandatory = $true)] [string]$WorkspaceRoot
 )
 
@@ -41,8 +42,8 @@ if ($tiers.Count -eq 0) {
 }
 
 switch ($Profile) {
-    'smoke'    { $preset = 'Small';  $users = 50;  $spawn = 10; $duration = 60;  $engines = 1 }
-    'standard' { $preset = 'Medium'; $users = 100; $spawn = 10; $duration = 300; $engines = 1 }
+    'smoke'    { $preset = 'Small';  $users = 20;  $spawn = 10; $duration = 60;  $engines = 1 }
+    'standard' { $preset = 'Medium'; $users = 50;  $spawn = 10; $duration = 300; $engines = 1 }
     'stress'   { $preset = 'Large';  $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
 }
 
@@ -71,6 +72,33 @@ if (-not $dotnetVersion) {
     Write-PipelineError "Umbraco $UmbracoVersion is unsupported (this pipeline targets v13–v18). Extend the major→runtime map in resolve-run-config.ps1 when a new major is supported."
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
+
+# Validate that the chosen (scenario, workload) pair has the files the runner
+# will look for. Failing here costs nothing; failing 15 minutes into the
+# provision stage when generate-loadtest-config can't find a .jmx wastes
+# real Azure time and money.
+$scenarioRoot = Join-Path $WorkspaceRoot "loadtests/scenarios/$Scenario"
+if (-not (Test-Path -LiteralPath $scenarioRoot -PathType Container)) {
+    Write-PipelineError "Scenario '$Scenario' has no folder under loadtests/scenarios/. Available scenarios are the subfolders of loadtests/scenarios/."
+}
+if ($Workload -eq 'frontend') {
+    $locustfilePath = Join-Path $scenarioRoot 'locustfile.py'
+    if (-not (Test-Path -LiteralPath $locustfilePath)) {
+        Write-PipelineError "Workload=frontend selected but scenario '$Scenario' has no locustfile.py. Either add one or pick a different workload."
+    }
+} elseif ($Workload -eq 'backoffice') {
+    # Mirror the v17→v18 fallback used in generate-loadtest-config.ps1 and the
+    # seeder package map in install-umbraco-cms-on-appservice.ps1.
+    $jmeterMajor = if ($umbracoMajor -eq 18) { 17 } else { $umbracoMajor }
+    $jmeterDir = Join-Path $scenarioRoot "jmeter/v$jmeterMajor"
+    if (-not (Test-Path -LiteralPath $jmeterDir -PathType Container)) {
+        Write-PipelineError "Workload=backoffice selected but scenario '$Scenario' has no jmeter/v$jmeterMajor/ folder (looked at $jmeterDir). Add JMeter test plans there or pick a different scenario."
+    }
+    $jmxFiles = @(Get-ChildItem -Path $jmeterDir -Filter '*.jmx' -File -ErrorAction SilentlyContinue)
+    if ($jmxFiles.Count -eq 0) {
+        Write-PipelineError "Workload=backoffice selected but $jmeterDir contains no .jmx files."
+    }
+}
 
 # Mirror of $seederPackageVersions in
 # Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1.
@@ -109,6 +137,7 @@ Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$
 Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
 Write-Host "##vso[task.setvariable variable=resolvedPoolDtuOverride;isOutput=true]$poolDtuOverrideValue"
 Write-Host "##vso[task.setvariable variable=resolvedAppSkuOverride;isOutput=true]$appSkuOverrideValue"
+Write-Host "##vso[task.setvariable variable=resolvedWorkload;isOutput=true]$Workload"
 
 # prepare-test-cases.ps1 expands one entry × N tiers into N test cases and
 # emits the final testCasesJson + resolvedTestCases output variables.

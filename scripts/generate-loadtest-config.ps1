@@ -29,11 +29,55 @@ param(
     [Parameter(Mandatory = $true)] [string]$SqlDatabaseId,
     [Parameter(Mandatory = $true)] [string]$SqlDatabaseName,
 
+    # Workload selector: 'frontend' (Locust) or 'backoffice' (JMeter). For
+    # backoffice mode, UmbracoVersion is required to pick the right .jmx
+    # subfolder (v17 .jmx files are also used for v18 — matches the seeder
+    # fallback in install-umbraco-cms-on-appservice.ps1).
+    [ValidateSet('frontend', 'backoffice')] [string]$Workload = 'frontend',
+    [string]$UmbracoVersion = '',
+
+    # Backoffice-only: the .jmx file stem to run (e.g. 'ViewHomePage',
+    # 'SaveContent'). Each .jmx is its own ALT test with its own testId, so
+    # runs of different .jmx files don't overlay in the portal's Compare view.
+    # The template at load-test-job.yml iterates the full set; this script
+    # exits 0 (with an empty loadTestConfigPath variable) when the requested
+    # .jmx isn't present for the resolved major — used to skip e.g.
+    # PublishContent.jmx on v13 where it doesn't exist.
+    [string]$JmxName = '',
+
+    # Backoffice-only: seeder state discovered by the "Discover seeder member
+    # state" step in load-test-job.yml (queries the SUT's
+    # /umbraco/api/seederstatus/inventory?includeMemberPassword=true). These
+    # flow into the .properties file as totalOfMember + member_password so
+    # MemberLogin.jmx's Groovy preprocessor picks a real seeded member rather
+    # than a hardcoded count of 30 that may not exist when the seeder uses
+    # Small (10 members) or Custom presets.
+    # The seeded prefix isn't taken as a parameter — the .jmx Groovy hardcodes
+    # 'TestMember_' (matching the seeder default), so passing a discovered
+    # prefix through would be dead plumbing until the .jmx is updated to read
+    # the prefix from a property as well.
+    # Optional with safe defaults — frontend mode never sets these.
+    [int]$SeededMemberCount = 30,
+    [string]$SeededMemberPassword = 'Test1234!',
+
     [string]$OutputDir = $PWD
 )
 
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
+
+# Clear every pipeline variable this script emits BEFORE any logic that could
+# fail. The backoffice loop in load-test-job.yml runs this script per .jmx, and
+# downstream steps gate on `ne(loadTestConfigPath, '')` to skip skipped/failed
+# iterations. If an exception fires here before the success-path emissions, the
+# variables would otherwise retain the PREVIOUS iteration's values — and the
+# current iteration's ALT step would re-run the previous .jmx with the current
+# iteration's metadata. Silent data corruption. Clearing upfront makes failure
+# paths fail closed.
+Write-Host "##vso[task.setvariable variable=safeTestCaseId]"
+Write-Host "##vso[task.setvariable variable=loadTestConfigPath]"
+Write-Host "##vso[task.setvariable variable=appServiceResourceId]"
+Write-Host "##vso[task.setvariable variable=jmeterTestName]"
 
 $subscriptionId = az account show --query id -o tsv
 $appServiceResourceId = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$AppServiceName"
@@ -79,25 +123,45 @@ $sqlComponent = @"
         aggregation: Total
 "@
 
-# testId must match ^[a-z0-9_-]{2,50}$. One testId per scenario so the portal's
-# 'Compare runs' view groups all (version × tier) runs of the same scenario.
+# testId must match ^[a-z0-9_-]{2,50}$. Each .jmx file is its own ALT test
+# (different test plans aren't meaningfully comparable across the Compare view),
+# so backoffice mode appends a per-.jmx suffix. Backoffice marker shortened
+# from -backoffice- to -bo- so even the longest .jmx stem
+# ('saveandpublishcontent', 21 chars) plus scenario fits within 50 chars.
 $scenarioSafe = (($Scenario.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
-$testId = "umbraco-lt-$scenarioSafe"
+$jmxSafe = if ($JmxName) { ($JmxName.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-' } else { '' }
+$workloadSuffix = if ($Workload -eq 'backoffice') { "-bo-$jmxSafe" } else { '' }
+$testId = "umbraco-lt-$scenarioSafe$workloadSuffix"
+if ($testId.Length -gt 50) {
+    Write-Error "Computed ALT testId '$testId' is $($testId.Length) chars; ALT max is 50. Shorten scenario or .jmx stem."
+    exit 1
+}
+
+# ALT enforces a SEPARATE 50-char limit on displayName (config YAML key).
+# Previously this was "Umbraco load test - {Scenario} / {JmxName}" which
+# overflowed for the longest .jmx ('SaveAndPublishContent' = 21 chars):
+# "Umbraco load test - Default / SaveAndPublishContent" = 51 chars → ALT
+# rejected the YAML and the whole iteration died (Bug A from the
+# first end-to-end run). Drop the redundant prefix — the test list is
+# already inside an ALT resource named "umbraco-loadtest-runs", so the
+# "Umbraco load test" preamble was just noise.
+$displayName = if ($Workload -eq 'backoffice') { "$Scenario / $JmxName" } else { "$Scenario" }
+if ($displayName.Length -gt 50) {
+    Write-Error "Computed ALT displayName '$displayName' is $($displayName.Length) chars; ALT max is 50. Shorten scenario or .jmx stem."
+    exit 1
+}
 
 # safeTestCaseId identifies this specific case for the artifact name + config filename.
+# For backoffice runs we append the .jmx stem so each .jmx in a single pipeline
+# run lands on a unique artifact name + config file (otherwise iteration N would
+# overwrite iteration N-1's outputs in the same agent workspace).
 $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
+if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
 if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 
-$config = @"
-version: v0.1
-testId: $testId
-displayName: Umbraco load test - $Scenario
-testPlan: loadtests/scenarios/$Scenario/locustfile.py
-testType: Locust
-description: Holds all version/tier runs for the '$Scenario' scenario; pick runs in 'Compare' to overlay.
-engineInstances: $EngineInstances
-configurationFiles:
-  - loadtests/_helpers.py
+# Shared ALT failure criteria + autoStop + appComponents — applied regardless
+# of runner so cross-workload runs stay comparable on those axes.
+$sharedTail = @"
 failureCriteria:
   - avg(response_time_ms) > 2000
   - p95(response_time_ms) > 5000
@@ -105,15 +169,6 @@ failureCriteria:
 autoStop:
   errorPercentage: 80
   timeWindow: 60
-env:
-  - name: LOCUST_HOST
-    value: "https://$HostName"
-  - name: LOCUST_USERS
-    value: "$UserAmount"
-  - name: LOCUST_SPAWN_RATE
-    value: "$SpawnRate"
-  - name: LOCUST_RUN_TIME
-    value: "$TestDuration"
 appComponents:
   - resourceId: "$appServiceResourceId"
     resourceName: "$AppServiceName"
@@ -135,13 +190,126 @@ $planComponent
 $sqlComponent
 "@
 
+if ($Workload -eq 'backoffice') {
+    # JMeter mode. v17 .jmx files are used for v18 deployments — matches the
+    # seeder fallback in install-umbraco-cms-on-appservice.ps1.
+    if (-not $UmbracoVersion) {
+        Write-Error "Workload=backoffice requires -UmbracoVersion to pick the .jmx subfolder."
+        exit 1
+    }
+    if (-not $JmxName) {
+        Write-Error "Workload=backoffice requires -JmxName (e.g. 'ViewHomePage') to pick the .jmx file."
+        exit 1
+    }
+    $umbracoMajor = [int](($UmbracoVersion -split '\.')[0])
+    $jmeterMajor  = if ($umbracoMajor -eq 18) { 17 } else { $umbracoMajor }
+    $jmeterDir    = "loadtests/scenarios/$Scenario/jmeter/v$jmeterMajor"
+
+    $testPlanRel = "$jmeterDir/$JmxName.jmx"
+    $testPlanAbs = Join-Path $PWD $testPlanRel
+    if (-not (Test-Path -LiteralPath $testPlanAbs)) {
+        # Not a fatal condition — the template iterates the full .jmx name set,
+        # and not every .jmx exists in every major (e.g. PublishContent.jmx is
+        # v17+ only). Emit empty config-path vars so downstream steps skip this
+        # iteration via their ne(loadTestConfigPath, '') condition.
+        Write-Host "JMeter test plan not present: $testPlanRel (jmeter major: v$jmeterMajor) - skipping this .jmx for this run."
+        Write-Host "##vso[task.setvariable variable=safeTestCaseId]"
+        Write-Host "##vso[task.setvariable variable=loadTestConfigPath]"
+        Write-Host "##vso[task.setvariable variable=appServiceResourceId]"
+        Write-Host "##vso[task.setvariable variable=jmeterTestName]"
+        exit 0
+    }
+
+    # ALT passes per-run values via a user-properties file. Sibling to the
+    # YAML so ALT uploads both. The .jmx files reference each property via
+    # \${__P(name,default)} — see scripts/parameterize-jmx.js.
+    #
+    # Two credential pairs are written because the .jmx files split cleanly:
+    #
+    #   - MemberLogin.jmx uses a Groovy preprocessor to construct
+    #     `member_username = "TestMember_<random 1..totalOfMember>"` per
+    #     iteration. We provide totalOfMember + member_password from the
+    #     seeder inventory (queried by load-test-job.yml's "Discover seeder
+    #     member state" step), so they track whatever the seeder actually
+    #     created. The Groovy still hardcodes "TestMember_" — if the seeder
+    #     prefix is ever customized away from the default, the Groovy needs
+    #     to read a memberPrefix variable too. (Not done yet — the seeder
+    #     default IS "TestMember_" and we don't customize it.)
+    #
+    #   - SaveContent / SaveAndPublishContent / SaveDocumentType / PublishContent
+    #     authenticate against the backoffice management API. The seeder's
+    #     TestUser_* accounts have no password (UserSeeder.cs never sets one),
+    #     so the only usable account is the Terraform unattended-install admin
+    #     (loadtest@example.invalid / LoadTest123! from
+    #     Terraform/modules/umbraco/versions/main.tf).
+    #
+    # If the discovery step fell back to defaults (seeder endpoint unreachable),
+    # these values are still the safe defaults a fresh seeder uses, so the loop
+    # can still attempt to run — MemberLogin may have a degraded hit rate.
+    $propsFileName = "jmeter-$safeKey.properties"
+    $propsPath = Join-Path $OutputDir $propsFileName
+    $propsBody = @"
+server=$HostName
+protocol=https
+port=443
+numberOfThread=$UserAmount
+duration=$TestDuration
+totalOfMember=$SeededMemberCount
+member_password=$SeededMemberPassword
+backoffice_username=loadtest@example.invalid
+backoffice_password=LoadTest123!
+"@
+    $propsBody | Out-File -FilePath $propsPath -Encoding utf8
+
+    $config = @"
+version: v0.1
+testId: $testId
+displayName: $displayName
+testPlan: $testPlanRel
+testType: JMX
+description: Backoffice JMeter run ($JmxName) for the '$Scenario' scenario.
+engineInstances: $EngineInstances
+configurationFiles: []
+properties:
+  userPropertyFile: $propsFileName
+$sharedTail
+"@
+} else {
+    # Frontend (Locust) mode — unchanged from prior behaviour.
+    $config = @"
+version: v0.1
+testId: $testId
+displayName: $displayName
+testPlan: loadtests/scenarios/$Scenario/locustfile.py
+testType: Locust
+description: Holds all version/tier runs for the '$Scenario' scenario; pick runs in 'Compare' to overlay.
+engineInstances: $EngineInstances
+configurationFiles:
+  - loadtests/_helpers.py
+env:
+  - name: LOCUST_HOST
+    value: "https://$HostName"
+  - name: LOCUST_USERS
+    value: "$UserAmount"
+  - name: LOCUST_SPAWN_RATE
+    value: "$SpawnRate"
+  - name: LOCUST_RUN_TIME
+    value: "$TestDuration"
+$sharedTail
+"@
+}
+
 $configPath = Join-Path $OutputDir "loadtest-config-$safeKey.yaml"
 $config | Out-File -FilePath $configPath -Encoding utf8
 
 # Pipeline-variable emissions consumed by downstream tasks in load-test-job.yml.
+# jmeterTestName is the .jmx stem (empty for Locust runs); the publish step
+# uses it to differentiate blob paths and tag LA rows when backoffice mode
+# emits multiple results per (version × tier).
 Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
 Write-Host "##vso[task.setvariable variable=loadTestConfigPath]$configPath"
 Write-Host "##vso[task.setvariable variable=appServiceResourceId]$appServiceResourceId"
+Write-Host "##vso[task.setvariable variable=jmeterTestName]$JmxName"
 
 Write-Host "Generated load test config at: $configPath"
 Write-Host "App Service:      $appServiceResourceId"

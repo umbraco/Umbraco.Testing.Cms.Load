@@ -20,6 +20,22 @@ parameters:
       - 'Default'
       - 'DeliveryApi'
 
+  # Workload selects what kind of traffic the load test generates against the
+  # provisioned Umbraco. 'frontend' runs the scenario's locustfile.py (the
+  # default path, unchanged from prior versions). 'backoffice' runs the JMeter
+  # tests under loadtests/scenarios/<scenario>/jmeter/v<major>/. v17 JMeter
+  # files are used for v18 deployments (matches the seeder fallback).
+  # resolve-run-config validates that the chosen (scenario, workload) pair has
+  # the required files — e.g. workload=backoffice on a scenario without a
+  # jmeter/ folder fails fast at queue-time, not 15 minutes into provisioning.
+  - name: workload
+    displayName: Workload (frontend = Locust, backoffice = JMeter)
+    type: string
+    default: 'frontend'
+    values:
+      - 'frontend'
+      - 'backoffice'
+
   - name: runStarter
     displayName: Run Starter tier
     type: boolean
@@ -41,12 +57,12 @@ parameters:
     default: false
 
   - name: loadProfile
-    displayName: 'Load profile (intensity) — smoke: 50 VUs / 60s, standard: 100 VUs / 300s, stress: 300 VUs / 600s'
+    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s'
     type: string
     default: 'standard'
     values:
-      - 'smoke'      # Small,  50 VUs,  60s, 1 engine  -- quick "does it work" probe
-      - 'standard'   # Medium, 100 VUs, 300s, 1 engine -- typical comparison run
+      - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
+      - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
       - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
 
   - name: azureRegion
@@ -175,6 +191,7 @@ stages:
                 -PoolDtuOverride '${{ parameters.poolDtuOverride }}'
                 -AppSkuOverride '${{ parameters.appSkuOverride }}'
                 -SeederPresetOverride '${{ parameters.seederPresetOverride }}'
+                -Workload '${{ parameters.workload }}'
                 -WorkspaceRoot '$(System.DefaultWorkingDirectory)'
 
   - stage: ensureHistoryInfra
@@ -430,6 +447,7 @@ stages:
       resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
       resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
       resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
+      resolvedWorkload:        $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedWorkload'] ]
       monitoringDceUri:           $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
       monitoringDcrImmutableId:   $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
       monitoringStreamName:       $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
@@ -453,6 +471,7 @@ stages:
                 tier: 'Starter'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -465,6 +484,7 @@ stages:
                 tier: 'Standard'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -477,6 +497,7 @@ stages:
                 tier: 'Pro'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -489,6 +510,7 @@ stages:
                 tier: 'Enterprise'
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -537,6 +559,13 @@ stages:
               inlineScript: |
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
                 $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                # -NoFailOnRegression: report-only, never hard-fails the stage.
+                # TEMPORARY. The scenario_name discriminator (publish step) just
+                # reset the backoffice baseline keys, and the baseline window
+                # still holds pre-auth-fix runs (~100% error / multi-minute p95),
+                # so the gate would fire on bookkeeping noise, not real regressions.
+                # Re-enable blocking (drop this flag) once each cell has >=3 clean
+                # post-fix runs (matches check-regression's MinBaselineRuns).
                 & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" `
                     -Scenario '${{ parameters.scenario }}' `
                     -Major $major `
@@ -546,7 +575,8 @@ stages:
                     -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md" `
                     -LogAnalyticsDceUri '$(monitoringDceUri)' `
                     -LogAnalyticsDcrImmutableId '$(monitoringDcrImmutableId)' `
-                    -LogAnalyticsStreamName '$(monitoringStreamName)'
+                    -LogAnalyticsStreamName '$(monitoringStreamName)' `
+                    -NoFailOnRegression
           - task: PublishBuildArtifacts@1
             displayName: Publish regression report
             condition: succeededOrFailed()
