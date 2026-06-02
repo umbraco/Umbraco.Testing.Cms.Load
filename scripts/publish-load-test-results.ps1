@@ -94,7 +94,17 @@ $metadata = [ordered]@{
     # Null (rather than 0) when the seeder didn't complete (Skipped, Failed,
     # TimedOut, or pre-feature run) — KQL percentile/avg ignore nulls, so
     # Skipped/Failed runs don't drag the median toward 0.
-    seeder_duration_seconds = $(if ([string]::IsNullOrWhiteSpace($SeederDurationSeconds)) { $null } else { [double]$SeederDurationSeconds })
+    # Invariant-culture TryParse rather than a bare [double] cast: the value may
+    # arrive empty/malformed, and a comma-decimal agent locale would make a raw
+    # cast throw under -ErrorAction Stop, killing the publish before any row is
+    # written. Anything unparseable degrades to $null (KQL ignores nulls).
+    seeder_duration_seconds = $(
+        $sds = 0.0
+        if (-not [string]::IsNullOrWhiteSpace($SeederDurationSeconds) -and
+            [double]::TryParse($SeederDurationSeconds, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$sds)) {
+            $sds
+        } else { $null }
+    )
     scenario         = $Scenario
     user_count       = $UserCount
     spawn_rate       = $SpawnRate
@@ -520,6 +530,13 @@ az storage blob upload `
     --file $summaryFile `
     --name "$blobPrefix/summary.ndjson" `
     --overwrite | Out-Null
+
+# Drop the *-extracted working dirs before the raw upload. We unpacked them only
+# to scan engine_results.csv; their contents already live inside the results.zip
+# that --pattern "*" uploads, so keeping them would double every engine CSV in
+# blob storage (and the history container has no expiry beyond the lifecycle tier).
+Get-ChildItem -Path $ResultsDir -Recurse -Directory -Filter '*-extracted' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 # Raw artifacts kept for analyses that need fields the summary doesn't surface.
 az storage blob upload-batch `
