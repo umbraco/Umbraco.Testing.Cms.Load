@@ -4,6 +4,16 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 4.20"
     }
+    # Used for SQL admin login/password generation (modules/umbraco/main.tf).
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.8"
+    }
+    # Used for the deploy/seed side-effect (modules/umbraco/versions/main.tf).
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
 
   required_version = ">= 1.3.9"
