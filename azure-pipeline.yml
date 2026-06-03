@@ -64,7 +64,7 @@ parameters:
       - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
       - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
       - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
-      - 'ramp'       # Large,  0->300 VUs (backoffice 0->60), 600s, 1 engine -- climb to find the saturation knee
+      - 'ramp'       # Medium, 0->300 VUs (backoffice 0->60), 600s, 1 engine -- climb to find the saturation knee
 
   - name: azureRegion
     displayName: Azure region

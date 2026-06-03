@@ -160,7 +160,7 @@ At least one tier must be selected — the validator fails the run if all are un
 | `smoke` | Small | 20 | 10/s | 60s | 1 |
 | `standard` | Medium | 50 | 10/s | 300s | 1 |
 | `stress` | Large | 300 | 50/s | 600s | 2 |
-| `ramp` | Large | 0→300 | 1/s (linear) | 600s | 1 |
+| `ramp` | Medium | 0→300 | 1/s (linear) | 600s | 1 |
 
 **Backoffice runs use lower VU counts.** A backoffice VU holds a full authenticated editor session (login → navigate → save/publish) — far heavier per VU than a frontend page-view, so the same count saturates much sooner (50 backoffice VUs peg even Standard's App CPU). Backoffice resolves to **smoke 5, standard 15, stress 50, ramp 0→60**, single engine. See the backoffice override in `scripts/resolve-run-config.ps1`.
 

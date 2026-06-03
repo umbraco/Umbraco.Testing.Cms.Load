@@ -48,7 +48,7 @@ switch ($Profile) {
     # Ramp: climb load across the whole run to find the saturation knee. Low
     # spawn (frontend/Locust ramps 0->users at 1 VU/s); JMeter ramp handled via
     # $rampTime below. Single engine so the ramp target isn't silently doubled.
-    'ramp'     { $preset = 'Large';  $users = 300; $spawn = 1;  $duration = 600; $engines = 1 }
+    'ramp'     { $preset = 'Medium'; $users = 300; $spawn = 1;  $duration = 600; $engines = 1 }
 }
 
 # Backoffice VUs are far heavier than frontend VUs: each one holds a full
