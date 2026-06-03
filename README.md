@@ -159,7 +159,7 @@ At least one tier must be selected — the validator fails the run if all are un
 |---|---|---|---|---|---|
 | `smoke` | Small | 20 | 10/s | 60s | 1 |
 | `standard` | Medium | 50 | 10/s | 300s | 1 |
-| `stress` | Large | 300 | 50/s | 600s | 2 |
+| `stress` | Medium | 300 | 50/s | 600s | 2 |
 | `ramp` | Medium | 0→300 | 1/s (linear) | 600s | 1 |
 
 **Backoffice runs use lower VU counts.** A backoffice VU holds a full authenticated editor session (login → navigate → save/publish) — far heavier per VU than a frontend page-view, so the same count saturates much sooner (50 backoffice VUs peg even Standard's App CPU). Backoffice resolves to **smoke 5, standard 15, stress 50, ramp 0→60**, single engine. See the backoffice override in `scripts/resolve-run-config.ps1`.
@@ -199,7 +199,7 @@ The profile only encodes load intensity — the same profile can drive any combi
 
 **App SKU override.** Counterpart to `poolDtuOverride` on the app side. When set to a value other than `Auto`, every test case uses the same App Service Plan SKU regardless of the tier's default — useful for "is the app actually the bottleneck?" experiments. Default SKUs are Starter→P0v3, Standard→P1v3, Pro→P2v3, Enterprise→P3v3.
 
-**Seeder preset override.** Decouples content size from the load profile. `Auto` keeps the existing coupling (smoke→Small, standard→Medium, stress→Large); explicit values unlock off-diagonal combinations like Massive content + smoke load or Small content + stress load, and are the only way to reach the Massive preset. Approximate seeder times: Small ~10 min, Medium ~30 min, Large ~60 min, Massive ~120 min.
+**Seeder preset override.** Decouples content size from the load profile. `Auto` keeps the existing coupling (smoke→Small; standard, stress, ramp→Medium — Large currently hangs the seeder, see below); explicit values unlock off-diagonal combinations like Massive content + smoke load or Small content + stress load, and are the only way to reach the Massive preset. Approximate seeder times: Small ~10 min, Medium ~30 min, Large ~60 min, Massive ~120 min.
 
 The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds).
 

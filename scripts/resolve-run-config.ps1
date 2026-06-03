@@ -44,7 +44,7 @@ if ($tiers.Count -eq 0) {
 switch ($Profile) {
     'smoke'    { $preset = 'Small';  $users = 20;  $spawn = 10; $duration = 60;  $engines = 1 }
     'standard' { $preset = 'Medium'; $users = 50;  $spawn = 10; $duration = 300; $engines = 1 }
-    'stress'   { $preset = 'Large';  $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
+    'stress'   { $preset = 'Medium'; $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
     # Ramp: climb load across the whole run to find the saturation knee. Low
     # spawn (frontend/Locust ramps 0->users at 1 VU/s); JMeter ramp handled via
     # $rampTime below. Single engine so the ramp target isn't silently doubled.
