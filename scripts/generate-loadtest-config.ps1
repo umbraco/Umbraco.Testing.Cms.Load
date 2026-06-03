@@ -20,6 +20,11 @@ param(
     [Parameter(Mandatory = $true)] [int]$UserAmount,
     [Parameter(Mandatory = $true)] [int]$SpawnRate,
     [Parameter(Mandatory = $true)] [int]$TestDuration,
+    # JMeter thread-group ramp-up (seconds). 0 = fall back to UserAmount (legacy
+    # ~1-thread/sec ramp). A ramp run passes the full duration; that's also the
+    # signal to relax the absolute failure criteria (a ramp is meant to drive
+    # into saturation, so latency/error gates would FAIL/autoStop at the knee).
+    [int]$RampTime = 0,
 
     # Resource IDs — App Service Plan + SQL Database — used to register extra
     # appComponents in ALT so plan-level (CpuPercentage / MemoryPercentage) and
@@ -159,9 +164,25 @@ $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace 
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
 if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 
-# Shared ALT failure criteria + autoStop + appComponents — applied regardless
-# of runner so cross-workload runs stay comparable on those axes.
-$sharedTail = @"
+# Effective ramp-up + whether this is a ramp run (ramp_time spans the full run).
+$rampTimeEff = if ($RampTime -gt 0) { $RampTime } else { $UserAmount }
+$isRamp      = ($RampTime -gt 0 -and $RampTime -ge $TestDuration)
+
+# Failure criteria + autoStop. A ramp run is *designed* to climb into saturation
+# to find the knee, so the absolute latency gates (and a low autoStop) would FAIL
+# or cancel it the moment it gets there — defeating the point. For ramp, drop the
+# latency criteria, keep only a high error ceiling, and raise autoStop so the run
+# completes and the per-minute charts show the full climb.
+if ($isRamp) {
+    $criteriaBlock = @"
+failureCriteria:
+  - percentage(error) > 90
+autoStop:
+  errorPercentage: 95
+  timeWindow: 120
+"@
+} else {
+    $criteriaBlock = @"
 failureCriteria:
   - avg(response_time_ms) > 2000
   - p95(response_time_ms) > 5000
@@ -169,6 +190,13 @@ failureCriteria:
 autoStop:
   errorPercentage: 80
   timeWindow: 60
+"@
+}
+
+# Shared ALT failure criteria + autoStop + appComponents — applied regardless
+# of runner so cross-workload runs stay comparable on those axes.
+$sharedTail = @"
+$criteriaBlock
 appComponents:
   - resourceId: "$appServiceResourceId"
     resourceName: "$AppServiceName"
@@ -254,6 +282,7 @@ protocol=https
 port=443
 numberOfThread=$UserAmount
 duration=$TestDuration
+rampTime=$rampTimeEff
 totalOfMember=$SeededMemberCount
 member_password=$SeededMemberPassword
 backoffice_username=loadtest@example.invalid

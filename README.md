@@ -155,13 +155,18 @@ At least one tier must be selected — the validator fails the run if all are un
 
 **Load profile (intensity):**
 
-| Profile | Seeder preset | VUs | Spawn rate | Duration | Engines |
+| Profile | Seeder preset | VUs (frontend) | Spawn rate | Duration | Engines |
 |---|---|---|---|---|---|
 | `smoke` | Small | 20 | 10/s | 60s | 1 |
 | `standard` | Medium | 50 | 10/s | 300s | 1 |
 | `stress` | Large | 300 | 50/s | 600s | 2 |
+| `ramp` | Large | 0→300 | 1/s (linear) | 600s | 1 |
 
-The profile only encodes load intensity — the same profile can drive any combination of tiers. Tuning a profile is a single-place edit to the inline `switch` in `azure-pipeline.yml`'s "Resolve profile + validate scenario" step.
+**Backoffice runs use lower VU counts.** A backoffice VU holds a full authenticated editor session (login → navigate → save/publish) — far heavier per VU than a frontend page-view, so the same count saturates much sooner (50 backoffice VUs peg even Standard's App CPU). Backoffice resolves to **smoke 5, standard 15, stress 50, ramp 0→60**, single engine. See the backoffice override in `scripts/resolve-run-config.ps1`.
+
+**The `ramp` profile** climbs load from 0 to the target across the whole run (Locust spawns at 1 VU/s; the JMeter thread group ramps over the full duration) to find the **saturation knee** — read it off the per-minute resource/error charts on the workbook's Runs tab (or the ALT portal's response-time-over-time). Ramp runs deliberately drive into saturation, so they relax the absolute failure criteria.
+
+The profile only encodes load intensity — the same profile can drive any combination of tiers. Tuning a profile is a single-place edit to the `switch` in `scripts/resolve-run-config.ps1`.
 
 **.NET runtime is derived, not selected.** The prep step maps the Umbraco major version → required .NET runtime; the pipeline installs the matching SDK and Terraform sets the App Service runtime accordingly. Extend the map in `scripts/resolve-run-config.ps1` (and the seeder-version map in the install script) when a new Umbraco major ships.
 
@@ -387,6 +392,8 @@ Every test follows a **ramp-up → steady-state → ramp-down** shape so the mea
 - **Ramp-down** — Azure Load Testing terminates VUs when the duration expires.
 
 When comparing runs, only the steady-state samples are meaningful — ramp-up/down samples skew tail latency and should be filtered out in any deeper analysis.
+
+The **`ramp` profile** is the deliberate exception: instead of a quick ramp-to-steady, it ramps load continuously from 0 to the target across the *entire* run to locate the saturation knee. For a ramp run the steady-state assumption above doesn't hold — its whole-run aggregate is a blur of light + saturated load, so read it from the per-minute charts (Runs tab) rather than the Trends/Tiers numbers, and use the **Profile** picker to keep ramp runs out of your steady comparisons.
 
 ### Workload distribution
 
