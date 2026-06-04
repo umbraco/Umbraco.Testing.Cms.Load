@@ -3,7 +3,7 @@
 # Compare two Locust runs and emit a markdown report with per-sampler deltas.
 # Two modes:
 #
-# History mode (preferred for "did this regress?" questions — pulls aggregated
+# History mode (preferred for "did this regress?" questions - pulls aggregated
 # per-sampler stats straight from history storage, no manual artifact download):
 #
 #   # version vs version on a fixed tier
@@ -22,7 +22,7 @@
 #   'median5' takes the median across the last 5 runs (more stable on noisy tails).
 #
 # CSV mode (for local Locust runs or offline analysis where history isn't
-# available — same shape as the original script):
+# available - same shape as the original script):
 #
 #   ./scripts/compare-runs.ps1 -BaselinePath ./run1/engine1_results.csv `
 #                              -CandidatePath ./run2/engine1_results.csv `
@@ -76,7 +76,7 @@ $isCsvMode     = $BaselinePath -or $CandidatePath
 $isHistoryMode = $Scenario -or $HistoryResourceGroup -or $StorageAccountName -or $ContainerName
 
 if ($isCsvMode -and $isHistoryMode) {
-    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-StorageAccountName/-ContainerName) — not both."
+    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-StorageAccountName/-ContainerName) - not both."
 }
 if (-not ($isCsvMode -or $isHistoryMode)) {
     Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -StorageAccountName + -ContainerName + version/tier coordinates)."
@@ -97,7 +97,7 @@ if ($isHistoryMode) {
     $isVersionPair = $BaselineVersion -and $CandidateVersion
     $isTierPair    = $BaselineTier -and $CandidateTier
     if ($isVersionPair -and $isTierPair) {
-        Write-PipelineError "History mode: choose ONE comparison axis — version-vs-version (with shared -Tier) OR tier-vs-tier (with shared -Version)."
+        Write-PipelineError "History mode: choose ONE comparison axis - version-vs-version (with shared -Tier) OR tier-vs-tier (with shared -Version)."
     }
     if (-not ($isVersionPair -or $isTierPair)) {
         Write-PipelineError "History mode: provide either version-vs-version (-Tier + -BaselineVersion + -CandidateVersion) or tier-vs-tier (-Version + -BaselineTier + -CandidateTier)."
@@ -115,7 +115,7 @@ if ($isHistoryMode) {
 function Get-RunStats {
     param ([string]$Path)
 
-    # Parser is shared with publish-load-test-results.ps1 — see Parse-JmeterCsv
+    # Parser is shared with publish-load-test-results.ps1 - see Parse-JmeterCsv
     # in _helpers.ps1. -BuildAggregate keeps the per-CSV all-samples list so we
     # can compute a true aggregate percentile (which history mode can't).
     $parsed = Parse-JmeterCsv -Path $Path -BuildAggregate
@@ -192,7 +192,7 @@ function Get-HistoryStats {
     }
 
     return [PSCustomObject]@{
-        Aggregate = $null  # NDJSON has per-sampler aggregates only — no faithful way to
+        Aggregate = $null  # NDJSON has per-sampler aggregates only - no faithful way to
                            # reconstruct true aggregate percentiles (would need raw samples).
         ByLabel   = $perLabel
         Runs      = @($matchedRuns.Values | Sort-Object { Get-RunDate $_ })
@@ -273,8 +273,8 @@ if ($isHistoryMode) {
     $aggDescBaseline  = if ($Aggregate -eq 'median5') { "median across $($baseline.Runs.Count) run(s)" }  else { "latest run" }
     $aggDescCandidate = if ($Aggregate -eq 'median5') { "median across $($candidate.Runs.Count) run(s)" } else { "latest run" }
     [void]$out.AppendLine("- Source: history storage (``$StorageAccountName/$ContainerName``)")
-    [void]$out.AppendLine("- Baseline:  $BaselineLabel — $aggDescBaseline ($(($baseline.Runs  | ForEach-Object { "#$($_.run_id)" }) -join ', '))")
-    [void]$out.AppendLine("- Candidate: $CandidateLabel — $aggDescCandidate ($(($candidate.Runs | ForEach-Object { "#$($_.run_id)" }) -join ', '))")
+    [void]$out.AppendLine("- Baseline:  $BaselineLabel - $aggDescBaseline ($(($baseline.Runs  | ForEach-Object { "#$($_.run_id)" }) -join ', '))")
+    [void]$out.AppendLine("- Candidate: $CandidateLabel - $aggDescCandidate ($(($candidate.Runs | ForEach-Object { "#$($_.run_id)" }) -join ', '))")
 }
 else {
     [void]$out.AppendLine("- Baseline:  ``$BaselinePath``")
@@ -283,7 +283,7 @@ else {
 [void]$out.AppendLine("- Significant-delta threshold: $SignificantDeltaPercent% (bold = at or above)")
 [void]$out.AppendLine()
 
-# Aggregate (CSV mode only — true aggregate percentiles need raw samples)
+# Aggregate (CSV mode only - true aggregate percentiles need raw samples)
 if ($baseline.Aggregate -and $candidate.Aggregate) {
     [void]$out.AppendLine("## Aggregate")
     [void]$out.AppendLine()
