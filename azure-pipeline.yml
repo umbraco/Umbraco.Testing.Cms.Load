@@ -373,11 +373,15 @@ stages:
               # Subscription ID isn't surfaced by addSpnToEnvironment, so read it
               # explicitly — install-umbraco-cms-on-appservice.ps1 pins `az account`
               # to it after `az login` to avoid multi-sub default-routing surprises.
+              # Connection ID + OIDC request URI let the install script mint a fresh
+              # idToken per case — the job-start $idToken can expire mid-apply (AADSTS700024).
               inlineScript: |
                 echo "##vso[task.setvariable variable=ARM_CLIENT_ID;issecret=true]$servicePrincipalId"
                 echo "##vso[task.setvariable variable=ARM_TENANT_ID;issecret=true]$tenantId"
                 echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;issecret=true]$servicePrincipalKey"
                 echo "##vso[task.setvariable variable=ARM_OIDC_TOKEN;issecret=true]$idToken"
+                echo "##vso[task.setvariable variable=ARM_SERVICE_CONNECTION_ID;issecret=true]$AZURESUBSCRIPTION_SERVICE_CONNECTION_ID"
+                echo "##vso[task.setvariable variable=ARM_OIDC_REQUEST_URI]$SYSTEM_OIDCREQUESTURI"
                 echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
               addSpnToEnvironment: true
 
@@ -392,6 +396,10 @@ stages:
               ARM_TENANT_ID:       $(ARM_TENANT_ID)
               ARM_OIDC_TOKEN:      $(ARM_OIDC_TOKEN)
               ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+              # Fresh-token context for the install script (see AzLoginInfo).
+              ARM_SERVICE_CONNECTION_ID: $(ARM_SERVICE_CONNECTION_ID)
+              ARM_OIDC_REQUEST_URI:      $(ARM_OIDC_REQUEST_URI)
+              SYSTEM_ACCESSTOKEN:        $(System.AccessToken)
             inputs:
               provider: 'azurerm'
               command: 'apply'
