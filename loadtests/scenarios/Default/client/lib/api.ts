@@ -13,15 +13,12 @@ import { env } from './env';
 
 // Build an authenticated API helper bound to the target instance.
 //
-// IMPORTANT for callers: the package reads baseUrl/credentials from process.env
-// (URL / UMBRACO_USER_LOGIN / UMBRACO_USER_PASSWORD) at import time. Our env.ts
-// uses different variable names; to keep a single source of truth we mirror our
-// values onto the package's expected env names here if they are not already set.
+// The package reads baseUrl/credentials from process.env (URL /
+// UMBRACO_USER_LOGIN / UMBRACO_USER_PASSWORD) at import time — those are mirrored
+// from our env vars by lib/env-bridge.ts, which playwright.config.ts imports
+// first. Do NOT set them here: by the time this runs the package has already
+// frozen baseUrl, so an assignment here would be a no-op.
 export async function makeApi(page: Page): Promise<ApiHelpers> {
-  process.env.URL ??= env.baseUrl;
-  process.env.UMBRACO_USER_LOGIN ??= env.user;
-  process.env.UMBRACO_USER_PASSWORD ??= env.password;
-
   const api = new ApiHelpers(page);
   await api.login.login(env.user, env.password);
   return api;

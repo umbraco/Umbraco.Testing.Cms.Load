@@ -1,3 +1,6 @@
+// Must be first: bridges our env vars onto the package's expected names before
+// the acceptance-test-helpers package is required anywhere (see env-bridge.ts).
+import './lib/env-bridge';
 import { defineConfig } from '@playwright/test';
 import { env } from './lib/env';
 
