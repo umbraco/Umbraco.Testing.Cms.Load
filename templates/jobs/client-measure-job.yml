@@ -42,6 +42,12 @@ steps:
         Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
         Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
         Write-Host "##vso[task.setvariable variable=poolDtuMax]$($tfOut.pool_dtu_max)"
+        # Sanitized artifact key (mirrors generate-loadtest-config.ps1's safeKey) so
+        # each tier publishes a distinct artifact instead of every tier colliding on
+        # a bare 'client-results-' and overwriting one another.
+        $safeKey = (($testCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
+        if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
+        Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
 
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
