@@ -451,6 +451,61 @@ These are documented for the next person — fixes are in scope for follow-up wo
    - **Backoffice admin**: use `backoffice_username` and `backoffice_password` (Terraform unattended-install admin).
 5. Queue with `workload: backoffice`. The new `.jmx` runs as an additional iteration.
 
+### Client measurement (Playwright)
+
+**Browser-perceived backoffice performance** — measures how long the Umbraco backoffice SPA feels to a real user (login, navigation, editor paint, first keystroke), not just server-side throughput. The workload runs Playwright on the pipeline agent against the provisioned App Service; results land alongside the Locust and JMeter data in the same Log Analytics workspace and history storage container.
+
+**Pipeline:** `azure-pipeline-client.yml` (separate from the main `azure-pipeline.yml`). It reuses the same Terraform provisioning and long-lived history/monitoring infrastructure, then runs Playwright directly on the pipeline agent.
+
+**Project location:** `loadtests/scenarios/{scenario}/client/` — e.g. `loadtests/scenarios/Default/client/`.
+
+#### Test data
+
+Test data is hybrid. `Umbraco.Cms.TestDataSeeder` seeds background bulk during provisioning (the same seeder-preset mechanism used by the other workloads). The Playwright `global-setup.ts` then builds a precise content model via `@umbraco-cms/acceptance-test-helpers`:
+
+- A tabbed **`Page` document type** with 17 distinct editors across 3 compositions — including a Rich Text/TipTap editor with an embedded image, two Media Pickers, a Block Grid, and an SEO tab.
+- Three additional empty document types: `Product-page`, `Marketing-page`, `Newsletter-signup`.
+- A fully-populated **`Homepage`** root node.
+- ~20 top-level nodes each with a child (so `hasChildren: true` is broadly true across the tree).
+
+The model build is idempotent — re-runs against an already-set-up instance are safe.
+
+#### Metrics
+
+Five metrics are measured, each repeated N times (default 10; override with `CLIENT_MEASURE_REPS`). Results are reported as **median / p75 / p95 / stddev** plus Performance API marks (`ttfb` / `dcl` / `load`; `lcp` is null in the headless backoffice SPA).
+
+| Metric | What it captures |
+|---|---|
+| `cold_dashboard_load` | Umbraco News dashboard (Content section) until `umb-news-container` is visible — browser-uncached, against an already-warm server |
+| `cached_dashboard_load` | Same dashboard, repeat visit in the same browser context |
+| `cold_homenode_load` | Opening the Homepage node until the TipTap editor (`umb-input-tiptap`) is painted — browser-uncached |
+| `cached_homenode_load` | Same node, repeat visit in the same browser context |
+| `time_to_first_edit` | URL → real form login → open Homepage → cursor in TipTap → type a character until rendered; includes a segment breakdown: `seg_login_ms` / `seg_navigate_ms` / `seg_editor_ready_ms` / `seg_keystroke_ms` |
+
+**Cold vs cached:** "Cold" means a fresh browser context against an already-warm server — the warmup step warms the server so the measurement isolates client-side cold rather than a server cold-start. "Cached" is a repeat visit in the same browser context. On a local/localhost instance the cold–cached delta is negligible (no network distance for the cache to save); the delta becomes meaningful against a networked Azure tier where asset delivery distance matters.
+
+#### Results
+
+- Rows land in the **`ClientMeasurement_CL`** Log Analytics custom table.
+- A **"Client measurements"** tab in the Azure Workbook surfaces per-metric medians across versions and tiers.
+- Raw results are stored under the **`client/` prefix** of the history storage container.
+- A report-only regression gate (`scripts/check-client-regression.ps1`) compares the latest run's median per `(version × tier × metric)` against the median of recent baselines. Report-only: it does not fail the pipeline while baselines are being established.
+
+#### Running locally
+
+```bash
+cd loadtests/scenarios/Default/client
+npm install
+npx playwright install chromium
+UMBRACO_BASE_URL=https://localhost:44339 UMBRACO_USER=<admin-email> UMBRACO_PASSWORD=<pw> npx playwright test
+```
+
+The package reads credentials from `URL` / `UMBRACO_USER_LOGIN` / `UMBRACO_USER_PASSWORD`. The project's `lib/env-bridge.ts` maps the friendlier `UMBRACO_BASE_URL` / `UMBRACO_USER` / `UMBRACO_PASSWORD` variables onto those names before the package loads. Set `CLIENT_MEASURE_REPS=3` for a quick iteration run. Set `SKIP_GLOBAL_SETUP=1` to skip the content-model build when iterating on a single spec against an already-built instance.
+
+#### Third-party package cost measurement
+
+The client suite measures a **clean-site baseline**. Running the same suite against an instance with packages installed makes the delta the package load cost. This is a natural extension — the infrastructure is in place, but the side-by-side comparison is not automated yet.
+
 ### Cold-cache vs warm-cache testing
 
 By default, the pipeline **warms up** the App Service (5-minute poll for `200` on `/`) before starting the load test, so measurements reflect steady-state cache-warm behaviour — the most stable comparison surface across tiers and versions.
