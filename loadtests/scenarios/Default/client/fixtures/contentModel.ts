@@ -433,6 +433,7 @@ async function ensureEveryRootHasChild(api: ApiHelpers, fallbackPageId: string):
     if (!created) {
       // Could not give this stray root a child (its type forbids children and
       // does not allow Page). Remove it so the tree is consistent.
+      console.log(`[contentModel] moving root "${rootName}" (${root.id}) to recycle bin: no doc type permits a child`);
       await api.document.moveToRecycleBin(root.id);
     }
   }

@@ -10,6 +10,7 @@ import { buildContentModel } from './fixtures/contentModel';
 import { env } from './lib/env';
 
 export default async function globalSetup(_config: FullConfig): Promise<void> {
+  // dev-only: skip the model build when iterating on a spec against an already-built instance
   if (process.env.SKIP_GLOBAL_SETUP === '1') {
     return;
   }
