@@ -1,4 +1,4 @@
-import { test } from '@playwright/test';
+import { test, errors as PwErrors } from '@playwright/test';
 import { env } from '../lib/env';
 import { loginByForm } from '../lib/auth';
 import { timeUntilVisible, perfMarks, emitMetric } from '../lib/measure';
@@ -30,8 +30,26 @@ const CONTENT_URL = `${env.baseUrl}/umbraco/section/content`;
 // and loads the document editing view. We click by label rather than navigating
 // by id-URL because the id is not known statically and clicking the named tree
 // node is the robust, user-faithful way to "open the node".
+//
+// Scoped to <umb-section-sidebar> (the tree panel, verified present post-login):
+// the same "Homepage" label can also appear in the workspace header/breadcrumb
+// once the node is open, so an unscoped selector + .first() could drift onto the
+// wrong element. Restricting to the sidebar rules that out.
 function homepageTreeItem(page: import('@playwright/test').Page) {
-  return page.locator(`uui-menu-item[label="${HOMEPAGE_NAME}"]`).first();
+  return page.locator(`umb-section-sidebar uui-menu-item[label="${HOMEPAGE_NAME}"]`).first();
+}
+
+// Wait for the Homepage tree node, failing with an actionable message (the bare
+// Playwright timeout names only the selector, not the likely cause).
+async function waitForHomepageNode(page: import('@playwright/test').Page) {
+  try {
+    await homepageTreeItem(page).waitFor({ state: 'visible', timeout: 60_000 });
+  } catch (e) {
+    if (e instanceof PwErrors.TimeoutError) {
+      throw new Error(`Homepage tree node not found in the content tree — did the content model build (globalSetup) run on this instance?`);
+    }
+    throw e;
+  }
 }
 
 // reps × (fresh context + form login + cold open + cached re-open) adds up; keep
@@ -59,7 +77,7 @@ test('home node cold + cached load', async ({ browser }) => {
 
     // Reach the Content section (renders the tree with the Homepage root node).
     await page.goto(CONTENT_URL);
-    await homepageTreeItem(page).waitFor({ state: 'visible', timeout: 60_000 });
+    await waitForHomepageNode(page);
 
     // COLD: first open of the node in this fresh context (no cache).
     const t0 = performance.now();
@@ -70,7 +88,7 @@ test('home node cold + cached load', async ({ browser }) => {
     // CACHED: navigate back to the section root (re-mounts the tree, drops the
     // editor view) and re-open the SAME node in the same warm context.
     await page.goto(CONTENT_URL);
-    await homepageTreeItem(page).waitFor({ state: 'visible', timeout: 60_000 });
+    await waitForHomepageNode(page);
     const t1 = performance.now();
     await homepageTreeItem(page).click();
     cached.push(await timeUntilVisible(t1, page.locator(TIPTAP).first()));
