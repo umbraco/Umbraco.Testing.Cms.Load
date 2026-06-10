@@ -36,7 +36,12 @@ test.setTimeout(10 * 60_000);
 test('news dashboard cold + cached load', async ({ browser }) => {
   const cold: number[] = [];
   const cached: number[] = [];
-  let lastMarks: Record<string, number | null> = {};
+  // Perf marks from the last rep of each path. lcp_ms is expected to be null
+  // here — the backoffice SPA doesn't emit a largest-contentful-paint entry in
+  // headless Chromium — but ttfb/dcl/load populate. Captured for BOTH paths so
+  // the cold and cached NDJSON rows carry the same schema (no join-time gaps).
+  let coldMarks: Record<string, number | null> = {};
+  let cachedMarks: Record<string, number | null> = {};
 
   for (let i = 0; i < env.reps; i++) {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
@@ -47,16 +52,17 @@ test('news dashboard cold + cached load', async ({ browser }) => {
     const t0 = performance.now();
     await page.goto(DASHBOARD_URL);
     cold.push(await timeUntilVisible(t0, page.locator(DASHBOARD_CONTENT).first()));
-    lastMarks = await perfMarks(page);
+    coldMarks = await perfMarks(page);
 
     // CACHED: reload the same dashboard in the same (now-warm) context.
     const t1 = performance.now();
     await page.reload();
     cached.push(await timeUntilVisible(t1, page.locator(DASHBOARD_CONTENT).first()));
+    cachedMarks = await perfMarks(page);
 
     await context.close();
   }
 
-  emitMetric('cold_dashboard_load', cold, lastMarks);
-  emitMetric('cached_dashboard_load', cached);
+  emitMetric('cold_dashboard_load', cold, coldMarks);
+  emitMetric('cached_dashboard_load', cached, cachedMarks);
 });
