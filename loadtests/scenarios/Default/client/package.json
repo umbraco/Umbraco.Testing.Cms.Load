@@ -1,0 +1,18 @@
+{
+  "name": "umbraco-client-measurement",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright browser-perceived backoffice performance measurement",
+  "scripts": {
+    "measure": "playwright test",
+    "smoke": "playwright test smoke.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@umbraco-cms/acceptance-test-helpers": "17.4.2"
+  }
+}
