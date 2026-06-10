@@ -140,7 +140,7 @@
             "isRequired": true,
             "value": "Trends",
             "typeSettings": { "additionalResourceOptions": [], "showDefault": false },
-            "jsonData": "[\n    { \"value\": \"Trends\",   \"label\": \"Trends\",   \"selected\": true },\n    { \"value\": \"Tiers\",    \"label\": \"Tiers\" },\n    { \"value\": \"Versions\", \"label\": \"Versions\" },\n    { \"value\": \"Compare\",  \"label\": \"Compare\" },\n    { \"value\": \"Runs\",     \"label\": \"Runs\" },\n    { \"value\": \"Glossary\", \"label\": \"Glossary\" }\n]"
+            "jsonData": "[\n    { \"value\": \"Trends\",             \"label\": \"Trends\",             \"selected\": true },\n    { \"value\": \"Tiers\",              \"label\": \"Tiers\" },\n    { \"value\": \"Versions\",           \"label\": \"Versions\" },\n    { \"value\": \"Compare\",            \"label\": \"Compare\" },\n    { \"value\": \"Runs\",               \"label\": \"Runs\" },\n    { \"value\": \"ClientMeasurements\", \"label\": \"Client measurements\" },\n    { \"value\": \"Glossary\",           \"label\": \"Glossary\" }\n]"
           }
         ],
         "style": "pills"
@@ -948,6 +948,44 @@
         { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
         { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
       ]
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Client measurements\nClient-side perceived latency collected from the Backoffice UI via `ClientMeasurement_CL`. Metrics represent real browser timing (e.g. time-to-first-edit) broken down by Umbraco version, infrastructure tier, and metric name."
+      },
+      "name": "client-measurements-header",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "ClientMeasurements" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL\n| where isnotempty(metric)\n| summarize median_ms = avg(median_ms) by bin(TimeGenerated, 1d), umbraco_version, infra_tier, metric\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Client perceived latency (median ms) over time",
+        "timeContext": { "durationMs": 7776000000 },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "client-latency-trend",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "ClientMeasurements" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL\n| where metric == \"time_to_first_edit\"\n| summarize avg(seg_login_ms), avg(seg_navigate_ms), avg(seg_editor_ready_ms), avg(seg_keystroke_ms) by bin(TimeGenerated, 1d), infra_tier\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Time-to-first-edit segment breakdown (login / navigate / editor ready / keystroke)",
+        "timeContext": { "durationMs": 7776000000 },
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "client-segment-breakdown",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "ClientMeasurements" }
     },
     {
       "type": 1,
