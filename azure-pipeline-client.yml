@@ -1,0 +1,590 @@
+name: client_measurement_pipeline
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+parameters:
+  - name: umbracoVersion
+    displayName: Umbraco version (e.g. 17.0.0, 17.0.1-rc.1, 17.1.0-beta.2)
+    type: string
+    default: '17.0.0'
+
+  - name: scenario
+    displayName: Scenario (must match a folder under loadtests/scenarios/)
+    type: string
+    default: 'Default'
+    values:
+      - 'Default'
+      - 'DeliveryApi'
+
+  - name: runStarter
+    displayName: Run Starter tier
+    type: boolean
+    default: true
+
+  - name: runStandard
+    displayName: Run Standard tier
+    type: boolean
+    default: false
+
+  - name: runPro
+    displayName: Run Pro tier
+    type: boolean
+    default: false
+
+  - name: runEnterprise
+    displayName: Run Enterprise tier
+    type: boolean
+    default: false
+
+  - name: loadProfile
+    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s'
+    type: string
+    default: 'standard'
+    values:
+      - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
+      - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
+      - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
+
+  - name: azureRegion
+    displayName: Azure region
+    type: string
+    default: West Europe
+    values:
+      - West Europe
+      - North Europe
+      - East US
+      - West US 2
+
+  # Feeds into RG name + resource names. Concurrent runs with the same prefix collide.
+  - name: resourcePrefix
+    displayName: Resource name prefix (max 16 chars, lowercase alphanumeric + hyphens; must be unique per concurrent run)
+    type: string
+    default: umbraco-client
+
+  - name: skipWarmup
+    displayName: Skip warmup (test cold-start behaviour)
+    type: boolean
+    default: false
+
+  - name: validationTimeoutMinutes
+    displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
+    type: number
+    default: 60
+    values:
+      - 15
+      - 30
+      - 60
+      - 120
+      - 240
+
+  # Override the per-DB DTU cap for every case so SQL can be sized independently
+  # of the tier's default — useful for "is SQL actually the bottleneck?"
+  # experiments. Defaults (per loadtests/tiers.json): Starter=20, Standard=50,
+  # Pro=100, Enterprise=200. 'Auto' = use each tier's built-in DTU cap.
+  - name: poolDtuOverride
+    displayName: SQL per-DB DTU override (Auto = match tier)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - '10'
+      - '20'
+      - '50'
+      - '100'
+      - '200'
+
+  # Override the App Service Plan SKU for every case so app size is independent
+  # of the tier — counterpart to poolDtuOverride on the app side. Defaults
+  # (per loadtests/tiers.json): Starter=P0v3, Standard=P1v3, Pro=P2v3,
+  # Enterprise=P3v3. 'Auto' = use each tier's built-in SKU.
+  - name: appSkuOverride
+    displayName: App Service SKU override (Auto = match tier)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'P0v3'
+      - 'P1v3'
+      - 'P2v3'
+      - 'P3v3'
+
+  # Override the TestDataSeeder preset so content size is independent of the
+  # load profile. 'Auto' couples preset to profile (smoke=Small, standard=Medium,
+  # stress=Large). Override unlocks the otherwise-unreachable Massive preset
+  # and enables off-diagonal cells (Small content + stress load, Massive content
+  # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~30 min,
+  # Large ~60 min, Massive ~120 min.
+  - name: seederPresetOverride
+    displayName: Seeder preset override (Auto = match load profile)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'Small'
+      - 'Medium'
+      - 'Large'
+      - 'Massive'
+
+variables:
+  # Variable group `umbraco-loadtest-history` provides all history* variables:
+  # historyResourceGroup, historyLocation, historyLoadTestName,
+  # historyStorageAccount, historyContainer.
+  - group: umbraco-loadtest-history
+
+  - name: serviceConnection
+    value: 'terraform-umbraco-load-testing-az-connection'
+  - name: azureResourceGroup
+    value: '${{ parameters.resourcePrefix }}-rg'
+  - name: terraformWorkingDirectory
+    value: '$(System.DefaultWorkingDirectory)/Terraform'
+
+  # Long-lived monitoring resources. Defaults are fine for a single team in a
+  # subscription; override in the variable group if multiple teams share one.
+  - name: historyWorkspaceName
+    value: 'umbraco-loadtest-laws'
+  - name: historyDceName
+    value: 'umbraco-loadtest-dce'
+  - name: historyDcrName
+    value: 'umbraco-loadtest-dcr'
+
+stages:
+  - stage: validateTestCases
+    displayName: Validate test cases
+    jobs:
+      - job: prepareTestCases
+        displayName: Validate + resolve test cases
+        steps:
+          - task: PowerShell@2
+            name: out
+            displayName: Resolve profile + validate scenario
+            inputs:
+              targetType: 'filePath'
+              filePath: '$(System.DefaultWorkingDirectory)/scripts/resolve-run-config.ps1'
+              arguments: >
+                -Profile '${{ parameters.loadProfile }}'
+                -UmbracoVersion '${{ parameters.umbracoVersion }}'
+                -Scenario '${{ parameters.scenario }}'
+                -RunStarter '${{ parameters.runStarter }}'
+                -RunStandard '${{ parameters.runStandard }}'
+                -RunPro '${{ parameters.runPro }}'
+                -RunEnterprise '${{ parameters.runEnterprise }}'
+                -PoolDtuOverride '${{ parameters.poolDtuOverride }}'
+                -AppSkuOverride '${{ parameters.appSkuOverride }}'
+                -SeederPresetOverride '${{ parameters.seederPresetOverride }}'
+                -Workload 'client'
+                -WorkspaceRoot '$(System.DefaultWorkingDirectory)'
+
+  - stage: ensureHistoryInfra
+    displayName: Ensure history infrastructure
+    dependsOn: validateTestCases
+    jobs:
+      - job: ensure
+        displayName: Ensure history RG, Azure Load Testing, storage
+        steps:
+          - task: AzureCLI@2
+            displayName: Ensure history infra
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/ensure-history-infra.ps1'
+              arguments: >
+                -HistoryResourceGroup "$(historyResourceGroup)"
+                -HistoryLocation "$(historyLocation)"
+                -LoadTestName "$(historyLoadTestName)"
+                -StorageAccountName "$(historyStorageAccount)"
+                -ContainerName "$(historyContainer)"
+
+  - stage: ensureMonitoringInfra
+    displayName: Ensure monitoring infrastructure
+    dependsOn: ensureHistoryInfra
+    jobs:
+      - job: ensure
+        displayName: Ensure Log Analytics + custom table + DCR + Workbook
+        steps:
+          - task: AzureCLI@2
+            name: ensureMon
+            displayName: Ensure monitoring infra (workspace, table, DCR, role grant)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              # addSpnToEnvironment exposes the service connection's app ID via
+              # $env:servicePrincipalId; we resolve the SP's *object* ID from
+              # that for the role assignment.
+              addSpnToEnvironment: true
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                $PSNativeCommandUseErrorActionPreference = $true
+
+                if ([string]::IsNullOrWhiteSpace($env:servicePrincipalId)) {
+                    Write-Error "servicePrincipalId env var not set. Verify addSpnToEnvironment: true on this task."
+                    exit 1
+                }
+                $spObjectId = az ad sp show --id $env:servicePrincipalId --query id -o tsv
+                if ([string]::IsNullOrWhiteSpace($spObjectId)) {
+                    Write-Error "Couldn't resolve SP object ID from app ID $env:servicePrincipalId. Tenant may require explicit Directory Readers role on the SP."
+                    exit 1
+                }
+                & "$(System.DefaultWorkingDirectory)/scripts/ensure-monitoring-infra.ps1" `
+                    -HistoryResourceGroup "$(historyResourceGroup)" `
+                    -HistoryLocation "$(historyLocation)" `
+                    -WorkspaceName "$(historyWorkspaceName)" `
+                    -DceName "$(historyDceName)" `
+                    -DcrName "$(historyDcrName)" `
+                    -IngestPrincipalId $spObjectId `
+                    -EmitPipelineVars
+
+          - task: AzureCLI@2
+            displayName: Deploy Workbook (idempotent — re-applies dashboards/loadtest.workbook.json)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/deploy-workbook.ps1'
+              arguments: >
+                -HistoryResourceGroup "$(historyResourceGroup)"
+                -HistoryLocation "$(historyLocation)"
+                -WorkspaceName "$(historyWorkspaceName)"
+
+  - stage: provision
+    displayName: Provision infrastructure
+    dependsOn:
+      - validateTestCases
+      - ensureHistoryInfra
+    variables:
+      testCasesJson:            $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.testCasesJson'] ]
+      resolvedSeederPreset:     $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      resolvedPoolDtuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedPoolDtuOverride'] ]
+      resolvedAppSkuOverride:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedAppSkuOverride'] ]
+      resolvedSdkVersion:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkVersion'] ]
+    jobs:
+      - job: checkResourceGroup
+        displayName: Check if resource group exists
+        steps:
+          - task: AzureCLI@2
+            displayName: Fail if resource group already exists
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Fail if the RG already exists — either a stuck previous run or a prefix collision.
+                # If it's a stuck run you want to discard, delete it directly:
+                #   az group delete -n <name> --yes
+                # then re-queue this pipeline.
+                $exists = az group exists -n $(azureResourceGroup)
+                if ($exists -eq 'true') {
+                  Write-Host "##vso[task.logissue type=error]Resource group '$(azureResourceGroup)' already exists."
+                  Write-Host "##vso[task.logissue type=error]  Delete it manually with 'az group delete -n $(azureResourceGroup) --yes' (if it's from a stuck run), or use a different prefix."
+                  exit 1
+                } else {
+                  Write-Host "Resource group '$(azureResourceGroup)' does not exist - safe to proceed."
+                }
+
+      - job: setup
+        dependsOn: checkResourceGroup
+        displayName: Terraform Setup
+        steps:
+          - task: TerraformInstaller@1
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: '1.13.3'
+
+          - task: PowerShell@2
+            displayName: Terraform Init
+            inputs:
+              targetType: 'inline'
+              script: 'terraform init -backend=false'
+              workingDirectory: '$(terraformWorkingDirectory)'
+
+          - task: TerraformTaskV4@4
+            displayName: Terraform Validate
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+              workingDirectory: '$(terraformWorkingDirectory)'
+
+          - task: TerraformTaskV4@4
+            displayName: Terraform Plan
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              environmentServiceNameAzureRM: '$(serviceConnection)'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var app_sku_override=$(resolvedAppSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+
+      - job: apply
+        displayName: Terraform Apply
+        dependsOn: setup
+        # Apply runs the install script per case sequentially (parallelism=1).
+        # Massive preset can take ~120 min per case; budget generously.
+        timeoutInMinutes: 720
+        steps:
+          - task: TerraformInstaller@1
+            displayName: Install Terraform
+            inputs:
+              terraformVersion: '1.13.3'
+
+          - task: UseDotNet@2
+            displayName: 'Install .NET SDK $(resolvedSdkVersion)'
+            inputs:
+              packageType: sdk
+              version: '$(resolvedSdkVersion)'
+
+          - task: PowerShell@2
+            displayName: Terraform Init
+            inputs:
+              targetType: 'inline'
+              script: 'terraform init -backend=false'
+              workingDirectory: '$(terraformWorkingDirectory)'
+
+          - task: AzureCLI@2
+            name: AzLoginInfo
+            displayName: Get Azure credentials
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: bash
+              scriptLocation: inlineScript
+              # Under WIF, $idToken is set and $servicePrincipalKey is empty.
+              # Under client-secret auth, the opposite. issecret=true masks all.
+              # Subscription ID isn't surfaced by addSpnToEnvironment, so read it
+              # explicitly — install-umbraco-cms-on-appservice.ps1 pins `az account`
+              # to it after `az login` to avoid multi-sub default-routing surprises.
+              inlineScript: |
+                echo "##vso[task.setvariable variable=ARM_CLIENT_ID;issecret=true]$servicePrincipalId"
+                echo "##vso[task.setvariable variable=ARM_TENANT_ID;issecret=true]$tenantId"
+                echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET;issecret=true]$servicePrincipalKey"
+                echo "##vso[task.setvariable variable=ARM_OIDC_TOKEN;issecret=true]$idToken"
+                echo "##vso[task.setvariable variable=ARM_SUBSCRIPTION_ID]$(az account show --query id -o tsv)"
+              addSpnToEnvironment: true
+
+          - task: TerraformTaskV4@4
+            displayName: Terraform Apply
+            # ARM_* env vars inherit into the install script via local-exec child-process
+            # inheritance. Kept out of terraform variables (which would suppress local-exec
+            # output) and out of the local-exec `environment` block (same reason).
+            env:
+              ARM_CLIENT_ID:       $(ARM_CLIENT_ID)
+              ARM_CLIENT_SECRET:   $(ARM_CLIENT_SECRET)
+              ARM_TENANT_ID:       $(ARM_TENANT_ID)
+              ARM_OIDC_TOKEN:      $(ARM_OIDC_TOKEN)
+              ARM_SUBSCRIPTION_ID: $(ARM_SUBSCRIPTION_ID)
+            inputs:
+              provider: 'azurerm'
+              command: 'apply'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              environmentServiceNameAzureRM: '$(serviceConnection)'
+              commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.resourcePrefix }} -var resource_group_name=$(azureResourceGroup) -var resource_group_location="${{ parameters.azureRegion }}" -var seeder_preset=$(resolvedSeederPreset) -var pool_dtu_override=$(resolvedPoolDtuOverride) -var app_sku_override=$(resolvedAppSkuOverride) -var build_id=$(Build.BuildId) -var="test_cases=$(testCasesJson)"'
+
+          - task: PowerShell@2
+            name: outputVars
+            displayName: Extract Terraform outputs
+            inputs:
+              targetType: 'inline'
+              workingDirectory: '$(terraformWorkingDirectory)'
+              script: |
+                # Compact map keyed by testCaseId; downstream jobs read it as one variable.
+                $raw     = terraform output -json test_case_outputs
+                $compact = ($raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10)
+                Write-Host "##vso[task.setvariable variable=testCaseOutputs;isOutput=true]$compact"
+
+                # Aggregate per-case seeder results into a single output variable
+                # so the loadTest stage (different agent, no shared filesystem)
+                # doesn't need a pipeline-artifact handoff just for one field per
+                # case. install-umbraco-cms-on-appservice.ps1 wrote
+                # .seeder-results/<testCaseId>.json during local-exec; we
+                # gather them all here and emit one compact JSON output var.
+                $seederResultsDir = Join-Path "$(System.DefaultWorkingDirectory)" ".seeder-results"
+                $seederMap = @{}
+                if (Test-Path $seederResultsDir) {
+                    foreach ($f in Get-ChildItem -Path $seederResultsDir -Filter '*.json') {
+                        try {
+                            $seederMap[$f.BaseName] = Get-Content $f.FullName -Raw | ConvertFrom-Json
+                        } catch {
+                            Write-Warning "Couldn't parse seeder result $($f.FullName): $($_.Exception.Message)"
+                        }
+                    }
+                }
+                $seederJson = ($seederMap | ConvertTo-Json -Compress -Depth 5)
+                Write-Host "Aggregated $($seederMap.Count) seeder result(s)"
+                Write-Host "##vso[task.setvariable variable=seederResults;isOutput=true]$seederJson"
+
+  - stage: clientMeasure
+    displayName: Run client measurements
+    dependsOn:
+      - validateTestCases
+      - ensureMonitoringInfra
+      - provision
+    condition: succeeded('provision')
+    variables:
+      testCaseOutputs:        $[ stageDependencies.provision.apply.outputs['outputVars.testCaseOutputs'] ]
+      seederResults:          $[ stageDependencies.provision.apply.outputs['outputVars.seederResults'] ]
+      resolvedTestCases:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      resolvedSeederPreset:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      monitoringDceUri:           $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId:   $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringClientStreamName: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringClientStreamName'] ]
+    jobs:
+      - job: runClientMeasurements
+        displayName: Run Client Measurements
+        timeoutInMinutes: 360
+        steps:
+          - ${{ if eq(parameters.runStarter, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Starter__${{ parameters.scenario }}'
+                tier: 'Starter'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - ${{ if eq(parameters.runStandard, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Standard__${{ parameters.scenario }}'
+                tier: 'Standard'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - ${{ if eq(parameters.runPro, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Pro__${{ parameters.scenario }}'
+                tier: 'Pro'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - ${{ if eq(parameters.runEnterprise, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__${{ parameters.scenario }}'
+                tier: 'Enterprise'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - task: AzureCLI@2
+            displayName: 'Stop all App Services'
+            condition: succeededOrFailed()
+            env:
+              TEST_CASE_OUTPUTS: $(testCaseOutputs)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/stop-all-app-services.ps1'
+              arguments: '-ResourceGroupName "$(azureResourceGroup)"'
+
+  - stage: clientRegression
+    displayName: Client regression check
+    dependsOn:
+      - clientMeasure
+    condition: succeeded('clientMeasure')
+    jobs:
+      - job: clientRegressionCheck
+        displayName: Client regression check
+        steps:
+          - task: AzureCLI@2
+            displayName: Compare client run against baseline
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
+                $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                & "$(System.DefaultWorkingDirectory)/scripts/check-client-regression.ps1" `
+                    -Scenario '${{ parameters.scenario }}' -Major $major `
+                    -HistoryResourceGroup '$(historyResourceGroup)' `
+                    -StorageAccountName '$(historyStorageAccount)' `
+                    -ContainerName '$(historyContainer)' `
+                    -OutputPath "$(System.DefaultWorkingDirectory)/client-regression-report.md" `
+                    -NoFailOnRegression
+          - task: PublishBuildArtifacts@1
+            displayName: Publish client regression report
+            condition: succeededOrFailed()
+            continueOnError: true
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/client-regression-report.md'
+              ArtifactName: 'client-regression-report'
+              publishLocation: 'Container'
+
+  # Cleanup must run on every outcome — including pipeline cancel. `always()`
+  # covers cancel; `succeededOrFailed()` would skip cleanup when the user
+  # cancels mid-run, orphaning the ephemeral RG until someone manually deletes
+  # it. Depends on provision so the chain still fires if clientMeasure/clientRegression
+  # were skipped or failed; depends on clientMeasure+clientRegression so cleanup doesn't
+  # race with them.
+  - stage: cleanup
+    displayName: Cleanup
+    dependsOn:
+      - provision
+      - clientMeasure
+      - clientRegression
+    condition: always()
+    jobs:
+      - job: checkResourceGroupForCleanup
+        displayName: Check resource group for cleanup
+        steps:
+          - task: AzureCLI@2
+            name: checkResourceGroup
+            displayName: Check if resource group exists
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $exists = az group exists -n $(azureResourceGroup)
+                Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$exists"
+
+      - job: manualValidation
+        dependsOn: checkResourceGroupForCleanup
+        condition: eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.doesExist'], 'true')
+        displayName: Manual validation - keep resources?
+        pool: server
+        timeoutInMinutes: ${{ parameters.validationTimeoutMinutes }}
+        steps:
+          - task: ManualValidation@0
+            displayName: Approve to keep resources
+            timeoutInMinutes: ${{ parameters.validationTimeoutMinutes }}
+            inputs:
+              instructions: |
+                Press "Resume" to KEEP the resource group $(azureResourceGroup).
+                Press "Reject" (or wait ${{ parameters.validationTimeoutMinutes }} minutes) to DELETE all resources.
+
+      # User pressed Reject, the validation timed out, or the chain skipped: delete the RG.
+      - job: deleteResourceGroup
+        displayName: Delete resource group
+        dependsOn: manualValidation
+        condition: in(dependencies.manualValidation.result, 'Failed', 'Canceled', 'Skipped')
+        steps:
+          - task: AzureCLI@2
+            displayName: Delete resource group
+            retryCountOnTaskFailure: 5
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $exists = az group exists -n $(azureResourceGroup)
+                if ($exists -eq 'true') {
+                  Write-Host "Deleting resource group $(azureResourceGroup)..."
+                  az group delete -n $(azureResourceGroup) --yes
+                } else {
+                  Write-Host "Resource group $(azureResourceGroup) does not exist, skipping deletion."
+                }
