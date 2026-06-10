@@ -33,6 +33,11 @@ param(
     # the raw Azure Monitor datapoints that Get-MetricSummary today averages
     # away. The dashboard's per-run drill-down reads from this.
     [string]$SeriesTableName = "LoadTestSeries_CL",
+    # Client-side perceived-latency table (Playwright client workload). One row
+    # per (run × metric) — cold/cached dashboard + home-node load, time-to-first-edit.
+    # Semantically distinct from the load-test throughput tables, so it gets its
+    # own table + stream rather than overloading LoadTestSummary_CL.
+    [string]$ClientTableName = "ClientMeasurement_CL",
     # Days the custom tables retain data. LA includes 31 days free; beyond
     # that is ~$0.12/GB/month. At our row size + cadence this is fractions
     # of a cent per year for 365-day retention. Bumping >2y requires Sentinel
@@ -144,8 +149,43 @@ $seriesColumns = @(
     @{ name = "value";            type = "real"     }
 )
 
+# Client-measurement schema. One row per (run × metric). Kept narrow: run
+# metadata + the summary stats the Playwright emitter produces + optional
+# segment medians for time_to_first_edit (null for the other metrics).
+$clientColumns = @(
+    @{ name = "TimeGenerated";          type = "datetime" }
+    @{ name = "run_id";                 type = "string"   }
+    @{ name = "commit";                 type = "string"   }
+    @{ name = "branch";                 type = "string"   }
+    @{ name = "umbraco_version";        type = "string"   }
+    @{ name = "app_service_sku";        type = "string"   }
+    @{ name = "pool_dtu_max";           type = "int"      }
+    @{ name = "seeder_preset";          type = "string"   }
+    @{ name = "infra_tier";             type = "string"   }
+    @{ name = "scenario";               type = "string"   }
+    @{ name = "metric";                 type = "string"   }
+    @{ name = "count";                  type = "int"      }
+    @{ name = "median_ms";              type = "real"     }
+    @{ name = "p75_ms";                 type = "real"     }
+    @{ name = "p95_ms";                 type = "real"     }
+    @{ name = "min_ms";                 type = "real"     }
+    @{ name = "max_ms";                 type = "real"     }
+    @{ name = "stddev_ms";              type = "real"     }
+    @{ name = "ttfb_ms";                type = "real"     }
+    @{ name = "dcl_ms";                 type = "real"     }
+    @{ name = "load_ms";                type = "real"     }
+    @{ name = "lcp_ms";                 type = "real"     }
+    @{ name = "seg_login_ms";           type = "real"     }
+    @{ name = "seg_navigate_ms";        type = "real"     }
+    @{ name = "seg_editor_ready_ms";    type = "real"     }
+    @{ name = "seg_keystroke_ms";       type = "real"     }
+    @{ name = "regression_status";      type = "string"   }
+    @{ name = "regressed_metrics";      type = "string"   }
+)
+
 $streamName       = "Custom-$TableName"
 $seriesStreamName = "Custom-$SeriesTableName"
+$clientStreamName = "Custom-$ClientTableName"
 
 Write-Host "=== Ensuring monitoring infrastructure ==="
 Write-Host "  RG:               $HistoryResourceGroup"
@@ -220,6 +260,7 @@ function Set-CustomTable {
 
 Set-CustomTable -Name $TableName       -Columns $columns
 Set-CustomTable -Name $SeriesTableName -Columns $seriesColumns
+Set-CustomTable -Name $ClientTableName -Columns $clientColumns
 
 # Data Collection Endpoint
 Write-Host "-> Data Collection Endpoint"
@@ -251,6 +292,7 @@ $dcrBody = @{
         streamDeclarations       = @{
             $streamName       = @{ columns = $columns }
             $seriesStreamName = @{ columns = $seriesColumns }
+            $clientStreamName = @{ columns = $clientColumns }
         }
         destinations             = @{
             logAnalytics = @(
@@ -268,6 +310,12 @@ $dcrBody = @{
                 streams      = @($seriesStreamName)
                 destinations = @("loadtest-workspace")
                 outputStream = $seriesStreamName
+                transformKql = "source"
+            },
+            @{
+                streams      = @($clientStreamName)
+                destinations = @("loadtest-workspace")
+                outputStream = $clientStreamName
                 transformKql = "source"
             }
         )
@@ -364,10 +412,11 @@ Write-Host ""
 Write-Host "Monitoring infrastructure ready."
 Write-Host ""
 Write-Host "Wire these into publish-load-test-results.ps1 (or pass via pipeline variables):"
-Write-Host "  DceUri:           $dceUri"
-Write-Host "  DcrImmutableId:   $dcrImmutableId"
-Write-Host "  StreamName:       $streamName"
-Write-Host "  SeriesStreamName: $seriesStreamName"
+Write-Host "  DceUri:             $dceUri"
+Write-Host "  DcrImmutableId:     $dcrImmutableId"
+Write-Host "  StreamName:         $streamName"
+Write-Host "  SeriesStreamName:   $seriesStreamName"
+Write-Host "  ClientStreamName:   $clientStreamName"
 
 if ($EmitPipelineVars) {
     # Azure DevOps logging-command output. isOutput=true is required for these
@@ -377,4 +426,5 @@ if ($EmitPipelineVars) {
     Write-Host "##vso[task.setvariable variable=MonitoringDcrImmutableId;isOutput=true]$dcrImmutableId"
     Write-Host "##vso[task.setvariable variable=MonitoringStreamName;isOutput=true]$streamName"
     Write-Host "##vso[task.setvariable variable=MonitoringSeriesStreamName;isOutput=true]$seriesStreamName"
+    Write-Host "##vso[task.setvariable variable=MonitoringClientStreamName;isOutput=true]$clientStreamName"
 }
