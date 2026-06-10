@@ -4,8 +4,7 @@
   "private": true,
   "description": "Playwright browser-perceived backoffice performance measurement",
   "scripts": {
-    "measure": "playwright test",
-    "smoke": "playwright test smoke.spec.ts"
+    "measure": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",

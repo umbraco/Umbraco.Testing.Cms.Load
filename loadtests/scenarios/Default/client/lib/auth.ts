@@ -36,9 +36,7 @@ export async function loginByForm(page: Page): Promise<number> {
   return performance.now() - start;
 }
 
-// Save an authenticated storageState to disk for the load measurements (which
-// must not pay the login cost on every rep).
-export async function saveAuthState(page: Page, path: string): Promise<void> {
-  await loginByForm(page); // login timing intentionally ignored here; we want the side effect
-  await page.context().storageState({ path });
-}
+// Note: the load measurements (dashboard, home node) log in per rep via
+// loginByForm and start their timing AFTER login returns, so the login
+// round-trip is excluded from the measured window — the same isolation a
+// pre-authenticated storageState would give, without a separate auth-state file.

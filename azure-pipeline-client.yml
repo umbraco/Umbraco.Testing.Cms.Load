@@ -17,8 +17,9 @@ parameters:
     type: string
     default: 'Default'
     values:
+      # Only scenarios that ship a client/ Playwright project are valid here.
+      # (DeliveryApi has no client/ project yet; resolve-run-config rejects it.)
       - 'Default'
-      - 'DeliveryApi'
 
   - name: runStarter
     displayName: Run Starter tier
