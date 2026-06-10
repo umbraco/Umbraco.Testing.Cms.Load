@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Page, errors as PwErrors } from '@playwright/test';
 import { env } from './env';
 
 export const BACKOFFICE_PATH = '/umbraco';
@@ -19,10 +19,15 @@ export async function loginByForm(page: Page): Promise<number> {
   // An already-authenticated session redirects straight to the shell, so the
   // login form never appears. Only fill/submit when the username field shows up.
   const username = page.locator('input[name="username"]');
-  if (await username.waitFor({ state: 'visible', timeout: 15_000 }).then(() => true, () => false)) {
+  // Treat ONLY a visibility timeout as "already authenticated, no form" — let any
+  // other error (page crash, navigation failure) propagate instead of falling
+  // through to a misleading 60s sidebar-wait timeout.
+  const loginFormShown = await username.waitFor({ state: 'visible', timeout: 15_000 })
+    .then(() => true, (e) => { if (e instanceof PwErrors.TimeoutError) return false; throw e; });
+  if (loginFormShown) {
     await username.fill(env.user);
-    await page.fill('input[name="password"]', env.password);
-    await page.click('button[type="submit"]');
+    await page.locator('input[name="password"]').fill(env.password);
+    await page.locator('button[type="submit"]').click();
   }
 
   // Section sidebar is the reliable "logged in" content-visible signal.
@@ -34,6 +39,6 @@ export async function loginByForm(page: Page): Promise<number> {
 // Save an authenticated storageState to disk for the load measurements (which
 // must not pay the login cost on every rep).
 export async function saveAuthState(page: Page, path: string): Promise<void> {
-  await loginByForm(page);
+  await loginByForm(page); // login timing intentionally ignored here; we want the side effect
   await page.context().storageState({ path });
 }
