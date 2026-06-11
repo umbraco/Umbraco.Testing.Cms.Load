@@ -568,6 +568,12 @@ stages:
                 Press "Resume" to KEEP the resource group $(azureResourceGroup).
                 Press "Reject" (or wait ${{ parameters.validationTimeoutMinutes }} minutes) to DELETE all resources.
 
+                To inspect the backoffice while this window is open: the App Service(s) are in
+                RG $(azureResourceGroup) (Azure Portal). They are STOPPED after measurements —
+                start one with: az webapp start -n <appServiceName> -g $(azureResourceGroup)
+                then open https://<host>/umbraco  (login: loadtest@example.invalid / LoadTest123!).
+                The exact URL is printed in the clientMeasure stage's "Read terraform outputs" step.
+
       # User pressed Reject, the validation timed out, or the chain skipped: delete the RG.
       - job: deleteResourceGroup
         displayName: Delete resource group

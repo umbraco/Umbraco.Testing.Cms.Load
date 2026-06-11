@@ -48,6 +48,16 @@ steps:
         $safeKey = (($testCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
         if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
         Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
+        # Plain Write-Host (NOT a ##vso setvariable, which the agent consumes and
+        # does not echo) so the backoffice URL is actually visible in this step log.
+        Write-Host ""
+        Write-Host "==================================================================="
+        Write-Host "  Backoffice URL: https://$($tfOut.hostname)/umbraco"
+        Write-Host "  App Service:    $($tfOut.app_service_name)  (RG $(azureResourceGroup))"
+        Write-Host "  Login:          loadtest@example.invalid / LoadTest123!"
+        Write-Host "  NOTE: the app is stopped after measurements — start it to inspect:"
+        Write-Host "    az webapp start -n $($tfOut.app_service_name) -g $(azureResourceGroup)"
+        Write-Host "==================================================================="
 
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
