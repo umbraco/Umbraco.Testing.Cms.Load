@@ -101,12 +101,15 @@ parameters:
   # and enables off-diagonal cells (Small content + stress load, Massive content
   # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~30 min,
   # Large ~60 min, Massive ~120 min.
+  # Background bulk content created by TestDataSeeder before the precise model is
+  # built. No 'Auto' (there's no load profile to match in the client pipeline) —
+  # pick the content size directly. Approx seeder times: Small ~10m, Medium ~30m,
+  # Large ~60m, Massive ~120m.
   - name: seederPresetOverride
-    displayName: Seeder preset override (Auto = match load profile)
+    displayName: 'Seeder content size (background bulk)'
     type: string
-    default: 'Auto'
+    default: 'Small'
     values:
-      - 'Auto'
       - 'Small'
       - 'Medium'
       - 'Large'
