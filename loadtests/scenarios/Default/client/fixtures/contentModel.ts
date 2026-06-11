@@ -27,6 +27,7 @@ import {
   ApiHelpers,
   DocumentTypeBuilder,
   DocumentBuilder,
+  BlockGridDataTypeBuilder,
 } from '@umbraco-cms/acceptance-test-helpers';
 
 export const HOMEPAGE_NAME = 'Homepage';
@@ -65,6 +66,14 @@ const DT = {
 const COMPOSITION_CONTENT = 'Page Content Extras';
 const COMPOSITION_SEO = 'Page SEO';
 const COMPOSITION_SMALL = 'Page Extras';
+
+// Element type used as the single allowed block in the Block Grid editor. Its
+// id (a GUID in the v17 management API) doubles as the contentElementTypeKey for
+// the data type's "blocks" config and as the contentTypeKey of the block's
+// contentData value on the Homepage.
+const HERO_BLOCK_ELEMENT_TYPE = 'Hero Block';
+const HERO_BLOCK_HEADING = 'heading'; // Textstring
+const HERO_BLOCK_TEXT = 'text'; // Textarea
 
 // Best-effort publish: publishing is not required for the model's tree to be
 // visible in the management tree API (which the spec reads), so a transient
@@ -176,6 +185,88 @@ async function ensureCompositionElementType(
   return api.documentType.create(builder.build());
 }
 
+// --- Hero Block element type (block used by the Block Grid) -------------------
+
+// An isElement=true doc type with two simple properties (a Textstring heading
+// and a Textarea text). Reuses the already-created LT Textstring / LT Textarea
+// data types. Returns the element type id (== its GUID key in the v17 API),
+// used as the block's contentElementTypeKey and the block content's
+// contentTypeKey. Guarded by name so re-runs are no-ops.
+async function ensureHeroBlockElementType(
+  api: ApiHelpers,
+  dt: Record<string, string>,
+): Promise<string> {
+  const existing = await api.documentType.doesNameExist(HERO_BLOCK_ELEMENT_TYPE);
+  if (existing && existing.id) {
+    return existing.id;
+  }
+
+  const tabId = randomUUID();
+  const groupId = randomUUID();
+  const builder = new DocumentTypeBuilder()
+    .withName(HERO_BLOCK_ELEMENT_TYPE)
+    .withAlias(toAlias(HERO_BLOCK_ELEMENT_TYPE))
+    .withIsElement(true)
+    .addContainer()
+    .withName('Content')
+    .withId(tabId)
+    .withType('Tab')
+    .done()
+    .addContainer()
+    .withName('Body')
+    .withId(groupId)
+    .withType('Group')
+    .withParentId(tabId)
+    .done()
+    .addProperty()
+    .withContainerId(groupId)
+    .withName('Heading')
+    .withAlias(HERO_BLOCK_HEADING)
+    .withDataTypeId(dt[DT.textstring])
+    .done()
+    .addProperty()
+    .withContainerId(groupId)
+    .withName('Text')
+    .withAlias(HERO_BLOCK_TEXT)
+    .withDataTypeId(dt[DT.textarea])
+    .done();
+
+  return api.documentType.create(builder.build());
+}
+
+// Configure the (already-created, already-referenced-by-Page) Block Grid data
+// type to allow the Hero Block element type as a block — IN PLACE via a PUT so
+// the data type id is preserved (recreating it would orphan the Page property).
+// Idempotent: skips if the data type already carries a non-empty "blocks" entry.
+async function ensureBlockGridAllowsHeroBlock(
+  api: ApiHelpers,
+  blockGridDataTypeId: string,
+  heroBlockElementTypeId: string,
+): Promise<void> {
+  const current = await api.dataType.get(blockGridDataTypeId);
+  const blocksValue = (current.values ?? []).find((v: any) => v.alias === 'blocks');
+  if (blocksValue && Array.isArray(blocksValue.value) && blocksValue.value.length > 0) {
+    return;
+  }
+
+  // Build the exact "values" payload the package would emit for a block grid
+  // with one block allowed at root.
+  const values = new BlockGridDataTypeBuilder()
+    .withName(DT.blockGrid)
+    .addBlock()
+    .withContentElementTypeKey(heroBlockElementTypeId)
+    .withAllowAtRoot(true)
+    .done()
+    .build().values;
+
+  await api.dataType.update(blockGridDataTypeId, {
+    name: current.name,
+    editorAlias: current.editorAlias,
+    editorUiAlias: current.editorUiAlias,
+    values,
+  });
+}
+
 // --- Page document type (tabbed, composed) -----------------------------------
 
 async function ensurePageDocType(
@@ -267,27 +358,39 @@ async function ensureHomepage(
   api: ApiHelpers,
   pageId: string,
   imageMediaKey: string,
+  heroBlockElementTypeId: string,
+  relatedNodeId: string,
 ): Promise<string> {
   const existing = await api.document.getByName(HOMEPAGE_NAME);
   if (existing && existing.id) {
     return existing.id;
   }
 
-  // Rich text (TipTap) markup containing an <img> referencing the media.
+  // Rich text (TipTap) markup containing an <img> referencing the media. The
+  // <img> carries explicit width/height so it renders at a real size in the
+  // backoffice instead of collapsing to zero.
   const richTextValue = {
     markup:
       `<p>Welcome to the homepage.</p>` +
-      `<figure><img src="/media/${imageMediaKey}" data-udi="umb://media/${imageMediaKey.replace(/-/g, '')}" alt="hero" /></figure>` +
+      `<figure>` +
+      `<img src="/media/${imageMediaKey}" ` +
+      `data-udi="umb://media/${imageMediaKey.replace(/-/g, '')}" ` +
+      `alt="hero" width="800" height="450" />` +
+      `</figure>` +
       `<p>An image is embedded above.</p>`,
     blocks: { layout: {}, contentData: [], settingsData: [], expose: [] },
   };
+
+  // Block Grid value with exactly one Hero Block. The layout item's contentKey
+  // must match the contentData entry's key; the block is exposed so it renders.
+  const blockContentKey = randomUUID();
 
   const builder = new DocumentBuilder()
     .withDocumentTypeId(pageId)
     .addVariant()
     .withName(HOMEPAGE_NAME)
     .done()
-    // Rich text with an embedded image.
+    // Rich text with an embedded, sized image.
     .addValue()
     .withAlias(toAlias(DT.richText))
     .withValue(richTextValue)
@@ -306,9 +409,69 @@ async function ensureHomepage(
     .withMediaKey(imageMediaKey)
     .done()
     .done()
+    // Block Grid — one Hero Block with heading + text content, laid out and exposed.
+    .addValue()
+    .withAlias(toAlias(DT.blockGrid))
+    .addBlockGridValue()
+    .addContentData()
+    .withContentTypeKey(heroBlockElementTypeId)
+    .withKey(blockContentKey)
+    .addContentDataValue()
+    .withAlias(HERO_BLOCK_HEADING)
+    .withValue('Welcome to our site')
+    .done()
+    .addContentDataValue()
+    .withAlias(HERO_BLOCK_TEXT)
+    .withValue('This hero block is rendered inside the Block Grid editor.')
+    .done()
+    .done()
+    .addLayout()
+    .withContentKey(blockContentKey)
+    .withColumnSpan(12)
+    .withRowSpan(1)
+    .done()
+    .addExpose()
+    .withContentKey(blockContentKey)
+    .done()
+    .done()
+    .done()
+    // Textstring (title) + Textarea (summary).
     .addValue()
     .withAlias(toAlias(DT.textstring))
     .withValue('Homepage headline')
+    .done()
+    .addValue()
+    .withAlias(toAlias(DT.textarea))
+    .withValue('A concise summary of what this homepage is all about.')
+    .done()
+    // Content Picker — reference a real, existing content node.
+    .addValue()
+    .withAlias(toAlias(DT.contentPicker))
+    .withValue(relatedNodeId)
+    .done()
+    // Multi-URL Picker — one external link.
+    .addValue()
+    .withAlias(toAlias(DT.multiUrl))
+    .addURLPickerValue()
+    .withName('Umbraco')
+    .withUrl('https://umbraco.com')
+    .withType('external')
+    .withTarget('_blank')
+    .withIcon('icon-link')
+    .done()
+    .done()
+    // SEO composition values.
+    .addValue()
+    .withAlias(toAlias(DT.metaTitle))
+    .withValue('Homepage | Load Test Site')
+    .done()
+    .addValue()
+    .withAlias(toAlias(DT.metaDescription))
+    .withValue('The homepage of the load test site, used for backoffice measurements.')
+    .done()
+    .addValue()
+    .withAlias(toAlias(DT.canonicalUrl))
+    .withValue('https://example.com/')
     .done();
 
   const id = await api.document.create(builder.build());
@@ -463,15 +626,42 @@ export async function buildContentModel(api: ApiHelpers): Promise<void> {
     { name: DT.numeric2, dataTypeId: dt[DT.numeric2] },
   ]);
 
+  // Element type that the Block Grid will allow as a block, plus the in-place
+  // wiring of the (empty) Block Grid data type to permit it.
+  const heroBlockId = await ensureHeroBlockElementType(api, dt);
+  await ensureBlockGridAllowsHeroBlock(api, dt[DT.blockGrid], heroBlockId);
+
   const pageId = await ensurePageDocType(api, dt, [contentExtrasId, seoId, smallId]);
   await ensurePageAllowsPageChild(api, pageId);
 
   await ensureExtraDocTypes(api);
 
-  const homepageId = await ensureHomepage(api, pageId, image);
-  await ensureHomepageChild(api, pageId, homepageId);
+  // Build the root tree first so the Homepage's Content Picker can reference a
+  // real, existing content node (we pick "Page 1").
   await ensureRootTree(api, pageId);
+  const relatedNodeId = await resolveRelatedNodeId(api);
+
+  const homepageId = await ensureHomepage(api, pageId, image, heroBlockId, relatedNodeId);
+  await ensureHomepageChild(api, pageId, homepageId);
   await ensureEveryRootHasChild(api, pageId);
+}
+
+// Pick a real existing content node (not the Homepage) for the Content Picker
+// value. Prefers "Page 1"; falls back to the first non-Homepage root node.
+async function resolveRelatedNodeId(api: ApiHelpers): Promise<string> {
+  const page1 = await api.document.getByName('Page 1');
+  if (page1 && page1.id) {
+    return page1.id;
+  }
+  const res = await api.document.getAllAtRoot();
+  const json = await res.json();
+  for (const item of json.items as any[]) {
+    const name = item.variants?.[0]?.name;
+    if (name !== HOMEPAGE_NAME) {
+      return item.id;
+    }
+  }
+  throw new Error('No existing content node found to use as Content Picker value');
 }
 
 // Reuse a single known image across runs (guarded by name).

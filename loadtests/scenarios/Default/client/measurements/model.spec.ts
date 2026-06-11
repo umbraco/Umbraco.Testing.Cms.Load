@@ -80,7 +80,15 @@ test('content model is built to spec', async ({ page }) => {
   expect(richTextValue).toBeTruthy();
   expect(richTextValue.editorAlias).toBe('Umbraco.RichText');
   expect(typeof richTextValue.value?.markup).toBe('string');
-  expect(richTextValue.value.markup).toContain('<img');
+  const markup: string = richTextValue.value.markup;
+  expect(markup).toContain('<img');
+  // The embedded <img> must carry explicit dimensions so it renders (instead of
+  // collapsing to zero) in the backoffice. Assert width AND height attributes
+  // are present on the img tag.
+  const imgTag = markup.match(/<img\b[^>]*>/i)?.[0] ?? '';
+  expect(imgTag, 'an <img> tag exists in the RTE markup').toBeTruthy();
+  expect(imgTag, 'img has a width attribute').toMatch(/\bwidth\s*=\s*"\d+"/i);
+  expect(imgTag, 'img has a height attribute').toMatch(/\bheight\s*=\s*"\d+"/i);
 
   for (const pickerAlias of ['ltMediaPicker', 'ltMediaPicker2']) {
     const picker = values.find((v) => v.alias === pickerAlias);
@@ -91,6 +99,66 @@ test('content model is built to spec', async ({ page }) => {
     // A non-empty media reference must be present.
     expect(picker.value[0].mediaKey).toBeTruthy();
   }
+
+  // --- Homepage: Block Grid has at least one real block ----------------------
+  // The Block Grid data type must allow the Hero Block element type, and the
+  // Homepage's block-grid value must contain at least one populated block
+  // (contentData non-empty, with a matching layout item).
+  const heroBlockDt = await api.documentType.getByName('Hero Block');
+  expect(heroBlockDt?.id, 'Hero Block element type exists').toBeTruthy();
+
+  const blockGridDt = await api.dataType.getByName('LT Block Grid');
+  const blockGridConfig = await api.dataType.get(blockGridDt.id);
+  const blocksConfig = (blockGridConfig.values as any[]).find((v) => v.alias === 'blocks');
+  expect(blocksConfig, 'Block Grid data type has a blocks config').toBeTruthy();
+  expect(Array.isArray(blocksConfig.value)).toBeTruthy();
+  expect(blocksConfig.value.length, 'Block Grid allows at least one block').toBeGreaterThanOrEqual(1);
+  // The allowed block points at the Hero Block element type.
+  expect(blocksConfig.value.some((b: any) => b.contentElementTypeKey === heroBlockDt.id)).toBeTruthy();
+
+  const blockGridValue = values.find((v) => v.alias === 'ltBlockGrid');
+  expect(blockGridValue, 'homepage block-grid value present').toBeTruthy();
+  expect(blockGridValue.editorAlias).toBe('Umbraco.BlockGrid');
+  expect(Array.isArray(blockGridValue.value?.contentData)).toBeTruthy();
+  expect(
+    blockGridValue.value.contentData.length,
+    'block-grid value has at least one block',
+  ).toBeGreaterThanOrEqual(1);
+  // The block references the Hero Block element type and has a matching layout item.
+  const firstBlock = blockGridValue.value.contentData[0];
+  expect(firstBlock.contentTypeKey).toBe(heroBlockDt.id);
+  const layoutItems = blockGridValue.value.layout?.['Umbraco.BlockGrid'] ?? [];
+  expect(layoutItems.length).toBeGreaterThanOrEqual(1);
+  expect(layoutItems.some((l: any) => l.contentKey === firstBlock.key)).toBeTruthy();
+
+  // --- Homepage: Content Picker references a real, existing node -------------
+  const contentPicker = values.find((v) => v.alias === 'ltContentPicker');
+  expect(contentPicker, 'content-picker value present').toBeTruthy();
+  expect(contentPicker.editorAlias).toBe('Umbraco.ContentPicker');
+  expect(contentPicker.value, 'content-picker references a node').toBeTruthy();
+  // The referenced node must actually exist (and not be the Homepage itself).
+  expect(contentPicker.value).not.toBe(homepage.id);
+  const referenced = await api.document.get(contentPicker.value);
+  expect(referenced?.id, 'content-picker target node exists').toBeTruthy();
+
+  // --- Homepage: Multi-URL Picker has a value --------------------------------
+  const multiUrl = values.find((v) => v.alias === 'ltMultiUrlPicker');
+  expect(multiUrl, 'multi-url value present').toBeTruthy();
+  expect(multiUrl.editorAlias).toBe('Umbraco.MultiUrlPicker');
+  expect(Array.isArray(multiUrl.value)).toBeTruthy();
+  expect(multiUrl.value.length, 'multi-url has at least one link').toBeGreaterThanOrEqual(1);
+  expect(multiUrl.value[0].url, 'multi-url first link has a url').toBeTruthy();
+
+  // --- Homepage: textstring (title) + textarea (summary) populated -----------
+  const title = values.find((v) => v.alias === 'ltTextstring');
+  expect(title, 'title (textstring) present').toBeTruthy();
+  expect(typeof title.value).toBe('string');
+  expect(title.value.length, 'title is non-empty').toBeGreaterThan(0);
+
+  const summary = values.find((v) => v.alias === 'ltTextarea');
+  expect(summary, 'summary (textarea) present').toBeTruthy();
+  expect(typeof summary.value).toBe('string');
+  expect(summary.value.length, 'summary is non-empty').toBeGreaterThan(0);
 
   // --- Idempotency -----------------------------------------------------------
   // Building again must not change the root child count, the number of
