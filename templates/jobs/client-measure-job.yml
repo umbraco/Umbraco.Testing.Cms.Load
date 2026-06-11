@@ -105,6 +105,43 @@ steps:
         npx playwright install --with-deps chromium
         npx playwright test
 
+  # Print the per-metric averages straight into the run log (parsed from the
+  # NDJSON the Playwright run wrote), so you can read cold/cached/home-node and
+  # time-to-first-edit numbers without downloading the artifact or querying LA.
+  # succeededOrFailed so it still prints when some specs failed.
+  - task: PowerShell@2
+    displayName: 'Summarize client metrics [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    inputs:
+      targetType: 'inline'
+      script: |
+        $dir = "$(System.DefaultWorkingDirectory)/client-results"
+        if (-not (Test-Path $dir)) { Write-Host "No client-results dir - Playwright produced no metrics."; exit 0 }
+        $loads = @(); $ttfe = $null
+        foreach ($f in Get-ChildItem -Path $dir -Filter *.ndjson) {
+          foreach ($line in Get-Content $f.FullName) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $m = $line | ConvertFrom-Json
+            if ($m.metric -eq 'time_to_first_edit') { $ttfe = $m; continue }
+            $loads += [pscustomobject][ordered]@{
+              Metric    = $m.metric
+              Reps      = $m.count
+              Median_ms = [math]::Round([double]$m.median, 1)
+              P75_ms    = [math]::Round([double]$m.p75, 1)
+              P95_ms    = [math]::Round([double]$m.p95, 1)
+              StdDev_ms = [math]::Round([double]$m.stddev, 1)
+            }
+          }
+        }
+        Write-Host ""
+        Write-Host "================ Client metrics (avg) [${{ parameters.testCaseId }}] ================"
+        if ($loads.Count -gt 0) { $loads | Sort-Object Metric | Format-Table -AutoSize | Out-String -Width 200 | Write-Host }
+        else { Write-Host "(no cold/cached load metrics found)" }
+        if ($null -ne $ttfe) {
+          Write-Host ("Time to first edit (ms):  total={0}  login={1}  navigate={2}  editor_ready={3}  keystroke={4}" -f [math]::Round([double]$ttfe.median,1), [math]::Round([double]$ttfe.seg_login_median,1), [math]::Round([double]$ttfe.seg_navigate_median,1), [math]::Round([double]$ttfe.seg_editor_ready_median,1), [math]::Round([double]$ttfe.seg_keystroke_median,1))
+        } else { Write-Host "(no time_to_first_edit metric found)" }
+        Write-Host "=================================================================================="
+
   - task: AzureCLI@2
     displayName: 'Publish client results [${{ parameters.testCaseId }}]'
     condition: succeededOrFailed()
