@@ -131,3 +131,16 @@ steps:
       PathtoPublish: '$(System.DefaultWorkingDirectory)/client-results'
       ArtifactName: 'client-results-$(safeTestCaseId)'
       publishLocation: 'Container'
+
+  # The Playwright HTML report (timeline, per-step traces, console/network) lives
+  # in the project's playwright-report/ dir (the 'html' reporter in
+  # playwright.config.ts), separate from the NDJSON in client-results/. Publish it
+  # so the rich report is downloadable per tier alongside the raw metrics.
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Playwright report [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    continueOnError: true
+    inputs:
+      PathtoPublish: '$(System.DefaultWorkingDirectory)/loadtests/scenarios/${{ parameters.scenario }}/client/playwright-report'
+      ArtifactName: 'client-playwright-report-$(safeTestCaseId)'
+      publishLocation: 'Container'
