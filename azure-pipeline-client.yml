@@ -12,15 +12,6 @@ parameters:
     type: string
     default: '17.0.0'
 
-  - name: scenario
-    displayName: Scenario (must match a folder under loadtests/scenarios/)
-    type: string
-    default: 'Default'
-    values:
-      # Only scenarios that ship a client/ Playwright project are valid here.
-      # (DeliveryApi has no client/ project yet; resolve-run-config rejects it.)
-      - 'Default'
-
   - name: runStarter
     displayName: Run Starter tier
     type: boolean
@@ -40,15 +31,6 @@ parameters:
     displayName: Run Enterprise tier
     type: boolean
     default: false
-
-  - name: loadProfile
-    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s'
-    type: string
-    default: 'standard'
-    values:
-      - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
-      - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
-      - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
 
   - name: azureRegion
     displayName: Azure region
@@ -166,9 +148,9 @@ stages:
               targetType: 'filePath'
               filePath: '$(System.DefaultWorkingDirectory)/scripts/resolve-run-config.ps1'
               arguments: >
-                -Profile '${{ parameters.loadProfile }}'
+                -Profile 'smoke'
                 -UmbracoVersion '${{ parameters.umbracoVersion }}'
-                -Scenario '${{ parameters.scenario }}'
+                -Scenario 'Default'
                 -RunStarter '${{ parameters.runStarter }}'
                 -RunStandard '${{ parameters.runStandard }}'
                 -RunPro '${{ parameters.runPro }}'
@@ -438,9 +420,9 @@ stages:
           - ${{ if eq(parameters.runStarter, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Starter__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Starter__Default'
                 tier: 'Starter'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -449,9 +431,9 @@ stages:
           - ${{ if eq(parameters.runStandard, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Standard__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Standard__Default'
                 tier: 'Standard'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -460,9 +442,9 @@ stages:
           - ${{ if eq(parameters.runPro, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Pro__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Pro__Default'
                 tier: 'Pro'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -471,9 +453,9 @@ stages:
           - ${{ if eq(parameters.runEnterprise, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__Default'
                 tier: 'Enterprise'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -510,7 +492,7 @@ stages:
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
                 $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
                 & "$(System.DefaultWorkingDirectory)/scripts/check-client-regression.ps1" `
-                    -Scenario '${{ parameters.scenario }}' -Major $major `
+                    -Scenario 'Default' -Major $major `
                     -HistoryResourceGroup '$(historyResourceGroup)' `
                     -StorageAccountName '$(historyStorageAccount)' `
                     -ContainerName '$(historyContainer)' `
