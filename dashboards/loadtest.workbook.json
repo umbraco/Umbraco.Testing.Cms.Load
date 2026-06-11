@@ -1978,27 +1978,9 @@
     {
       "type": 1,
       "content": {
-        "json": "## Client measurements\nClient-side perceived latency from . All numbers are averages across runs.\n\n- **Median trend** — avg(median_ms) per metric over time (timechart)\n- **Summary table** — avg median / p75 / p95 / stddev by metric × tier × version\n- **Cold vs cached** — avg cold vs cached load times + cache savings %\n- **Browser timing** — avg TTFB / DCL / load / LCP marks per metric × tier\n- **Segment table** — avg time-to-first-edit breakdown: login / navigate / editor-ready / keystroke"
+        "json": "## Client measurements\nClient-side perceived latency in the Umbraco backoffice. All numbers are averages across runs.\n\n- **Summary table** — avg median / p75 / p95 / stddev (+ run count) by metric × tier × version\n- **Cold vs cached** — avg cold vs cached load times + cache savings %\n- **Browser timing** — avg TTFB / DCL / load / LCP marks per metric × tier\n- **Segment table** — avg time-to-first-edit breakdown: login / navigate / editor-ready / keystroke"
       },
       "name": "client-measurements-header",
-      "conditionalVisibility": {
-        "parameterName": "SelectedTab",
-        "comparison": "isEqualTo",
-        "value": "ClientMeasurements"
-      }
-    },
-    {
-      "type": 3,
-      "content": {
-        "version": "KqlItem/1.0",
-        "query": "ClientMeasurement_CL\n| where isnotempty(metric)\n| summarize median_ms = avg(median_ms) by bin(TimeGenerated, 1d), umbraco_version, infra_tier, metric\n| order by TimeGenerated asc",
-        "size": 0,
-        "title": "Client perceived latency (median ms) over time",
-        "queryType": 0,
-        "resourceType": "microsoft.operationalinsights/workspaces",
-        "visualization": "timechart"
-      },
-      "name": "client-latency-trend",
       "conditionalVisibility": {
         "parameterName": "SelectedTab",
         "comparison": "isEqualTo",
