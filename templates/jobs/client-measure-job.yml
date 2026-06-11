@@ -133,9 +133,11 @@ steps:
             }
           }
         }
+        # Display order groups cold/cached per page for easy comparison.
+        $order = @{ 'cold_dashboard_load' = 1; 'cached_dashboard_load' = 2; 'cold_homenode_load' = 3; 'cached_homenode_load' = 4 }
         Write-Host ""
         Write-Host "================ Client metrics (avg) [${{ parameters.testCaseId }}] ================"
-        if ($loads.Count -gt 0) { $loads | Sort-Object Metric | Format-Table -AutoSize | Out-String -Width 200 | Write-Host }
+        if ($loads.Count -gt 0) { $loads | Sort-Object { if ($order.ContainsKey($_.Metric)) { $order[$_.Metric] } else { 99 } } | Format-Table -AutoSize | Out-String -Width 200 | Write-Host }
         else { Write-Host "(no cold/cached load metrics found)" }
         if ($null -ne $ttfe) {
           Write-Host ("Time to first edit (ms):  total={0}  login={1}  navigate={2}  editor_ready={3}  keystroke={4}" -f [math]::Round([double]$ttfe.median,1), [math]::Round([double]$ttfe.seg_login_median,1), [math]::Round([double]$ttfe.seg_navigate_median,1), [math]::Round([double]$ttfe.seg_editor_ready_median,1), [math]::Round([double]$ttfe.seg_keystroke_median,1))
