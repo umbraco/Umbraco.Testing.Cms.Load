@@ -8,7 +8,7 @@ Establish repeatable CMS performance baselines across Umbraco versions, infrastr
 
 ## Overview
 
-This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario × workload)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs load tests via Azure Load Testing service. Two workload modes ship: **frontend** (Locust — anonymous reads + contact-form submissions against rendered pages and the Delivery API) and **backoffice** (JMeter — authenticated backoffice writes: SaveContent, PublishContent, SaveDocumentType, MemberLogin). See "Workload modes" below.
+This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario × workload)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs load tests via Azure Load Testing service. Three workload modes ship: **frontend** (Locust — anonymous reads + contact-form submissions against rendered pages and the Delivery API), **backoffice** (JMeter — authenticated backoffice writes: SaveContent, PublishContent, SaveDocumentType, MemberLogin), and **client** (Playwright — browser-perceived backoffice load/edit timings, run on the pipeline agent via the separate `azure-pipeline-client.yml`). See "Workload modes" below.
 
 **Supported Umbraco versions: v13–v18 (subject to seeder availability).** Each major maps to a specific .NET runtime (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map) below). Today only **v17** has a published `Umbraco.Cms.TestDataSeeder` build (`17.0.0-beta.2`); v13–v16 and v18 queues fail at validation with a clear message until the seeder ships for those majors. Update the maps in `scripts/resolve-run-config.ps1` (validator-side) and `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` (install-side) in lockstep when a new seeder version ships.
 
@@ -61,14 +61,20 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 ## Project Structure
 
 ```
-├── azure-pipeline.yml           # Main load test pipeline (manual queue)
+├── azure-pipeline.yml           # Load test pipeline — Locust/JMeter (manual queue)
+├── azure-pipeline-client.yml    # Client measurement pipeline — Playwright (manual queue)
 ├── README.md
 │
 ├── dashboards/
-│   └── loadtest.workbook.json   # Azure Workbook: Trends / Tiers / Versions / Compare / Runs / Glossary over LoadTestSummary_CL
+│   └── loadtest.workbook.json   # Azure Workbook over LoadTestSummary_CL (+ "Client measurements" tab over ClientMeasurement_CL)
 │
 ├── templates/
-│   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
+│   ├── load-test-job.yml        # Per-case load test job (Locust/JMeter)
+│   ├── jobs/
+│   │   └── client-measure-job.yml   # Per-tier Playwright client-measure job
+│   └── stages/
+│       ├── provision.yml        # Shared validate → ensureHistory → ensureMonitoring → provision stages
+│       └── cleanup.yml          # Shared cleanup stage (both pipelines consume these two)
 │
 ├── scripts/
 │   ├── resolve-run-config.ps1          # Pipeline entry: resolves queue-time params + invokes validator
@@ -84,6 +90,8 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │   ├── compare-runs.ps1                # Markdown delta report between two runs (CSV or history)
 │   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
+│   ├── publish-client-results.ps1      # Client measurement NDJSON → history blob (client/ prefix) + ClientMeasurement_CL
+│   ├── check-client-regression.ps1     # Client measurement regression gate (median-of-last-N; report-only)
 │   ├── parameterize-jmx.js             # One-time rewriter: convert hardcoded JMeter Arguments to ${__P()} refs
 │   ├── _helpers.ps1                    # Shared helpers dot-sourced by other scripts (Get-Pct, Get-StorageAccountKey, …)
 │   └── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
@@ -100,6 +108,7 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │       │   │   ├── v13/                 # one .jmx file per backoffice test (ViewHomePage, SaveContent, …)
 │       │   │   └── v17/                 # v18 reuses v17/ via fallback
 │       │   ├── locustfile.py            # frontend workload (Locust)
+│       │   ├── client/                  # client workload (Playwright): lib/, fixtures/, measurements/, playwright.config.ts
 │       │   └── scenario.yaml
 │       └── DeliveryApi/
 │           ├── AdditionalSetup/
@@ -410,7 +419,7 @@ The non-homepage tasks are **inventory-driven**: at test start, locust calls `/u
 
 ### Workload modes: frontend (Locust) vs backoffice (JMeter)
 
-The `workload` queue-time parameter selects which load harness runs against the provisioned App Service. The two modes are intentionally separate — they exercise different code paths (rendering pipeline vs management API), have different auth models (anonymous vs OAuth/PKCE), and produce different perf signatures that aren't meaningfully comparable head-to-head.
+The `workload` queue-time parameter on the load-test pipeline (`azure-pipeline.yml`) selects which load harness runs against the provisioned App Service: **frontend** or **backoffice**. These two are intentionally separate — they exercise different code paths (rendering pipeline vs management API), have different auth models (anonymous vs OAuth/PKCE), and produce different perf signatures that aren't meaningfully comparable head-to-head. The third mode, **client** (Playwright), is browser-perceived rather than load-generating and runs from its own pipeline (`azure-pipeline-client.yml`) — see "Client measurement (Playwright)" below.
 
 **Frontend (`workload: frontend`, default).** Single Locust test plan (`loadtests/scenarios/{scenario}/locustfile.py`) runs against the App Service. Mix is weighted `@task` methods (Homepage / Section / Category / Page / Detail / Media / submit_contact_form). One ALT testId per scenario (`umbraco-lt-{scenario}`); one TestRun per (version × tier) pipeline run.
 
