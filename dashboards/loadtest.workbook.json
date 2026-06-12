@@ -1996,6 +1996,7 @@
         "title": "Time-to-first-edit segments (avg ms)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
         "visualization": "table"
       },
       "name": "client-segment-breakdown",
@@ -2014,6 +2015,7 @@
         "title": "Summary by metric × tier × version (avg)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
         "visualization": "table"
       },
       "name": "client-summary-table",
@@ -2032,6 +2034,7 @@
         "title": "Cold vs cached load (avg median ms) + cache savings",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
         "visualization": "table"
       },
       "name": "client-cold-vs-cached",
@@ -2050,6 +2053,7 @@
         "title": "Browser timing marks (avg ms; lcp is usually null in the headless backoffice SPA)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
         "visualization": "table"
       },
       "name": "client-browser-timing",
@@ -2058,6 +2062,54 @@
         "comparison": "isEqualTo",
         "value": "ClientMeasurements"
       }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL | where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\") | extend Metric = case(metric == \"cold_dashboard_load\",\"1 Dashboard cold\", metric == \"cached_dashboard_load\",\"2 Dashboard cached\", metric == \"cold_homenode_load\",\"3 Home node cold\", metric == \"cached_homenode_load\",\"4 Home node cached\", metric) | summarize median_ms = round(avg(median_ms),1) by Metric, Tier = infra_tier | order by Metric asc",
+        "size": 0,
+        "title": "Median load time per metric (ms) — grouped by tier. Ignore any (Sum) in the legend; compare individual bars.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": { "xAxis": "Metric", "group": "Tier", "createOtherGroup": 0, "showLegend": true }
+      },
+      "name": "client-median-bar",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "ClientMeasurements" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let base = ClientMeasurement_CL | where metric == \"time_to_first_edit\"; union (base | summarize ms = round(avg(seg_login_ms),1) by Tier = infra_tier | extend Segment = \"1 login\"), (base | summarize ms = round(avg(seg_navigate_ms),1) by Tier = infra_tier | extend Segment = \"2 navigate\"), (base | summarize ms = round(avg(seg_editor_ready_ms),1) by Tier = infra_tier | extend Segment = \"3 editor_ready\"), (base | summarize ms = round(avg(seg_keystroke_ms),1) by Tier = infra_tier | extend Segment = \"4 keystroke\") | project Segment, Tier, ms | order by Segment asc",
+        "size": 0,
+        "title": "Time-to-first-edit segments (avg ms) — grouped (not stacked) by tier",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": { "xAxis": "Segment", "group": "Tier", "createOtherGroup": 0, "showLegend": true }
+      },
+      "name": "client-segment-bar",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "ClientMeasurements" }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL | where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\") | extend Page = iff(metric has \"dashboard\", \"Dashboard\", \"Home node\"), State = iff(metric startswith \"cold\", \"1 cold\", \"2 cached\") | summarize median_ms = round(avg(median_ms),1) by Page, State | order by Page asc, State asc",
+        "size": 0,
+        "title": "Cold vs cached (avg median ms) per page — cold/cached side by side",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": { "xAxis": "Page", "group": "State", "createOtherGroup": 0, "showLegend": true }
+      },
+      "name": "client-coldcached-bar",
+      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "ClientMeasurements" }
     },
     {
       "type": 1,
