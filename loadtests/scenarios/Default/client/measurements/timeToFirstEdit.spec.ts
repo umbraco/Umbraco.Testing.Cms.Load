@@ -3,16 +3,8 @@ import { env } from '../lib/env';
 import { loginByForm } from '../lib/auth';
 import { emitMetric } from '../lib/measure';
 import { summarize } from '../lib/stats';
+import { TIPTAP, CONTENT_URL, homepageTreeItem, waitForHomepageNode } from '../lib/backoffice';
 import { HOMEPAGE_NAME } from '../fixtures/contentModel';
-
-// Content-visible signal for the TipTap (ProseMirror) editor root. Same verified
-// selector used by homeNode.spec.ts: the editor root lives INSIDE
-// <umb-input-tiptap> as .tiptap (with .ProseMirror as a rename-safe fallback).
-const TIPTAP = 'umb-input-tiptap .tiptap, umb-input-tiptap .ProseMirror';
-
-// Content section root: the Homepage node is a tree ROOT, so this route renders
-// it directly in the sidebar tree (verified in homeNode.spec.ts).
-const CONTENT_URL = `${env.baseUrl}/umbraco/section/content`;
 
 // A character that is NOT already present in the Homepage body ("Welcome to the
 // homepage. ... An image is embedded above."). Probed live: § does not pre-exist
@@ -52,11 +44,8 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
     // tree item to the sidebar so a same-named breadcrumb can't be clicked instead.
     const tNav = performance.now();
     await page.goto(CONTENT_URL);
-    const homeItem = page
-      .locator(`umb-section-sidebar uui-menu-item[label="${HOMEPAGE_NAME}"]`)
-      .first();
-    await homeItem.waitFor({ state: 'visible', timeout: 60_000 });
-    await homeItem.click();
+    await waitForHomepageNode(page, HOMEPAGE_NAME);
+    await homepageTreeItem(page, HOMEPAGE_NAME).click();
     seg.navigate.push(performance.now() - tNav);
 
     // Segment 3: editor ready (TipTap field visible).

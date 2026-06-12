@@ -12,7 +12,6 @@ export interface Summary {
 // middle values for even-length input (classic median), higher percentiles use
 // nearest-rank for stability on small N.
 function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 1) return sorted[0];
   if (p === 50) {
     const mid = sorted.length / 2;
     return Number.isInteger(mid)

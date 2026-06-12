@@ -1,7 +1,6 @@
 import { test } from '@playwright/test';
 import { env } from '../lib/env';
-import { loginByForm } from '../lib/auth';
-import { timeUntilVisible, perfMarks, emitMetric } from '../lib/measure';
+import { timeUntilVisible, runColdCached } from '../lib/measure';
 
 // Content-visible signal for the Umbraco News dashboard.
 //
@@ -34,35 +33,20 @@ test.setTimeout(10 * 60_000);
 // (cold) and then a reload of it (cached) — both windows capture the dashboard
 // VIEW becoming content-visible, not just the shell.
 test('news dashboard cold + cached load', async ({ browser }) => {
-  const cold: number[] = [];
-  const cached: number[] = [];
-  // Perf marks from the last rep of each path. lcp_ms is expected to be null
-  // here — the backoffice SPA doesn't emit a largest-contentful-paint entry in
-  // headless Chromium — but ttfb/dcl/load populate. Captured for BOTH paths so
-  // the cold and cached NDJSON rows carry the same schema (no join-time gaps).
-  let coldMarks: Record<string, number | null> = {};
-  let cachedMarks: Record<string, number | null> = {};
-
-  for (let i = 0; i < env.reps; i++) {
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    const page = await context.newPage();
-    await loginByForm(page);
-
+  await runColdCached(browser, {
+    coldMetric: 'cold_dashboard_load',
+    cachedMetric: 'cached_dashboard_load',
     // COLD: first navigation to the dashboard in this fresh context (no cache).
-    const t0 = performance.now();
-    await page.goto(DASHBOARD_URL);
-    cold.push(await timeUntilVisible(t0, page.locator(DASHBOARD_CONTENT).first()));
-    coldMarks = await perfMarks(page);
-
+    cold: async (page) => {
+      const t0 = performance.now();
+      await page.goto(DASHBOARD_URL);
+      return timeUntilVisible(t0, page.locator(DASHBOARD_CONTENT).first());
+    },
     // CACHED: reload the same dashboard in the same (now-warm) context.
-    const t1 = performance.now();
-    await page.reload();
-    cached.push(await timeUntilVisible(t1, page.locator(DASHBOARD_CONTENT).first()));
-    cachedMarks = await perfMarks(page);
-
-    await context.close();
-  }
-
-  emitMetric('cold_dashboard_load', cold, coldMarks);
-  emitMetric('cached_dashboard_load', cached, cachedMarks);
+    cached: async (page) => {
+      const t1 = performance.now();
+      await page.reload();
+      return timeUntilVisible(t1, page.locator(DASHBOARD_CONTENT).first());
+    },
+  });
 });

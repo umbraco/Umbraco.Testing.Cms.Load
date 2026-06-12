@@ -104,7 +104,7 @@ async function ensureDataTypes(api: ApiHelpers): Promise<Record<string, string>>
 
   async function ensure(name: string, create: () => Promise<string>): Promise<string> {
     const existing = await api.dataType.getByName(name);
-    if (existing && existing.id) {
+    if (existing?.id) {
       return existing.id;
     }
     return create();
@@ -148,9 +148,10 @@ async function ensureCompositionElementType(
   name: string,
   tabName: string,
   props: PropSpec[],
+  groupName: string = tabName + ' Group',
 ): Promise<string> {
   const existing = await api.documentType.doesNameExist(name);
-  if (existing && existing.id) {
+  if (existing?.id) {
     return existing.id;
   }
 
@@ -166,7 +167,7 @@ async function ensureCompositionElementType(
     .withType('Tab')
     .done()
     .addContainer()
-    .withName(tabName + ' Group')
+    .withName(groupName)
     .withId(groupId)
     .withType('Group')
     .withParentId(tabId)
@@ -181,55 +182,6 @@ async function ensureCompositionElementType(
       .withDataTypeId(prop.dataTypeId)
       .done();
   }
-
-  return api.documentType.create(builder.build());
-}
-
-// --- Hero Block element type (block used by the Block Grid) -------------------
-
-// An isElement=true doc type with two simple properties (a Textstring heading
-// and a Textarea text). Reuses the already-created LT Textstring / LT Textarea
-// data types. Returns the element type id (== its GUID key in the v17 API),
-// used as the block's contentElementTypeKey and the block content's
-// contentTypeKey. Guarded by name so re-runs are no-ops.
-async function ensureHeroBlockElementType(
-  api: ApiHelpers,
-  dt: Record<string, string>,
-): Promise<string> {
-  const existing = await api.documentType.doesNameExist(HERO_BLOCK_ELEMENT_TYPE);
-  if (existing && existing.id) {
-    return existing.id;
-  }
-
-  const tabId = randomUUID();
-  const groupId = randomUUID();
-  const builder = new DocumentTypeBuilder()
-    .withName(HERO_BLOCK_ELEMENT_TYPE)
-    .withAlias(toAlias(HERO_BLOCK_ELEMENT_TYPE))
-    .withIsElement(true)
-    .addContainer()
-    .withName('Content')
-    .withId(tabId)
-    .withType('Tab')
-    .done()
-    .addContainer()
-    .withName('Body')
-    .withId(groupId)
-    .withType('Group')
-    .withParentId(tabId)
-    .done()
-    .addProperty()
-    .withContainerId(groupId)
-    .withName('Heading')
-    .withAlias(HERO_BLOCK_HEADING)
-    .withDataTypeId(dt[DT.textstring])
-    .done()
-    .addProperty()
-    .withContainerId(groupId)
-    .withName('Text')
-    .withAlias(HERO_BLOCK_TEXT)
-    .withDataTypeId(dt[DT.textarea])
-    .done();
 
   return api.documentType.create(builder.build());
 }
@@ -275,7 +227,7 @@ async function ensurePageDocType(
   compositionIds: string[],
 ): Promise<string> {
   const existing = await api.documentType.doesNameExist(PAGE_DOC_TYPE);
-  if (existing && existing.id) {
+  if (existing?.id) {
     return existing.id;
   }
 
@@ -362,7 +314,7 @@ async function ensureHomepage(
   relatedNodeId: string,
 ): Promise<string> {
   const existing = await api.document.getByName(HOMEPAGE_NAME);
-  if (existing && existing.id) {
+  if (existing?.id) {
     return existing.id;
   }
 
@@ -481,12 +433,35 @@ async function ensureHomepage(
 
 // --- tree (root nodes + a child each) ----------------------------------------
 
+// Ensure `parentId` has >= 1 child; if childless, create one named `childName`
+// of doc type `pageId` and best-effort publish it. No-op if children exist.
+async function ensureHasChild(
+  api: ApiHelpers,
+  pageId: string,
+  parentId: string,
+  childName: string,
+): Promise<void> {
+  const children = await api.document.getChildren(parentId);
+  if (children && children.length > 0) {
+    return;
+  }
+  const childDoc = new DocumentBuilder()
+    .withDocumentTypeId(pageId)
+    .withParentId(parentId)
+    .addVariant()
+    .withName(childName)
+    .done()
+    .build();
+  const childId = await api.document.create(childDoc);
+  await tryPublish(api, childId);
+}
+
 async function ensureRootTree(api: ApiHelpers, pageId: string): Promise<void> {
   for (let i = 1; i < TOP_LEVEL_NODE_COUNT; i++) {
     const name = `Page ${i}`;
     let parentId: string;
     const existing = await api.document.getByName(name);
-    if (existing && existing.id) {
+    if (existing?.id) {
       parentId = existing.id;
     } else {
       const doc = new DocumentBuilder()
@@ -500,37 +475,13 @@ async function ensureRootTree(api: ApiHelpers, pageId: string): Promise<void> {
     }
 
     // Ensure this root has >= 1 child.
-    const children = await api.document.getChildren(parentId);
-    if (!children || children.length === 0) {
-      const childName = `${name} - child`;
-      const childDoc = new DocumentBuilder()
-        .withDocumentTypeId(pageId)
-        .withParentId(parentId)
-        .addVariant()
-        .withName(childName)
-        .done()
-        .build();
-      const childId = await api.document.create(childDoc);
-      await tryPublish(api, childId);
-    }
+    await ensureHasChild(api, pageId, parentId, `${name} - child`);
   }
 }
 
 // Ensure the Homepage has at least one child too (it is one of the root nodes).
 async function ensureHomepageChild(api: ApiHelpers, pageId: string, homepageId: string): Promise<void> {
-  const children = await api.document.getChildren(homepageId);
-  if (children && children.length > 0) {
-    return;
-  }
-  const childDoc = new DocumentBuilder()
-    .withDocumentTypeId(pageId)
-    .withParentId(homepageId)
-    .addVariant()
-    .withName('Homepage - child')
-    .done()
-    .build();
-  const childId = await api.document.create(childDoc);
-  await tryPublish(api, childId);
+  await ensureHasChild(api, pageId, homepageId, 'Homepage - child');
 }
 
 // --- extra doc types ----------------------------------------------------------
@@ -538,7 +489,7 @@ async function ensureHomepageChild(api: ApiHelpers, pageId: string, homepageId: 
 async function ensureExtraDocTypes(api: ApiHelpers): Promise<void> {
   for (const name of EXTRA_DOC_TYPES) {
     const existing = await api.documentType.doesNameExist(name);
-    if (existing && existing.id) {
+    if (existing?.id) {
       continue;
     }
     const builder = new DocumentTypeBuilder()
@@ -567,7 +518,7 @@ async function ensureEveryRootHasChild(api: ApiHelpers, fallbackPageId: string):
     const rootName: string = root.variants?.[0]?.name ?? root.id;
     const childName = `${rootName} - child`;
     const existingChild = await api.document.getByName(childName);
-    if (existingChild && existingChild.id) {
+    if (existingChild?.id) {
       continue;
     }
     let created = false;
@@ -627,8 +578,20 @@ export async function buildContentModel(api: ApiHelpers): Promise<void> {
   ]);
 
   // Element type that the Block Grid will allow as a block, plus the in-place
-  // wiring of the (empty) Block Grid data type to permit it.
-  const heroBlockId = await ensureHeroBlockElementType(api, dt);
+  // wiring of the (empty) Block Grid data type to permit it. Built with the
+  // shared composition helper: tab 'Content', group 'Body', a Textstring heading
+  // and a Textarea text (its property aliases resolve to HERO_BLOCK_HEADING /
+  // HERO_BLOCK_TEXT via toAlias).
+  const heroBlockId = await ensureCompositionElementType(
+    api,
+    HERO_BLOCK_ELEMENT_TYPE,
+    'Content',
+    [
+      { name: 'Heading', dataTypeId: dt[DT.textstring] },
+      { name: 'Text', dataTypeId: dt[DT.textarea] },
+    ],
+    'Body',
+  );
   await ensureBlockGridAllowsHeroBlock(api, dt[DT.blockGrid], heroBlockId);
 
   const pageId = await ensurePageDocType(api, dt, [contentExtrasId, seoId, smallId]);
@@ -650,7 +613,7 @@ export async function buildContentModel(api: ApiHelpers): Promise<void> {
 // value. Prefers "Page 1"; falls back to the first non-Homepage root node.
 async function resolveRelatedNodeId(api: ApiHelpers): Promise<string> {
   const page1 = await api.document.getByName('Page 1');
-  if (page1 && page1.id) {
+  if (page1?.id) {
     return page1.id;
   }
   const res = await api.document.getAllAtRoot();
@@ -668,7 +631,7 @@ async function resolveRelatedNodeId(api: ApiHelpers): Promise<string> {
 const IMAGE_NAME = 'LT Hero Image';
 async function ensureImage(api: ApiHelpers): Promise<string> {
   const existing = await api.media.getByName(IMAGE_NAME);
-  if (existing && existing.id) {
+  if (existing?.id) {
     return existing.id;
   }
   return api.media.createDefaultMediaWithImage(IMAGE_NAME);
