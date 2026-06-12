@@ -39,10 +39,9 @@ test('content model is built to spec', async ({ page }) => {
   }
 
   // --- Page doc type: Content-tab property ordering --------------------------
-  // documentType.get(id) returns ONLY the doc type's OWN properties/containers —
-  // composed properties live on their compositions and are NOT inlined here. We
-  // still filter to the OWN containers explicitly so the intent ("its own
-  // Content-tab properties, not composed") is encoded, not assumed.
+  // documentType.get(id) returns ONLY the doc type's OWN properties/containers;
+  // composed properties are not inlined. Filter to own containers explicitly so
+  // the intent ("its own Content-tab properties, not composed") is encoded.
   const pageDtRef = await api.documentType.getByName('Page');
   const pageDt = await api.documentType.get(pageDtRef.id);
 
@@ -61,10 +60,8 @@ test('content model is built to spec', async ({ page }) => {
   expect(mediaPickerDt?.id).toBeTruthy();
 
   expect(ownProps.length).toBeGreaterThanOrEqual(2);
-  // FIRST own property is the Rich Text (TipTap) editor.
   expect(ownProps[0].alias).toBe('ltRichText');
   expect(ownProps[0].dataType?.id).toBe(richTextDt.id);
-  // SECOND own property is the Media Picker.
   expect(ownProps[1].alias).toBe('ltMediaPicker');
   expect(ownProps[1].dataType?.id).toBe(mediaPickerDt.id);
 

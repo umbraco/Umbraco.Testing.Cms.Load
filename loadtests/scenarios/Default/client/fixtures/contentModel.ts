@@ -1,27 +1,10 @@
 // Builds a precise, idempotent backoffice content model against a LIVE Umbraco
-// instance via @umbraco-cms/acceptance-test-helpers (ApiHelpers). Run once by
-// Playwright globalSetup before any measurement.
+// instance via @umbraco-cms/acceptance-test-helpers. Run once by Playwright
+// globalSetup before any measurement.
 //
-// Every create is guarded by a doesNameExist / getByName check so calling
-// buildContentModel(api) repeatedly is a no-op after the first run. This matters
-// because many of the package's createDefault* helpers call ensureNameNotExists
-// (which DELETES the existing item) — we must NOT call them unguarded or the
-// model would churn on every run. So we check existence first and only create
-// when absent.
-//
-// API facts this file relies on (verified against 17.4.2):
-//  - api.dataType.getByName(name) / doesNameExist(name) -> object|falsy; create*
-//    convenience methods return the new id.
-//  - api.documentType.doesNameExist(name) -> object|falsy; getByName(name).id;
-//    create(payload) takes a DocumentTypeBuilder().build() payload.
-//  - api.document.getByName(name) -> document object (.id); getAllAtRoot() ->
-//    APIResponse(.json().items[]); getChildren(id) -> tree-item array directly.
-//  - api.media.createDefaultMediaWithImage(name) -> media id (GUID key).
-//  - DocumentTypeBuilder containers: addContainer().withType('Tab'|'Group')
-//    .withId().withParentId(); properties: addProperty().withContainerId()
-//    .withName().withAlias().withDataTypeId().
-//  - DocumentBuilder values: addValue().withAlias().withValue(v) or
-//    .addMediaPickerValue().withMediaKey(id).
+// Every create is guarded by a doesNameExist / getByName check: the package's
+// createDefault* helpers DELETE on name collision, so calling them unguarded
+// would churn the whole model on every run.
 import { randomUUID } from 'crypto';
 import {
   ApiHelpers,
@@ -38,8 +21,7 @@ const PAGE_DOC_TYPE = 'Page';
 const CONTENT_TAB = 'Content';
 const SEO_TAB = 'SEO';
 
-// Names of the data types we own (created once, reused). Distinct editors for
-// the Content tab — TipTap first, a Media Picker second, then the rest.
+// Data types we own (created once, reused). TipTap first, Media Picker second.
 const DT = {
   richText: 'LT Rich Text',
   mediaPicker: 'LT Media Picker',
@@ -67,17 +49,15 @@ const COMPOSITION_CONTENT = 'Page Content Extras';
 const COMPOSITION_SEO = 'Page SEO';
 const COMPOSITION_SMALL = 'Page Extras';
 
-// Element type used as the single allowed block in the Block Grid editor. Its
-// id (a GUID in the v17 management API) doubles as the contentElementTypeKey for
-// the data type's "blocks" config and as the contentTypeKey of the block's
-// contentData value on the Homepage.
+// The single allowed block in the Block Grid. Its id doubles as the
+// contentElementTypeKey of the data type's "blocks" config and the contentTypeKey
+// of the block's contentData on the Homepage.
 const HERO_BLOCK_ELEMENT_TYPE = 'Hero Block';
 const HERO_BLOCK_HEADING = 'heading'; // Textstring
 const HERO_BLOCK_TEXT = 'text'; // Textarea
 
-// Best-effort publish: publishing is not required for the model's tree to be
-// visible in the management tree API (which the spec reads), so a transient
-// slow publish must not abort the whole build. Swallow timeouts/errors.
+// Best-effort: the tree is visible in the management API without publishing, so
+// a transient slow publish must not abort the build. Swallow timeouts/errors.
 async function tryPublish(api: ApiHelpers, id: string): Promise<void> {
   try {
     await Promise.race([
@@ -186,10 +166,9 @@ async function ensureCompositionElementType(
   return api.documentType.create(builder.build());
 }
 
-// Configure the (already-created, already-referenced-by-Page) Block Grid data
-// type to allow the Hero Block element type as a block — IN PLACE via a PUT so
-// the data type id is preserved (recreating it would orphan the Page property).
-// Idempotent: skips if the data type already carries a non-empty "blocks" entry.
+// Allow the Hero Block in the Block Grid data type, updated IN PLACE via PUT so
+// its id is preserved (recreating it would orphan the Page property). Idempotent:
+// skips if a non-empty "blocks" entry already exists.
 async function ensureBlockGridAllowsHeroBlock(
   api: ApiHelpers,
   blockGridDataTypeId: string,
@@ -201,8 +180,6 @@ async function ensureBlockGridAllowsHeroBlock(
     return;
   }
 
-  // Build the exact "values" payload the package would emit for a block grid
-  // with one block allowed at root.
   const values = new BlockGridDataTypeBuilder()
     .withName(DT.blockGrid)
     .addBlock()
@@ -234,7 +211,7 @@ async function ensurePageDocType(
   const tabId = randomUUID();
   const groupId = randomUUID();
 
-  // Content tab properties, in spec order: TipTap FIRST, Media Picker SECOND.
+  // Content tab properties: TipTap FIRST, Media Picker SECOND.
   const contentProps: PropSpec[] = [
     { name: DT.richText, dataTypeId: dt[DT.richText] },
     { name: DT.mediaPicker, dataTypeId: dt[DT.mediaPicker] },
@@ -275,7 +252,6 @@ async function ensurePageDocType(
       .done();
   }
 
-  // Allow Page as a child of Page so every root node can have children.
   for (const compositionId of compositionIds) {
     builder = builder.addComposition().withDocumentTypeId(compositionId).done();
   }
@@ -283,9 +259,8 @@ async function ensurePageDocType(
   return api.documentType.create(builder.build());
 }
 
-// Make Page allow Page as an allowed child node. Done as a separate update so
-// we can reference the Page id itself (a doc type cannot allow itself at create
-// time before it has an id). We patch the created doc type in place.
+// Make Page allow Page as a child. A separate update because a doc type cannot
+// reference its own id at create time (it has none yet).
 async function ensurePageAllowsPageChild(api: ApiHelpers, pageId: string): Promise<void> {
   const docType = await api.documentType.get(pageId);
   const already = (docType.allowedDocumentTypes ?? []).some(
@@ -318,9 +293,8 @@ async function ensureHomepage(
     return existing.id;
   }
 
-  // Rich text (TipTap) markup containing an <img> referencing the media. The
-  // <img> carries explicit width/height so it renders at a real size in the
-  // backoffice instead of collapsing to zero.
+  // Rich text markup with an <img> carrying explicit width/height so it renders
+  // at a real size in the backoffice instead of collapsing to zero.
   const richTextValue = {
     markup:
       `<p>Welcome to the homepage.</p>` +
@@ -342,26 +316,22 @@ async function ensureHomepage(
     .addVariant()
     .withName(HOMEPAGE_NAME)
     .done()
-    // Rich text with an embedded, sized image.
     .addValue()
     .withAlias(toAlias(DT.richText))
     .withValue(richTextValue)
     .done()
-    // First media picker — picked image.
     .addValue()
     .withAlias(toAlias(DT.mediaPicker))
     .addMediaPickerValue()
     .withMediaKey(imageMediaKey)
     .done()
     .done()
-    // Second media picker — picked image.
     .addValue()
     .withAlias(toAlias(DT.mediaPicker2))
     .addMediaPickerValue()
     .withMediaKey(imageMediaKey)
     .done()
     .done()
-    // Block Grid — one Hero Block with heading + text content, laid out and exposed.
     .addValue()
     .withAlias(toAlias(DT.blockGrid))
     .addBlockGridValue()
@@ -387,7 +357,6 @@ async function ensureHomepage(
     .done()
     .done()
     .done()
-    // Textstring (title) + Textarea (summary).
     .addValue()
     .withAlias(toAlias(DT.textstring))
     .withValue('Homepage headline')
@@ -396,12 +365,10 @@ async function ensureHomepage(
     .withAlias(toAlias(DT.textarea))
     .withValue('A concise summary of what this homepage is all about.')
     .done()
-    // Content Picker — reference a real, existing content node.
     .addValue()
     .withAlias(toAlias(DT.contentPicker))
     .withValue(relatedNodeId)
     .done()
-    // Multi-URL Picker — one external link.
     .addValue()
     .withAlias(toAlias(DT.multiUrl))
     .addURLPickerValue()
@@ -500,13 +467,9 @@ async function ensureExtraDocTypes(api: ApiHelpers): Promise<void> {
   }
 }
 
-// Final sweep: every top-level node must have >= 1 child (so the tree shows
-// hasChildren broadly). This also covers any stray pre-existing root content
-// left over from earlier testing on the instance. For a childless root we add a
-// child of the SAME document type as the root (structurally sound, and the root
-// type usually permits children of its own kind). If that is not allowed by the
-// instance, the stray root is moved to the recycle bin so the criterion holds
-// deterministically. Idempotent: roots that already have children are skipped.
+// Final sweep so every root (including stray pre-existing content) has >= 1
+// child. Tries a child of the root's OWN doc type, then Page; if neither is
+// allowed, recycle-bins the stray root so the criterion holds. Idempotent.
 async function ensureEveryRootHasChild(api: ApiHelpers, fallbackPageId: string): Promise<void> {
   const res = await api.document.getAllAtRoot();
   const json = await res.json();
@@ -560,8 +523,7 @@ export async function buildContentModel(api: ApiHelpers): Promise<void> {
 
   const image = await ensureImage(api);
 
-  // Compositions (3): one adds editors to the Content tab, one adds an SEO tab,
-  // one is small.
+  // Three compositions: Content-tab editors, an SEO tab, and a small one.
   const contentExtrasId = await ensureCompositionElementType(api, COMPOSITION_CONTENT, CONTENT_TAB, [
     { name: DT.contentPicker, dataTypeId: dt[DT.contentPicker] },
     { name: DT.multiUrl, dataTypeId: dt[DT.multiUrl] },
@@ -577,11 +539,8 @@ export async function buildContentModel(api: ApiHelpers): Promise<void> {
     { name: DT.numeric2, dataTypeId: dt[DT.numeric2] },
   ]);
 
-  // Element type that the Block Grid will allow as a block, plus the in-place
-  // wiring of the (empty) Block Grid data type to permit it. Built with the
-  // shared composition helper: tab 'Content', group 'Body', a Textstring heading
-  // and a Textarea text (its property aliases resolve to HERO_BLOCK_HEADING /
-  // HERO_BLOCK_TEXT via toAlias).
+  // Hero Block element type (Heading/Text aliases resolve to HERO_BLOCK_HEADING /
+  // HERO_BLOCK_TEXT via toAlias), then wire it into the empty Block Grid.
   const heroBlockId = await ensureCompositionElementType(
     api,
     HERO_BLOCK_ELEMENT_TYPE,

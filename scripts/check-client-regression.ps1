@@ -47,10 +47,8 @@ function Test-ClientRegression {
 
 if ($DotSourceForTest) { return }
 
-# --- Live path: list+read client/{major}/ summary blobs, evaluate, write report. ---
-# Client-specific reader (Get-HistoryCells can't be reused — it filters on
-# scenario_name and uses the {scenario}/ prefix; client rows use `metric` and the
-# `client/` prefix). Mirrors Get-HistoryCells' az list/download idiom.
+# Get-HistoryCells can't be reused: client rows use `metric` + the `client/`
+# prefix (it filters scenario_name and the `{scenario}/` prefix).
 $prefix = "client/$Major/"
 $storageKey = Get-StorageAccountKey -StorageAccountName $StorageAccountName -ResourceGroupName $HistoryResourceGroup
 

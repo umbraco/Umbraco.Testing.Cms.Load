@@ -33,10 +33,9 @@ param(
     # the raw Azure Monitor datapoints that Get-MetricSummary today averages
     # away. The dashboard's per-run drill-down reads from this.
     [string]$SeriesTableName = "LoadTestSeries_CL",
-    # Client-side perceived-latency table (Playwright client workload). One row
-    # per (run × metric) — cold/cached dashboard + home-node load, time-to-first-edit.
-    # Semantically distinct from the load-test throughput tables, so it gets its
-    # own table + stream rather than overloading LoadTestSummary_CL.
+    # Client-side perceived-latency table (Playwright workload). Semantically
+    # distinct from the throughput tables, so it gets its own table + stream
+    # rather than overloading LoadTestSummary_CL.
     [string]$ClientTableName = "ClientMeasurement_CL",
     # Days the custom tables retain data. LA includes 31 days free; beyond
     # that is ~$0.12/GB/month. At our row size + cadence this is fractions
@@ -149,9 +148,8 @@ $seriesColumns = @(
     @{ name = "value";            type = "real"     }
 )
 
-# Client-measurement schema. One row per (run × metric). Kept narrow: run
-# metadata + the summary stats the Playwright emitter produces + optional
-# segment medians for time_to_first_edit (null for the other metrics).
+# Client-measurement schema, one row per (run × metric): run metadata + the
+# emitter's summary stats + segment medians (null outside time_to_first_edit).
 $clientColumns = @(
     @{ name = "TimeGenerated";          type = "datetime" }
     @{ name = "run_id";                 type = "string"   }

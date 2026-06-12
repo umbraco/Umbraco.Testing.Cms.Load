@@ -6,21 +6,16 @@ import { summarize } from '../lib/stats';
 import { TIPTAP, CONTENT_URL, homepageTreeItem, waitForHomepageNode } from '../lib/backoffice';
 import { HOMEPAGE_NAME } from '../fixtures/contentModel';
 
-// A character that is NOT already present in the Homepage body ("Welcome to the
-// homepage. ... An image is embedded above."). Probed live: § does not pre-exist
-// in the editor's textContent, so detecting it appear is an unambiguous signal
-// that OUR keystroke was rendered — not a pre-existing letter. We assert its
-// absence before typing so the detection can never trivially pass.
-const SENTINEL = '§'; // §, section sign
+// A sentinel char absent from the Homepage body, so its appearance is an
+// unambiguous signal that OUR keystroke rendered (not a pre-existing letter).
+// Asserted absent before typing so the detection can't trivially pass.
+const SENTINEL = '§';
 
 test.setTimeout(15 * 60_000);
 
-// End-to-end "time to first edit": open URL -> login (real form, stored creds)
-// -> open the Home node -> place cursor in the TipTap field -> type one
-// character -> stop when that character is rendered. We also capture the four
-// segment timings so we can see where the total goes. Emits ONE metric
-// (time_to_first_edit) whose samples are the end-to-end totals; the four segment
-// medians ride along in `extra`.
+// End-to-end "time to first edit": login -> open the Home node -> type one char
+// into TipTap -> stop when it renders. Emits ONE metric (time_to_first_edit) of
+// end-to-end totals; the four segment medians ride along in `extra`.
 test('time to first edit (end-to-end + segments)', async ({ browser }) => {
   const total: number[] = [];
   const seg = {
@@ -36,12 +31,10 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
 
     const tStart = performance.now();
 
-    // Segment 1: login (real form submit with stored creds). loginByForm returns
-    // ms from navigation start until the section shell is visible.
+    // Segment 1: login.
     seg.login.push(await loginByForm(page));
 
-    // Segment 2: navigate to the Content section + open the Home node. Scope the
-    // tree item to the sidebar so a same-named breadcrumb can't be clicked instead.
+    // Segment 2: navigate to Content + open the Home node.
     const tNav = performance.now();
     await page.goto(CONTENT_URL);
     await waitForHomepageNode(page, HOMEPAGE_NAME);
@@ -54,17 +47,9 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
     await editor.waitFor({ state: 'visible', timeout: 60_000 });
     seg.editorReady.push(performance.now() - tEditor);
 
-    // Segment 4: first keystroke rendered.
-    //
-    // Place the cursor by clicking the editable editor root directly (probed:
-    // this DIV becomes document.activeElement with isContentEditable === true).
-    // Snapshot the editor's textContent and assert our sentinel is absent so the
-    // render check cannot trivially pass on pre-existing text. Then type the
-    // sentinel and poll via page.waitForFunction with the editor's ELEMENT HANDLE
-    // (which pierces shadow DOM — the editor lives inside a shadow root, so a
-    // document.querySelector-based wait would never see it) until the rendered
-    // textContent contains the sentinel. The segment = from issuing the keypress
-    // until that render confirmation resolves.
+    // Segment 4: first keystroke rendered. Poll via waitForFunction on the
+    // editor's ELEMENT HANDLE — the editor lives in a shadow root, so a
+    // document.querySelector-based wait would never see it.
     await editor.click();
     const before = await editor.evaluate((el) => (el as HTMLElement).textContent ?? '');
     expect(before, 'sentinel must not pre-exist in editor text').not.toContain(SENTINEL);

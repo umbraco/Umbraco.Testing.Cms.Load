@@ -6,10 +6,8 @@ import { env } from './lib/env';
 
 export default defineConfig({
   testDir: './measurements',
-  // Build the precise backoffice content model once before any spec.
   globalSetup: require.resolve('./global-setup'),
-  // Measurements must not run in parallel — concurrent browsers contend for the
-  // agent's CPU and pollute timing. One worker, serial.
+  // Serial, one worker: concurrent browsers contend for CPU and pollute timing.
   workers: 1,
   fullyParallel: false,
   // No retries: a failed measurement is data we want to see, not paper over.

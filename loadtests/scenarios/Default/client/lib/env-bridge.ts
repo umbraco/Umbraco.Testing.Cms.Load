@@ -1,10 +1,8 @@
-// Side-effect module: mirror our config onto the environment variable names that
-// @umbraco-cms/acceptance-test-helpers reads at IMPORT time (URL /
-// UMBRACO_USER_LOGIN / UMBRACO_USER_PASSWORD). Setting these inside makeApi() is
-// too late — the package freezes baseUrl when it is first required. This module
-// is imported FIRST in playwright.config.ts, so it runs in the main process
-// before any worker spawns (workers inherit the env) and before global-setup
-// requires the package. `??=` so an explicitly-set package var always wins.
+// Mirror our config onto the env var names @umbraco-cms/acceptance-test-helpers
+// reads (URL / UMBRACO_USER_LOGIN / UMBRACO_USER_PASSWORD). The package freezes
+// baseUrl at import time, so this must run BEFORE it is required — hence it is
+// imported first in playwright.config.ts (in the main process, before workers
+// inherit the env). `??=` so an explicitly-set package var always wins.
 import { env } from './env';
 
 process.env.URL ??= env.baseUrl;

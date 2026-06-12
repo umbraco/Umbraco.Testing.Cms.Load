@@ -58,12 +58,10 @@ export function emitMetric(
   appendFileSync(join(dir, `${metric}.ndjson`), JSON.stringify(row) + '\n', 'utf8');
 }
 
-// Runs env.reps measurement reps in fresh, cache-less browser contexts (login per
-// rep, excluded from the timed windows). `cold`/`cached` each perform their own
-// navigation+timing and return elapsed ms; `beforeEach` (optional) runs after login
-// and before the cold step (e.g. navigate to the content section). perfMarks are
-// captured after each step so both emitted rows carry the same schema. Emits
-// coldMetric and cachedMetric.
+// Runs env.reps reps in fresh, cache-less contexts. Login is per-rep and
+// EXCLUDED from the timed windows; `beforeEach` (optional) runs after login,
+// before `cold`. perfMarks are captured after both `cold` and `cached` so the
+// two emitted rows share one schema.
 export async function runColdCached(
   browser: Browser,
   opts: {

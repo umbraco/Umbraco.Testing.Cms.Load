@@ -1,6 +1,5 @@
 # Per-tier client-measurement job: read terraform outputs -> start App Service ->
 # warm up (server warm, so we measure client-cold) -> run Playwright -> publish.
-# The Playwright counterpart to templates/load-test-job.yml.
 parameters:
   - name: testCaseId
     type: string
@@ -42,14 +41,13 @@ steps:
         Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
         Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
         Write-Host "##vso[task.setvariable variable=poolDtuMax]$($tfOut.pool_dtu_max)"
-        # Sanitized artifact key (mirrors generate-loadtest-config.ps1's safeKey) so
-        # each tier publishes a distinct artifact instead of every tier colliding on
-        # a bare 'client-results-' and overwriting one another.
+        # Sanitized artifact key so each tier publishes a distinct artifact
+        # instead of every tier colliding on a bare 'client-results-'.
         $safeKey = (($testCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
         if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
         Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
-        # Plain Write-Host (NOT a ##vso setvariable, which the agent consumes and
-        # does not echo) so the backoffice URL is actually visible in this step log.
+        # Plain Write-Host (NOT ##vso setvariable, which the agent consumes and
+        # does not echo) so the backoffice URL is visible in this step log.
         Write-Host ""
         Write-Host "==================================================================="
         Write-Host "  Backoffice URL: https://$($tfOut.hostname)/umbraco"
@@ -105,9 +103,8 @@ steps:
         npx playwright install --with-deps chromium
         npx playwright test
 
-  # Print the per-metric averages straight into the run log (parsed from the
-  # NDJSON the Playwright run wrote), so you can read cold/cached/home-node and
-  # time-to-first-edit numbers without downloading the artifact or querying LA.
+  # Print the per-metric averages into the run log (from the Playwright NDJSON)
+  # so the numbers are readable without downloading the artifact or querying LA.
   # succeededOrFailed so it still prints when some specs failed.
   - task: PowerShell@2
     displayName: 'Summarize client metrics [${{ parameters.testCaseId }}]'
@@ -181,10 +178,8 @@ steps:
       ArtifactName: 'client-results-$(safeTestCaseId)'
       publishLocation: 'Container'
 
-  # The Playwright HTML report (timeline, per-step traces, console/network) lives
-  # in the project's playwright-report/ dir (the 'html' reporter in
-  # playwright.config.ts), separate from the NDJSON in client-results/. Publish it
-  # so the rich report is downloadable per tier alongside the raw metrics.
+  # Publish the Playwright HTML report (from playwright-report/, separate from the
+  # NDJSON in client-results/) so it's downloadable per tier alongside the metrics.
   - task: PublishBuildArtifacts@1
     displayName: 'Publish Playwright report [${{ parameters.testCaseId }}]'
     condition: succeededOrFailed()

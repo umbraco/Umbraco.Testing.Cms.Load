@@ -35,8 +35,8 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_helpers.ps1"
 
-# Transform the Playwright per-metric NDJSON files into LA-shaped rows carrying
-# full run metadata, so cross-run queries need no joins. Pure function — unit-tested.
+# Transform the Playwright per-metric NDJSON into LA-shaped rows with full run
+# metadata, so cross-run queries need no joins. Pure function — unit-tested.
 function Build-ClientRows {
     param(
         [Parameter(Mandatory)] [string]$ResultsDir,

@@ -99,9 +99,8 @@ if ($Workload -eq 'frontend') {
         Write-PipelineError "Workload=backoffice selected but $jmeterDir contains no .jmx files."
     }
 } elseif ($Workload -eq 'client') {
-    # The client workload runs the Playwright project under the scenario's client/
-    # folder. Fail at queue-time (minute 0) if it's absent, mirroring the
-    # frontend/backoffice file checks above.
+    # Client workload = the scenario's Playwright project. Fail at queue-time if
+    # absent, mirroring the frontend/backoffice checks above.
     $clientConfig = Join-Path $scenarioRoot 'client/playwright.config.ts'
     if (-not (Test-Path -LiteralPath $clientConfig)) {
         Write-PipelineError "Workload=client selected but scenario '$Scenario' has no client/ project (looked for $clientConfig). Add a Playwright project under loadtests/scenarios/$Scenario/client/ or pick a different workload."
