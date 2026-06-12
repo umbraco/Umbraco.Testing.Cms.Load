@@ -51,13 +51,14 @@ function Build-ClientRows {
         [Parameter(Mandatory)] [string]$Branch,
         [Parameter(Mandatory)] [string]$RunStartedAt
     )
-    $rows = @()
+    # List[object] for O(1) appends; += on PowerShell arrays is O(N^2).
+    $rows = [System.Collections.Generic.List[object]]::new()
     $files = @(Get-ChildItem -Path $ResultsDir -Filter '*.ndjson' -File -ErrorAction SilentlyContinue)
     foreach ($f in $files) {
         foreach ($line in (Get-Content $f.FullName)) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             $m = $line | ConvertFrom-Json
-            $rows += [pscustomobject][ordered]@{
+            $rows.Add([pscustomobject][ordered]@{
                 TimeGenerated       = $RunStartedAt
                 run_id              = $BuildId
                 commit              = $Commit
@@ -84,7 +85,7 @@ function Build-ClientRows {
                 seg_navigate_ms     = $m.seg_navigate_median
                 seg_editor_ready_ms = $m.seg_editor_ready_median
                 seg_keystroke_ms    = $m.seg_keystroke_median
-            }
+            })
         }
     }
     # Unary comma forces an array return even for a single row — otherwise a
