@@ -282,53 +282,81 @@ $dceUri  = $dceShow.logsIngestion.endpoint
 # because the az CLI's DCR commands don't cover the Logs-Ingestion-API direct
 # stream shape.
 Write-Host "-> Data Collection Rule"
-$dcrBody = @{
-    location   = $HistoryLocation
-    tags       = @{ project = "umbraco-loadtest"; managed_by = "ensure-script" }
-    properties = @{
-        dataCollectionEndpointId = $dceId
-        streamDeclarations       = @{
-            $streamName       = @{ columns = $columns }
-            $seriesStreamName = @{ columns = $seriesColumns }
-            $clientStreamName = @{ columns = $clientColumns }
-        }
-        destinations             = @{
-            logAnalytics = @(
-                @{ name = "loadtest-workspace"; workspaceResourceId = $workspaceId }
-            )
-        }
-        dataFlows                = @(
-            @{
-                streams      = @($streamName)
-                destinations = @("loadtest-workspace")
-                outputStream = $streamName
-                transformKql = "source"
-            },
-            @{
-                streams      = @($seriesStreamName)
-                destinations = @("loadtest-workspace")
-                outputStream = $seriesStreamName
-                transformKql = "source"
-            },
-            @{
-                streams      = @($clientStreamName)
-                destinations = @("loadtest-workspace")
-                outputStream = $clientStreamName
-                transformKql = "source"
-            }
-        )
-    }
-} | ConvertTo-Json -Depth 8 -Compress
-
 $dcrPath = "/subscriptions/$subId/resourceGroups/$HistoryResourceGroup/providers/Microsoft.Insights/dataCollectionRules/${DcrName}?api-version=2022-06-01"
-$dcrBodyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-dcr-$([Guid]::NewGuid()).json"
-try {
-    $dcrBody | Out-File -FilePath $dcrBodyFile -Encoding utf8 -NoNewline
-    az rest --method put --url "https://management.azure.com$dcrPath" --body "@$dcrBodyFile" --headers "Content-Type=application/json" | Out-Null
-    Write-Host "   created/updated"
+
+# This DCR is SHARED with the load-test pipeline. A full-replace PUT drops any
+# stream this script doesn't declare — so a load-test run from a branch without
+# the client stream silently removes Custom-ClientMeasurement_CL, which then 400s
+# as InvalidStream on the next client publish (and vice-versa). So MERGE: preserve
+# foreign streams/dataFlows, own ours, and skip the PUT when nothing changed (a
+# needless re-PUT triggers data-plane re-propagation that can briefly 400 a
+# concurrent publish). NOTE: this merge logic must also live on whatever branch
+# the load-test pipeline runs from, or that pipeline will still clobber.
+$desiredStreams = @{
+    $streamName       = @{ columns = $columns }
+    $seriesStreamName = @{ columns = $seriesColumns }
+    $clientStreamName = @{ columns = $clientColumns }
 }
-finally {
-    Remove-Item $dcrBodyFile -Force -ErrorAction SilentlyContinue
+$ownStreamNames = @($desiredStreams.Keys)
+$desiredFlows = $ownStreamNames | ForEach-Object {
+    @{ streams = @($_); destinations = @("loadtest-workspace"); outputStream = $_; transformKql = "source" }
+}
+
+# Existing DCR (if any) — drives both the merge and the skip decision.
+$existingDcr = $null
+try { $existingDcr = az rest --method get --url "https://management.azure.com$dcrPath" 2>$null | ConvertFrom-Json } catch { }
+
+# Foreign streams/flows (owned by the other pipeline) are carried over untouched.
+$mergedStreams = @{}
+if ($existingDcr -and $existingDcr.properties.streamDeclarations) {
+    foreach ($p in $existingDcr.properties.streamDeclarations.PSObject.Properties) {
+        if ($ownStreamNames -notcontains $p.Name) { $mergedStreams[$p.Name] = $p.Value }
+    }
+}
+foreach ($k in $desiredStreams.Keys) { $mergedStreams[$k] = $desiredStreams[$k] }
+$foreignFlows = @()
+if ($existingDcr -and $existingDcr.properties.dataFlows) {
+    $foreignFlows = @($existingDcr.properties.dataFlows | Where-Object { $ownStreamNames -notcontains $_.outputStream })
+}
+$mergedFlows = @($foreignFlows) + @($desiredFlows)
+
+# Steady-state skip: every owned stream already present with the same column set.
+# Schema drift (added/removed columns) still forces a PUT.
+function Test-StreamUpToDate($existing, $name, $desiredCols) {
+    $decl = $existing.properties.streamDeclarations.$name
+    if (-not $decl) { return $false }
+    $have = @($decl.columns.name | Sort-Object) -join ','
+    $want = @($desiredCols.name  | Sort-Object) -join ','
+    return ($have -eq $want)
+}
+$upToDate = [bool]$existingDcr -and
+    (Test-StreamUpToDate $existingDcr $streamName       $columns) -and
+    (Test-StreamUpToDate $existingDcr $seriesStreamName $seriesColumns) -and
+    (Test-StreamUpToDate $existingDcr $clientStreamName $clientColumns)
+
+if ($upToDate) {
+    Write-Host "   all streams present with matching schema — skipping PUT (no churn)"
+}
+else {
+    $dcrBody = @{
+        location   = $HistoryLocation
+        tags       = @{ project = "umbraco-loadtest"; managed_by = "ensure-script" }
+        properties = @{
+            dataCollectionEndpointId = $dceId
+            streamDeclarations       = $mergedStreams
+            destinations             = @{ logAnalytics = @(@{ name = "loadtest-workspace"; workspaceResourceId = $workspaceId }) }
+            dataFlows                = $mergedFlows
+        }
+    } | ConvertTo-Json -Depth 8 -Compress
+    $dcrBodyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-dcr-$([Guid]::NewGuid()).json"
+    try {
+        $dcrBody | Out-File -FilePath $dcrBodyFile -Encoding utf8 -NoNewline
+        az rest --method put --url "https://management.azure.com$dcrPath" --body "@$dcrBodyFile" --headers "Content-Type=application/json" | Out-Null
+        Write-Host "   created/updated (merged $($mergedStreams.Count) stream(s): $($mergedStreams.Keys -join ', '))"
+    }
+    finally {
+        Remove-Item $dcrBodyFile -Force -ErrorAction SilentlyContinue
+    }
 }
 $dcrShow         = az rest --method get --url "https://management.azure.com$dcrPath" -o json | ConvertFrom-Json
 $dcrId           = $dcrShow.id
