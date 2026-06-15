@@ -34,4 +34,16 @@ Describe 'Build-ClientRows' {
         $rows[0].seg_login_ms | Should -Be 3000
         $rows[0].seg_keystroke_ms | Should -Be 40
     }
+
+    It 'normalizes a space-separated pipeline timestamp to ISO-8601 (Log Analytics rejects the raw form with a 400)' {
+        $tmp = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid()))
+        @'
+{"metric":"cold_dashboard_load","run_id":"local","count":10,"median":130,"p75":140,"p95":160,"min":110,"max":180,"stddev":15.2}
+'@ | Out-File (Join-Path $tmp 'cold_dashboard_load.ndjson') -Encoding utf8
+        # $(System.PipelineStartTime) format: space-separated, not ISO.
+        $rows = Build-ClientRows -ResultsDir $tmp -UmbracoVersion '17.0.0' -Tier 'Starter' `
+            -Scenario 'Default' -AppServiceSku 'P0v3' -PoolDtuMax 20 -SeederPreset 'Medium' `
+            -BuildId '123' -Commit 'abc' -Branch 'main' -RunStartedAt '2026-06-15 13:45:30+00:00'
+        $rows[0].TimeGenerated | Should -Be '2026-06-15T13:45:30.0000000Z'
+    }
 }

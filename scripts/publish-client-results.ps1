@@ -51,6 +51,9 @@ function Build-ClientRows {
         [Parameter(Mandatory)] [string]$Branch,
         [Parameter(Mandatory)] [string]$RunStartedAt
     )
+    # LA's Logs Ingestion API rejects the space-separated $(System.PipelineStartTime)
+    # on a datetime column with a 400 — normalize once to ISO-8601 for every row.
+    $timeGenerated = ConvertTo-IsoUtc $RunStartedAt
     # List[object] for O(1) appends; += on PowerShell arrays is O(N^2).
     $rows = [System.Collections.Generic.List[object]]::new()
     $files = @(Get-ChildItem -Path $ResultsDir -Filter '*.ndjson' -File -ErrorAction SilentlyContinue)
@@ -59,7 +62,7 @@ function Build-ClientRows {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             $m = $line | ConvertFrom-Json
             $rows.Add([pscustomobject][ordered]@{
-                TimeGenerated       = $RunStartedAt
+                TimeGenerated       = $timeGenerated
                 run_id              = $BuildId
                 commit              = $Commit
                 branch              = $Branch
@@ -107,7 +110,10 @@ function Send-ClientRowsToLogAnalytics {
             -Headers @{ Authorization = "Bearer $token" } | Out-Null
         Write-Host "   ok"
     } catch {
-        $msg = "Client Log Analytics ingestion failed: $($_.Exception.Message). Blob upload remains source of truth."
+        # $_.ErrorDetails.Message carries the API response body, which names the
+        # rejected field (e.g. an invalid datetime) — the bare status line doesn't.
+        $detail = if ($_.ErrorDetails.Message) { " Body: $($_.ErrorDetails.Message)" } else { "" }
+        $msg = "Client Log Analytics ingestion failed: $($_.Exception.Message).$detail Blob upload remains source of truth."
         Write-Warning $msg
         Write-Host "##vso[task.logissue type=warning]$msg"
     }
