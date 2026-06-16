@@ -62,6 +62,21 @@ export function emitMetric(
 // EXCLUDED from the timed windows; `beforeEach` (optional) runs after login,
 // before `cold`. perfMarks are captured after both `cold` and `cached` so the
 // two emitted rows share one schema.
+
+// Median across reps, per mark key — so the emitted ttfb/dcl/load/lcp summarize
+// the whole run like median/p95 do, rather than reflecting only the final rep.
+// Nulls (API unavailable that rep) are dropped; a key with no numbers stays null.
+function medianMarks(samples: Record<string, number | null>[]): Record<string, number | null> {
+  const keys = new Set<string>();
+  for (const m of samples) for (const k of Object.keys(m)) keys.add(k);
+  const out: Record<string, number | null> = {};
+  for (const k of keys) {
+    const nums = samples.map((m) => m[k]).filter((v): v is number => typeof v === 'number');
+    out[k] = nums.length ? Math.round(summarize(nums).median) : null;
+  }
+  return out;
+}
+
 export async function runColdCached(
   browser: Browser,
   opts: {
@@ -74,19 +89,19 @@ export async function runColdCached(
 ): Promise<void> {
   const cold: number[] = [];
   const cached: number[] = [];
-  let coldMarks: Record<string, number | null> = {};
-  let cachedMarks: Record<string, number | null> = {};
+  const coldMarks: Record<string, number | null>[] = [];
+  const cachedMarks: Record<string, number | null>[] = [];
   for (let i = 0; i < env.reps; i++) {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const page = await context.newPage();
     await loginByForm(page);
     if (opts.beforeEach) await opts.beforeEach(page);
     cold.push(await opts.cold(page));
-    coldMarks = await perfMarks(page);
+    coldMarks.push(await perfMarks(page));
     cached.push(await opts.cached(page));
-    cachedMarks = await perfMarks(page);
+    cachedMarks.push(await perfMarks(page));
     await context.close();
   }
-  emitMetric(opts.coldMetric, cold, coldMarks);
-  emitMetric(opts.cachedMetric, cached, cachedMarks);
+  emitMetric(opts.coldMetric, cold, medianMarks(coldMarks));
+  emitMetric(opts.cachedMetric, cached, medianMarks(cachedMarks));
 }
