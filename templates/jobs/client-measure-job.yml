@@ -94,7 +94,11 @@ steps:
       CLIENT_UMBRACO_VERSION: '${{ parameters.umbracoVersion }}'
       CLIENT_TIER: '${{ parameters.tier }}'
       CLIENT_SCENARIO: '${{ parameters.scenario }}'
-      CLIENT_RESULTS_DIR: '$(System.DefaultWorkingDirectory)/client-results'
+      # Per-tier results dir (keyed by safeTestCaseId, same key the artifacts use).
+      # All tiers run as sequential steps in ONE job sharing this filesystem, and
+      # emitMetric APPENDS — a shared dir would let tier N read tier N-1's NDJSON
+      # and republish it under tier N's metadata. Per-tier dirs keep them isolated.
+      CLIENT_RESULTS_DIR: '$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)'
     inputs:
       targetType: 'inline'
       workingDirectory: '$(System.DefaultWorkingDirectory)/loadtests/scenarios/${{ parameters.scenario }}/client'
@@ -112,7 +116,7 @@ steps:
     inputs:
       targetType: 'inline'
       script: |
-        $dir = "$(System.DefaultWorkingDirectory)/client-results"
+        $dir = "$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)"
         if (-not (Test-Path $dir)) { Write-Host "No client-results dir - Playwright produced no metrics."; exit 0 }
         $loads = @(); $ttfe = $null
         foreach ($f in Get-ChildItem -Path $dir -Filter *.ndjson) {
@@ -151,7 +155,7 @@ steps:
       scriptLocation: 'scriptPath'
       scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-client-results.ps1'
       arguments: >
-        -ResultsDir "$(System.DefaultWorkingDirectory)/client-results"
+        -ResultsDir "$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)"
         -HistoryResourceGroup "$(historyResourceGroup)"
         -StorageAccountName "$(historyStorageAccount)"
         -ContainerName "$(historyContainer)"
@@ -174,7 +178,7 @@ steps:
     condition: succeededOrFailed()
     continueOnError: true
     inputs:
-      PathtoPublish: '$(System.DefaultWorkingDirectory)/client-results'
+      PathtoPublish: '$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)'
       ArtifactName: 'client-results-$(safeTestCaseId)'
       publishLocation: 'Container'
 
