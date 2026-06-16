@@ -83,7 +83,14 @@ $regressedAny = $false
 if ($cells.Count -eq 0) { [void]$report.AppendLine("No client runs found under $prefix.") }
 
 foreach ($cellKey in ($cells.Keys | Sort-Object)) {
-    $ordered = @($cells[$cellKey] | Sort-Object { [string]$_.TimeGenerated })
+    # Order chronologically by parsed datetime, not string compare: rows written
+    # before TimeGenerated was normalized to ISO-8601 use a different format and
+    # would mis-sort lexically, picking the wrong candidate/baseline. Unparseable
+    # timestamps sort first (treated as oldest) rather than throwing.
+    $ordered = @($cells[$cellKey] | Sort-Object {
+        try { [datetime]::Parse([string]$_.TimeGenerated, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal) }
+        catch { [datetime]::MinValue }
+    })
     if ($ordered.Count -lt 2) {
         [void]$report.AppendLine("- ${cellKey}: insufficient baseline (1 run)")
         continue
