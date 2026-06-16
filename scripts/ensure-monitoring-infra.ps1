@@ -177,8 +177,6 @@ $clientColumns = @(
     @{ name = "seg_navigate_ms";        type = "real"     }
     @{ name = "seg_editor_ready_ms";    type = "real"     }
     @{ name = "seg_keystroke_ms";       type = "real"     }
-    @{ name = "regression_status";      type = "string"   }
-    @{ name = "regressed_metrics";      type = "string"   }
 )
 
 $streamName       = "Custom-$TableName"
@@ -320,13 +318,14 @@ if ($existingDcr -and $existingDcr.properties.dataFlows) {
 }
 $mergedFlows = @($foreignFlows) + @($desiredFlows)
 
-# Steady-state skip: every owned stream already present with the same column set.
-# Schema drift (added/removed columns) still forces a PUT.
+# Steady-state skip: every owned stream already present with the same columns.
+# Compares name AND type (sorted) so a type change with an unchanged name set
+# (e.g. pool_dtu_max int->string) still forces a PUT rather than skipping it.
 function Test-StreamUpToDate($existing, $name, $desiredCols) {
     $decl = $existing.properties.streamDeclarations.$name
     if (-not $decl) { return $false }
-    $have = @($decl.columns.name | Sort-Object) -join ','
-    $want = @($desiredCols.name  | Sort-Object) -join ','
+    $have = @($decl.columns  | ForEach-Object { "$($_.name):$($_.type)" } | Sort-Object) -join ','
+    $want = @($desiredCols   | ForEach-Object { "$($_.name):$($_.type)" } | Sort-Object) -join ','
     return ($have -eq $want)
 }
 $upToDate = [bool]$existingDcr -and
