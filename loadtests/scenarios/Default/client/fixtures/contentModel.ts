@@ -72,7 +72,11 @@ async function tryPublish(api: ApiHelpers, id: string): Promise<void> {
 // camelCase alias matching AliasHelper.toAlias used elsewhere in the package.
 function toAlias(text: string): string {
   return text
-    .split(' ')
+    // Split on spaces AND hyphens so names like "Product-page" become clean
+    // camelCase ("productPage"), not a literal hyphen. Drop empty segments
+    // (double separators) so el[0] can't be undefined.
+    .split(/[\s-]+/)
+    .filter((el) => el.length > 0)
     .map((el, idx) => (idx === 0 ? el.toLowerCase() : el[0].toUpperCase() + el.slice(1).toLowerCase()))
     .join('');
 }
