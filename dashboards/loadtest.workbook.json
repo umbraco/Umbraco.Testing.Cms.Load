@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# Umbraco Load Test Dashboard\nData source: `LoadTestSummary_CL` in the workspace below, populated by `scripts/publish-load-test-results.ps1` on every pipeline run. Open the **Glossary** tab for the full vocabulary."
+        "json": "# Umbraco Load Test Dashboard\nData sources in the workspace below, populated on every pipeline run:\n- `LoadTestSummary_CL` (+ per-minute `LoadTestSeries_CL`) — server-side throughput & capacity, from `scripts/publish-load-test-results.ps1`.\n- `ClientMeasurement_CL` — browser-perceived backoffice latency (see the **Client measurements** tab), from `scripts/publish-client-results.ps1`.\n\nOpen the **Glossary** tab for the full vocabulary."
       },
       "name": "title"
     },
