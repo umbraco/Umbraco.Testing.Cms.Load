@@ -2051,6 +2051,59 @@
       }
     },
     {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-client-tier",
+            "version": "KqlParameterItem/1.0",
+            "name": "ClientTier",
+            "label": "Tier (for the p95 chart below)",
+            "type": 2,
+            "isRequired": true,
+            "query": "ClientMeasurement_CL | distinct infra_tier | where isnotempty(infra_tier) | extend r = case(infra_tier=='Starter',1, infra_tier=='Standard',2, infra_tier=='Pro',3, infra_tier=='Enterprise',4, 99) | order by r asc | project infra_tier",
+            "crossComponentResources": [ "{Workspace}" ],
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "client-params",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// p95 by version, one bar per metric, for the selected tier. Shows how each\n// page/action's p95 moves across versions. Lower = better. Tier is picked\n// above because metric x tier x version is 3-D and a bar chart is 2-D.\nClientMeasurement_CL\n| where infra_tier == '{ClientTier}'\n| summarize ['p95_ms'] = round(avg(p95_ms), 0) by Version = umbraco_version, Metric = metric\n| order by Version asc, Metric asc",
+        "size": 0,
+        "title": "p95 by version — one bar per metric · tier = {ClientTier} (lower = better)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Version",
+          "group": "Metric",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "client-summary-bar",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
