@@ -1991,7 +1991,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "ClientMeasurement_CL | where metric == \"time_to_first_edit\" | summarize total_ms=round(avg(median_ms),1), login_ms=round(avg(seg_login_ms),1), navigate_ms=round(avg(seg_navigate_ms),1), editor_ready_ms=round(avg(seg_editor_ready_ms),1), keystroke_ms=round(avg(seg_keystroke_ms),1) by infra_tier, umbraco_version | order by infra_tier asc",
+        "query": "ClientMeasurement_CL | where metric == \"time_to_first_edit\" | summarize Runs=dcount(run_id), total_ms=round(avg(median_ms),1), login_ms=round(avg(seg_login_ms),1), navigate_ms=round(avg(seg_navigate_ms),1), editor_ready_ms=round(avg(seg_editor_ready_ms),1), keystroke_ms=round(avg(seg_keystroke_ms),1) by infra_tier, umbraco_version | order by infra_tier asc",
         "size": 0,
         "title": "Time-to-first-edit segments (avg ms)",
         "queryType": 0,
@@ -2029,7 +2029,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "ClientMeasurement_CL | where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\") | extend page = iff(metric has \"dashboard\", \"News dashboard\", \"Home node\") | summarize cold_ms=round(avgif(median_ms, metric startswith \"cold\"),1), cached_ms=round(avgif(median_ms, metric startswith \"cached\"),1) by page, infra_tier, umbraco_version | extend cache_savings_pct = round(100.0 * (cold_ms - cached_ms) / cold_ms, 1) | order by infra_tier asc, page asc",
+        "query": "ClientMeasurement_CL | where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\") | extend page = iff(metric has \"dashboard\", \"Welcome dashboard\", \"Homepage node\") | summarize Runs=dcount(run_id), cold_ms=round(avgif(median_ms, metric startswith \"cold\"),1), cached_ms=round(avgif(median_ms, metric startswith \"cached\"),1) by page, infra_tier, umbraco_version | extend cache_savings_pct = round(100.0 * (cold_ms - cached_ms) / cold_ms, 1) | order by infra_tier asc, page asc",
         "size": 0,
         "title": "Cold vs cached load (avg median ms) + cache savings",
         "queryType": 0,
@@ -2057,6 +2057,18 @@
         "visualization": "table"
       },
       "name": "client-browser-timing",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "**Browser timing marks** — standard Web Performance API timings, measured from navigation start (lower = better):\n- **TTFB** (Time To First Byte) — the first response byte arrives. Reflects server + network latency, before any rendering.\n- **DCL** (DOMContentLoaded) — HTML parsed and the DOM built (images/CSS not yet awaited). The page structure is ready.\n- **load** — every resource (JS, CSS, images, fonts) has finished loading. Full-load time.\n- **LCP** (Largest Contentful Paint) — the largest content element is painted; closest to \"the page appeared\". Often **null** here, because the headless backoffice SPA has no classic LCP element."
+      },
+      "name": "client-browser-timing-glossary",
       "conditionalVisibility": {
         "parameterName": "SelectedTab",
         "comparison": "isEqualTo",
