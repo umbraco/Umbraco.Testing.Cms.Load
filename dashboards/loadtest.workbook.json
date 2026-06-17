@@ -2010,6 +2010,31 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
+        "query": "// Long-form (Version, Tier, total_ms) + `group: Tier` so bars render\n// side-by-side per version — compare tiers within each version. Avg\n// end-to-end time-to-first-edit across all matching runs.\nClientMeasurement_CL\n| where metric == \"time_to_first_edit\"\n| summarize ['total_ms'] = round(avg(median_ms), 0) by Version = umbraco_version, Tier = infra_tier\n| order by Version asc, Tier asc",
+        "size": 0,
+        "title": "Time-to-first-edit (avg total ms) — one bar per tier, grouped by version (lower = better)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Version",
+          "group": "Tier",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "client-ttfe-bar",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
         "query": "ClientMeasurement_CL | where isnotempty(metric) | summarize Runs=count(), median_ms=round(avg(median_ms),1), p75_ms=round(avg(p75_ms),1), p95_ms=round(avg(p95_ms),1), stddev_ms=round(avg(stddev_ms),1) by metric, infra_tier, umbraco_version | extend _ord = case(metric == \"cold_dashboard_load\",1, metric == \"cached_dashboard_load\",2, metric == \"cold_homenode_load\",3, metric == \"cached_homenode_load\",4, metric == \"time_to_first_edit\",5, 9) | order by infra_tier asc, _ord asc | project-away _ord",
         "size": 0,
         "title": "Summary by metric × tier × version (avg)",
