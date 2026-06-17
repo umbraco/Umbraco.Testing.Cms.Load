@@ -10,7 +10,7 @@ test.setTimeout(10 * 60_000);
 // COLD = first open of the node in a fresh context; CACHED = re-open of the SAME
 // node in the same warm context, after navigating to the section root so the
 // editor view is genuinely re-mounted (not just left in place).
-test('home node cold + cached load', async ({ browser }) => {
+test('homepage node cold + cached load', async ({ browser }) => {
   await runColdCached(browser, {
     coldMetric: 'cold_homenode_load',
     cachedMetric: 'cached_homenode_load',

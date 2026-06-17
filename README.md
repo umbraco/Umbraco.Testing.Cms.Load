@@ -485,8 +485,8 @@ Five metrics are measured, each repeated N times (default 10; override with `CLI
 
 | Metric | What it captures |
 |---|---|
-| `cold_dashboard_load` | Umbraco News dashboard (Content section) until `umb-news-container` is visible — browser-uncached, against an already-warm server |
-| `cached_dashboard_load` | Same dashboard, repeat visit in the same browser context |
+| `cold_dashboard_load` | Umbraco Welcome dashboard (Content section) until `umb-news-container` is visible — browser-uncached, against an already-warm server |
+| `cached_dashboard_load` | Same Welcome dashboard, repeat visit in the same browser context |
 | `cold_homenode_load` | Opening the Homepage node until the TipTap editor (`umb-input-tiptap`) is painted — browser-uncached |
 | `cached_homenode_load` | Same node, repeat visit in the same browser context |
 | `time_to_first_edit` | URL → real form login → open Homepage → cursor in TipTap → type a character until rendered; includes a segment breakdown: `seg_login_ms` / `seg_navigate_ms` / `seg_editor_ready_ms` / `seg_keystroke_ms` |

@@ -13,7 +13,7 @@ const SENTINEL = '§';
 
 test.setTimeout(15 * 60_000);
 
-// End-to-end "time to first edit": login -> open the Home node -> type one char
+// End-to-end "time to first edit": login -> open the Homepage node -> type one char
 // into TipTap -> stop when it renders. Emits ONE metric (time_to_first_edit) of
 // end-to-end totals; the four segment medians ride along in `extra`.
 test('time to first edit (end-to-end + segments)', async ({ browser }) => {
@@ -34,7 +34,7 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
     // Segment 1: login.
     seg.login.push(await loginByForm(page));
 
-    // Segment 2: navigate to Content + open the Home node.
+    // Segment 2: navigate to Content + open the Homepage node.
     const tNav = performance.now();
     await page.goto(CONTENT_URL);
     await waitForHomepageNode(page, HOMEPAGE_NAME);
