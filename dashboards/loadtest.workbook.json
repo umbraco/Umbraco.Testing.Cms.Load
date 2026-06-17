@@ -2126,6 +2126,31 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
+        "query": "// Cache savings % per page, one bar per version, for the selected tier.\n// Higher = caching helps more (bigger cold->cached drop). Tier picked above\n// (page x tier x version is 3-D, a bar chart is 2-D).\nClientMeasurement_CL\n| where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\")\n| where infra_tier == '{ClientTier}'\n| extend Page = iff(metric has \"dashboard\", \"Welcome dashboard\", \"Homepage node\")\n| summarize cold_ms = avgif(median_ms, metric startswith \"cold\"), cached_ms = avgif(median_ms, metric startswith \"cached\") by Page, Version = umbraco_version\n| extend ['cache_savings_pct'] = round(100.0 * (cold_ms - cached_ms) / cold_ms, 1)\n| project Page, Version, ['cache_savings_pct']\n| order by Page asc, Version asc",
+        "size": 0,
+        "title": "Cache savings % per page — one bar per version · tier = {ClientTier} (higher = better)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Page",
+          "group": "Version",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "client-cache-savings-bar",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
         "query": "ClientMeasurement_CL | where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\") | summarize ttfb_ms=round(avg(ttfb_ms),1), dcl_ms=round(avg(dcl_ms),1), load_ms=round(avg(load_ms),1), lcp_ms=round(avg(lcp_ms),1) by metric, infra_tier | extend _ord = case(metric == \"cold_dashboard_load\",1, metric == \"cached_dashboard_load\",2, metric == \"cold_homenode_load\",3, metric == \"cached_homenode_load\",4, 9) | order by infra_tier asc, _ord asc | project-away _ord",
         "size": 0,
         "title": "Browser timing marks (avg ms; lcp is usually null in the headless backoffice SPA)",
