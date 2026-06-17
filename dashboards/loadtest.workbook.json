@@ -2082,16 +2082,16 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// p95 by version, one bar per metric, for the selected tier. Shows how each\n// page/action's p95 moves across versions. Lower = better. Tier is picked\n// above because metric x tier x version is 3-D and a bar chart is 2-D.\nClientMeasurement_CL\n| where infra_tier == '{ClientTier}'\n| summarize ['p95_ms'] = round(avg(p95_ms), 0) by Version = umbraco_version, Metric = metric\n| order by Version asc, Metric asc",
+        "query": "// p95 per metric, one bar per version, for the selected tier. Shows how each\n// page/action's p95 moves across versions. Lower = better. Tier is picked\n// above because metric x tier x version is 3-D and a bar chart is 2-D.\n// _ord keeps the metrics in cold/cached-per-page then time-to-first-edit order.\nClientMeasurement_CL\n| where infra_tier == '{ClientTier}'\n| summarize ['p95_ms'] = round(avg(p95_ms), 0) by Version = umbraco_version, Metric = metric\n| extend _ord = case(Metric == \"cold_dashboard_load\",1, Metric == \"cached_dashboard_load\",2, Metric == \"cold_homenode_load\",3, Metric == \"cached_homenode_load\",4, Metric == \"time_to_first_edit\",5, 9)\n| order by _ord asc, Version asc\n| project-away _ord",
         "size": 0,
-        "title": "p95 by version — one bar per metric · tier = {ClientTier} (lower = better)",
+        "title": "p95 per metric — one bar per version · tier = {ClientTier} (lower = better)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": [ "{Workspace}" ],
         "visualization": "barchart",
         "chartSettings": {
-          "xAxis": "Version",
-          "group": "Metric",
+          "xAxis": "Metric",
+          "group": "Version",
           "createOtherGroup": 0,
           "showLegend": true
         }
