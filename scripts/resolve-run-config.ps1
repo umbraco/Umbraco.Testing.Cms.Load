@@ -23,7 +23,7 @@ param (
     [Parameter(Mandatory = $true)] [string]$PoolDtuOverride,
     [Parameter(Mandatory = $true)] [string]$AppSkuOverride,
     [Parameter(Mandatory = $true)] [ValidateSet('Auto', 'Small', 'Medium', 'Large', 'Massive')] [string]$SeederPresetOverride,
-    [Parameter(Mandatory = $true)] [ValidateSet('frontend', 'backoffice')] [string]$Workload,
+    [Parameter(Mandatory = $true)] [ValidateSet('frontend', 'backoffice', 'client')] [string]$Workload,
     [Parameter(Mandatory = $true)] [string]$WorkspaceRoot
 )
 
@@ -97,6 +97,13 @@ if ($Workload -eq 'frontend') {
     $jmxFiles = @(Get-ChildItem -Path $jmeterDir -Filter '*.jmx' -File -ErrorAction SilentlyContinue)
     if ($jmxFiles.Count -eq 0) {
         Write-PipelineError "Workload=backoffice selected but $jmeterDir contains no .jmx files."
+    }
+} elseif ($Workload -eq 'client') {
+    # Client workload = the scenario's Playwright project. Fail at queue-time if
+    # absent, mirroring the frontend/backoffice checks above.
+    $clientConfig = Join-Path $scenarioRoot 'client/playwright.config.ts'
+    if (-not (Test-Path -LiteralPath $clientConfig)) {
+        Write-PipelineError "Workload=client selected but scenario '$Scenario' has no client/ project (looked for $clientConfig). Add a Playwright project under loadtests/scenarios/$Scenario/client/ or pick a different workload."
     }
 }
 
