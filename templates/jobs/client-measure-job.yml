@@ -71,7 +71,11 @@ steps:
       inputs:
         targetType: 'inline'
         script: |
-          $base = "https://$(hostName)"
+          # Probe /umbraco (the backoffice login page reliably returns 200), not
+          # the site root — root routing is hostname-dependent and may not 200,
+          # which would waste the full deadline. This also warms the exact surface
+          # the measurements hit (backoffice), keeping the run client-cold/server-warm.
+          $base = "https://$(hostName)/umbraco"
           $deadline = (Get-Date).AddMinutes(5)
           do {
             try { if ((Invoke-WebRequest -Uri $base -UseBasicParsing -TimeoutSec 15).StatusCode -eq 200) { Write-Host "warm"; break } } catch { }
