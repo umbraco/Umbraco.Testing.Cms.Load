@@ -860,7 +860,14 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def item = items[new Random().nextInt(items.size())]
+        // Exclude the trailing 4 fixed Contact/Member nodes (present on every seed);
+        // they must not be edited/published. Guarded so a thin seed can't crash.
+        def __sel = items.size() &gt; 4 ? items[0..&lt;(items.size()-4)] : items
+        // Prefer already-published nodes so the gated publish block runs against a
+        // valid parent instead of silently skipping; fall back to any node.
+        def __pub = __sel.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
+        def __pool = __pub ? __pub : __sel
+        def item = __pool[new Random().nextInt(__pool.size())]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -891,7 +898,7 @@ try {
         </TransactionController>
         <hashTree>
           <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If root_content_id found and published" enabled="true">
-            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot;)}</stringProp>
+            <stringProp name="IfController.condition">${__groovy(vars.get(&quot;root_content_id&quot;) != &quot;ROOT_CONTENT_ID_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_root&quot;) == &quot;true&quot;)}</stringProp>
             <boolProp name="IfController.evaluateAll">false</boolProp>
             <boolProp name="IfController.useExpression">true</boolProp>
           </IfController>
@@ -961,7 +968,11 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def item = items[new Random().nextInt(items.size())]
+        // Prefer already-published nodes so the gated publish block runs against a
+        // valid parent instead of silently skipping; fall back to any node.
+        def __pub = items.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
+        def __pool = __pub ? __pub : items
+        def item = __pool[new Random().nextInt(__pool.size())]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -984,7 +995,7 @@ try {
               <hashTree/>
             </hashTree>
             <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l1 found and published" enabled="true">
-              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_ID_L1_NOT_FOUND&quot;)}</stringProp>
+              <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l1&quot;) != &quot;NODE_ID_L1_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l1&quot;) == &quot;true&quot;)}</stringProp>
               <boolProp name="IfController.evaluateAll">false</boolProp>
               <boolProp name="IfController.useExpression">true</boolProp>
             </IfController>
@@ -1054,7 +1065,11 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def item = items[new Random().nextInt(items.size())]
+        // Prefer already-published nodes so the gated publish block runs against a
+        // valid parent instead of silently skipping; fall back to any node.
+        def __pub = items.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
+        def __pool = __pub ? __pub : items
+        def item = __pool[new Random().nextInt(__pool.size())]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -1078,7 +1093,7 @@ try {
                 <hashTree/>
               </hashTree>
               <IfController guiclass="IfControllerPanel" testclass="IfController" testname="If node_id_l2 found and published" enabled="true">
-                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_ID_L2_NOT_FOUND&quot;)}</stringProp>
+                <stringProp name="IfController.condition">${__groovy(vars.get(&quot;node_id_l2&quot;) != &quot;NODE_ID_L2_NOT_FOUND&quot; &amp;&amp; vars.get(&quot;published_l2&quot;) == &quot;true&quot;)}</stringProp>
                 <boolProp name="IfController.evaluateAll">false</boolProp>
                 <boolProp name="IfController.useExpression">true</boolProp>
               </IfController>
