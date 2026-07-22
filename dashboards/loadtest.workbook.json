@@ -4,7 +4,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# Umbraco Load Test Dashboard\nData source: `LoadTestSummary_CL` in the workspace below, populated by `scripts/publish-load-test-results.ps1` on every pipeline run. Open the **Glossary** tab for the full vocabulary."
+        "json": "# Umbraco Load Test Dashboard\nData sources in the workspace below, populated on every pipeline run:\n- `LoadTestSummary_CL` (+ per-minute `LoadTestSeries_CL`) — server-side throughput & capacity, from `scripts/publish-load-test-results.ps1`.\n- `ClientMeasurement_CL` — browser-perceived backoffice latency (see the **Client measurements** tab), from `scripts/publish-client-results.ps1`.\n\nOpen the **Glossary** tab for the full vocabulary."
       },
       "name": "title"
     },
@@ -35,14 +35,26 @@
             "label": "Time range",
             "type": 4,
             "isRequired": true,
-            "value": { "durationMs": 604800000 },
+            "value": {
+              "durationMs": 604800000
+            },
             "typeSettings": {
               "selectableValues": [
-                { "durationMs": 86400000 },
-                { "durationMs": 604800000 },
-                { "durationMs": 2592000000 },
-                { "durationMs": 7776000000 },
-                { "durationMs": 31536000000 }
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                },
+                {
+                  "durationMs": 7776000000
+                },
+                {
+                  "durationMs": 31536000000
+                }
               ]
             }
           },
@@ -130,7 +142,6 @@
       },
       "name": "global-filters-scope-note"
     },
-
     {
       "type": 3,
       "content": {
@@ -139,21 +150,40 @@
         "size": 4,
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Data source", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
-              { "operator": "contains", "thresholdValue": "✓", "representation": "success" },
-              { "operator": "contains", "thresholdValue": "⚠", "representation": "warning" },
-              { "operator": "Default", "representation": "info" }
-            ] } }
+            {
+              "columnMatch": "Data source",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "contains",
+                    "thresholdValue": "✓",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "contains",
+                    "thresholdValue": "⚠",
+                    "representation": "warning"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "info"
+                  }
+                ]
+              }
+            }
           ]
         }
       },
       "name": "workspace-health"
     },
-
     {
       "type": 9,
       "content": {
@@ -167,15 +197,17 @@
             "type": 10,
             "isRequired": true,
             "value": "Trends",
-            "typeSettings": { "additionalResourceOptions": [], "showDefault": false },
-            "jsonData": "[\n    { \"value\": \"Trends\",   \"label\": \"Trends\",   \"selected\": true },\n    { \"value\": \"Tiers\",    \"label\": \"Tiers\" },\n    { \"value\": \"Versions\", \"label\": \"Versions\" },\n    { \"value\": \"Compare\",  \"label\": \"Compare\" },\n    { \"value\": \"Runs\",     \"label\": \"Runs\" },\n    { \"value\": \"Glossary\", \"label\": \"Glossary\" }\n]"
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
+            "jsonData": "[\n    { \"value\": \"Trends\",             \"label\": \"Trends\",             \"selected\": true },\n    { \"value\": \"Tiers\",              \"label\": \"Tiers\" },\n    { \"value\": \"Versions\",           \"label\": \"Versions\" },\n    { \"value\": \"Compare\",            \"label\": \"Compare\" },\n    { \"value\": \"Runs\",               \"label\": \"Runs\" },\n    { \"value\": \"ClientMeasurements\", \"label\": \"Client measurements\" },\n    { \"value\": \"Glossary\",           \"label\": \"Glossary\" }\n]"
           }
         ],
         "style": "pills"
       },
       "name": "tab-bar"
     },
-
     {
       "type": 3,
       "content": {
@@ -185,42 +217,174 @@
         "title": "Latest 5 runs (chronological) — quick status check on the most recent activity across the global filter. Complements the issues panel above (which is severity-sorted and only shows what's flagged).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Server CPU avg %", "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server CPU peak %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database load avg %",  "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database load peak %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Error %",          "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
-            { "columnMatch": "Capacity status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
-              { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
-              { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
-              { "operator": "Default", "representation": "success" }
-            ] } },
-            { "columnMatch": "Regression", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
-              { "operator": "==", "thresholdValue": "regression detected", "representation": "critical" },
-              { "operator": "==", "thresholdValue": "not enough history",  "representation": "3" },
-              { "operator": "==", "thresholdValue": "checking",            "representation": "info" },
-              { "operator": "==", "thresholdValue": "not run",             "representation": "unknown" },
-              { "operator": "==", "thresholdValue": "no regression",       "representation": "success" },
-              { "operator": "Default", "representation": "unknown" }
-            ] } }
+            {
+              "columnMatch": "Server CPU avg %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellow",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Server CPU peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Database load avg %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellow",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Database load peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Error %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 5
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 2
+                }
+              }
+            },
+            {
+              "columnMatch": "Capacity status",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Saturated",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Stressed",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "success"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "Regression",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "regression detected",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "not enough history",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "checking",
+                    "representation": "info"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "not run",
+                    "representation": "unknown"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "no regression",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "unknown"
+                  }
+                ]
+              }
+            }
           ]
         }
       },
       "name": "latest-run-card",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Trends"
+      }
     },
-
     {
       "type": 1,
       "content": {
         "json": "## Trends\nOne line per `(sampler × version × tier)` across recent runs. The latest-run card above is the at-a-glance capacity check; the chart below is the longitudinal view, with a foldout matrix showing median ± spread per cell. **Cold-start runs (queued with `skipWarmup: true`) are excluded by default — see the Runs tab to view them, or the Compare tab to pick one explicitly.**"
       },
       "name": "trends-header",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Trends"
+      }
     },
     {
       "type": 9,
@@ -262,7 +426,11 @@
         "style": "pills"
       },
       "name": "trends-params",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Trends"
+      }
     },
     {
       "type": 3,
@@ -273,7 +441,9 @@
         "title": "{Metric} per run — one line per (sampler · version · tier). Ignore the (Sum) totals next to each series in the legend; that's the chart engine summing values across runs, which isn't a meaningful number — read each series line directly.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "linechart",
         "chartSettings": {
           "xAxis": "Run",
@@ -282,7 +452,11 @@
       },
       "customWidth": "50",
       "name": "trends-chart",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Trends"
+      }
     },
     {
       "type": 3,
@@ -293,17 +467,33 @@
         "title": "Resource pressure per run — Server CPU, Server memory, Database load, Database CPU peaks. (Ignore the (Sum) totals in the legend — chart artifact, not meaningful.)",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "linechart",
         "chartSettings": {
           "xAxis": "Run",
           "showLegend": true,
-          "ySettings": { "min": 0, "max": 100, "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
+          "ySettings": {
+            "min": 0,
+            "max": 100,
+            "numberFormatSettings": {
+              "unit": 0,
+              "options": {
+                "style": "decimal",
+                "maximumFractionDigits": 0
+              }
+            }
+          }
         }
       },
       "customWidth": "50",
       "name": "trends-resources",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Trends"
+      }
     },
     {
       "type": 3,
@@ -314,32 +504,69 @@
         "title": "Matrix view — median {Metric} ± spread across runs, plus Stability per cell. Noisy cells mean run-to-run spread is wide enough that a small regression threshold won't be meaningful.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Stability", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
-              { "operator": "==", "thresholdValue": "noisy",    "representation": "critical" },
-              { "operator": "==", "thresholdValue": "moderate", "representation": "3" },
-              { "operator": "==", "thresholdValue": "stable",   "representation": "success" },
-              { "operator": "==", "thresholdValue": "few runs", "representation": "unknown" },
-              { "operator": "Default", "representation": "info" }
-            ] } }
+            {
+              "columnMatch": "Stability",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "noisy",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "moderate",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "stable",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "few runs",
+                    "representation": "unknown"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "info"
+                  }
+                ]
+              }
+            }
           ]
         }
       },
       "name": "trends-matrix",
-      "styleSettings": { "showBorder": true },
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Trends" }
+      "styleSettings": {
+        "showBorder": true
+      },
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Trends"
+      }
     },
-
     {
       "type": 1,
       "content": {
         "json": "## Tiers\nCompare tiers for one `(scenario, version)` combination. Answers \"what do I get for upgrading the tier?\" Pick the scenario and version below; the tables and chart aggregate across every matching run — medians for latency/throughput, plus a worst-case column on each resource peak so a single saturated run still flags Saturated. The **Runs** column shows how many runs back each median; cells with 1 run are single-run snapshots, 3+ runs is statistically meaningful. When the global filter at the top is narrowed, the pickers default to the matching scenario/version automatically. **Cold-start runs are excluded; see the Runs tab for those.**"
       },
       "name": "tiers-header",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Tiers"
+      }
     },
     {
       "type": 9,
@@ -386,7 +613,11 @@
         "style": "pills"
       },
       "name": "tiers-params",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Tiers"
+      }
     },
     {
       "type": 3,
@@ -397,33 +628,245 @@
         "title": "Capacity verdict per tier — verdict columns on the left, supporting resource peaks on the right. Peaks are worst-case across runs (a single saturated run flags the tier).",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Capacity status", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
-              { "operator": "==", "thresholdValue": "Saturated", "representation": "critical" },
-              { "operator": "==", "thresholdValue": "Stressed",  "representation": "3" },
-              { "operator": "Default", "representation": "success" }
-            ] } },
-            { "columnMatch": "Headroom",                          "formatter": 8, "formatOptions": { "palette": "redToGreen",      "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } },
-            { "columnMatch": "Runs",                              "formatter": 8, "formatOptions": { "palette": "blue",            "min": 1, "max": 10 } },
-            { "columnMatch": "Requests/sec",                      "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 500 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server CPU avg %",                  "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server CPU peak %",                 "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Server memory peak %",              "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database load avg %",               "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database load peak %",              "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database CPU peak %",               "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database physical reads peak %",    "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Database log-write peak %",         "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 100 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "Error %",                           "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 },   "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
-            { "columnMatch": "Seeder duration (s)",               "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 3600 },"numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
+            {
+              "columnMatch": "Capacity status",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Saturated",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "Stressed",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "success"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "Headroom",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "redToGreen",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 0
+                }
+              }
+            },
+            {
+              "columnMatch": "Runs",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue",
+                "min": 1,
+                "max": 10
+              }
+            },
+            {
+              "columnMatch": "Requests/sec",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue",
+                "min": 0,
+                "max": 500
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Server CPU avg %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellow",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Server CPU peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Server memory peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Database load avg %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellow",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Database load peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Database CPU peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Database physical reads peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Database log-write peak %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 100
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "Error %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 5
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 2
+                }
+              }
+            },
+            {
+              "columnMatch": "Seeder duration (s)",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue",
+                "min": 0,
+                "max": 3600
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 0
+                }
+              }
+            }
           ]
         }
       },
       "name": "tiers-saturation",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Tiers"
+      }
     },
     {
       "type": 3,
@@ -434,7 +877,9 @@
         "title": "Median {TiersMetric} per sampler — one bar per tier. Ignore the (Sum) totals in the legend; that's the chart engine summing medians across samplers, which isn't a meaningful number — compare individual bars.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "Sampler",
@@ -444,7 +889,11 @@
         }
       },
       "name": "tiers-bar",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Tiers"
+      }
     },
     {
       "type": 3,
@@ -455,33 +904,135 @@
         "title": "Per-sampler detail per tier — medians across all matching runs.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Runs",            "formatter": 8, "formatOptions": { "palette": "blue",            "min": 1, "max": 10 } },
-            { "columnMatch": "Requests",        "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 10000 } },
-            { "columnMatch": "Requests/sec",    "formatter": 8, "formatOptions": { "palette": "blue",            "min": 0, "max": 200 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "p95 (ms)",        "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 2000 } },
-            { "columnMatch": "p95 spread (ms)", "formatter": 8, "formatOptions": { "palette": "yellow",          "min": 0, "max": 500 } },
-            { "columnMatch": "p99 (ms)",        "formatter": 8, "formatOptions": { "palette": "orange",          "min": 0, "max": 2000 } },
-            { "columnMatch": "max (ms)",        "formatter": 8, "formatOptions": { "palette": "redBright",       "min": 0, "max": 10000 } },
-            { "columnMatch": "median Error %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 },  "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } },
-            { "columnMatch": "worst Error %",   "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 25 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 2 } } }
+            {
+              "columnMatch": "Runs",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue",
+                "min": 1,
+                "max": 10
+              }
+            },
+            {
+              "columnMatch": "Requests",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue",
+                "min": 0,
+                "max": 10000
+              }
+            },
+            {
+              "columnMatch": "Requests/sec",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue",
+                "min": 0,
+                "max": 200
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "p95 (ms)",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellow",
+                "min": 0,
+                "max": 2000
+              }
+            },
+            {
+              "columnMatch": "p95 spread (ms)",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellow",
+                "min": 0,
+                "max": 500
+              }
+            },
+            {
+              "columnMatch": "p99 (ms)",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "orange",
+                "min": 0,
+                "max": 2000
+              }
+            },
+            {
+              "columnMatch": "max (ms)",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "redBright",
+                "min": 0,
+                "max": 10000
+              }
+            },
+            {
+              "columnMatch": "median Error %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 5
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 2
+                }
+              }
+            },
+            {
+              "columnMatch": "worst Error %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 25
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 2
+                }
+              }
+            }
           ]
         }
       },
       "name": "tiers-table",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Tiers" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Tiers"
+      }
     },
-
     {
       "type": 1,
       "content": {
         "json": "## Versions\nCompare Umbraco versions for one `(scenario, tier)` combination. Answers \"how does v17.3.0 compare to v17.0.0 / v18.0.0 on the same hardware running the same workload?\" Aggregates across every matching run in the table — the **Runs** column shows how many runs back each median: cells with 1 run are single-run snapshots; 3+ runs is statistically meaningful. When the global filter is narrowed, the pickers default to the matching scenario/tier automatically. **Cold-start runs are excluded; see the Runs tab for those.**"
       },
       "name": "versions-header",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Versions"
+      }
     },
     {
       "type": 9,
@@ -550,7 +1101,11 @@
         "style": "pills"
       },
       "name": "versions-params",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Versions"
+      }
     },
     {
       "type": 3,
@@ -561,18 +1116,32 @@
         "title": "Median {VersionsMetric} per sampler — one bar per version. Ignore the (Sum) totals in the legend; that's the chart engine summing medians across samplers, which isn't a meaningful number — compare individual bars.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "Sampler",
           "group": "Version",
           "createOtherGroup": 0,
           "showLegend": true,
-          "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
+          "ySettings": {
+            "numberFormatSettings": {
+              "unit": 0,
+              "options": {
+                "style": "decimal",
+                "useGrouping": false
+              }
+            }
+          }
         }
       },
       "name": "versions-bar",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Versions"
+      }
     },
     {
       "type": 3,
@@ -583,27 +1152,85 @@
         "title": "Overall — each version vs baseline {VersionsBaseline}",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Avg p95 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{VersionsThreshold:value}", "representation": "green" },
-              { "operator": ">", "thresholdValue": "{VersionsThreshold:value}",  "representation": "redBright" },
-              { "operator": "Default", "representation": "transparent" }
-            ] } },
-            { "columnMatch": "Avg p99 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{VersionsThreshold:value}", "representation": "green" },
-              { "operator": ">", "thresholdValue": "{VersionsThreshold:value}",  "representation": "redBright" },
-              { "operator": "Default", "representation": "transparent" }
-            ] } },
-            { "columnMatch": "Samplers faster", "formatter": 8, "formatOptions": { "palette": "green",     "min": 0, "max": 10 } },
-            { "columnMatch": "Samplers slower", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
+            {
+              "columnMatch": "Avg p95 change %",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "<",
+                    "thresholdValue": "-{VersionsThreshold:value}",
+                    "representation": "green"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "{VersionsThreshold:value}",
+                    "representation": "redBright"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "transparent"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "Avg p99 change %",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "<",
+                    "thresholdValue": "-{VersionsThreshold:value}",
+                    "representation": "green"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "{VersionsThreshold:value}",
+                    "representation": "redBright"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "transparent"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "Samplers faster",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "green",
+                "min": 0,
+                "max": 10
+              }
+            },
+            {
+              "columnMatch": "Samplers slower",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "redBright",
+                "min": 0,
+                "max": 10
+              }
+            }
           ]
         }
       },
       "name": "versions-overall",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Versions"
+      }
     },
     {
       "type": 3,
@@ -614,27 +1241,60 @@
         "title": "Per-sampler stats per version",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Runs", "formatter": 8, "formatOptions": { "palette": "blue", "min": 1, "max": 10 } },
-            { "columnMatch": "median Error %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 } },
-            { "columnMatch": "worst Error %",  "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 25 } }
+            {
+              "columnMatch": "Runs",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue",
+                "min": 1,
+                "max": 10
+              }
+            },
+            {
+              "columnMatch": "median Error %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 5
+              }
+            },
+            {
+              "columnMatch": "worst Error %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 25
+              }
+            }
           ]
         }
       },
       "name": "versions-table",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Versions" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Versions"
+      }
     },
-
     {
       "type": 1,
       "content": {
         "json": "## Compare\nPick two runs to see per-sampler + server-side changes. The dropdowns honour the global **Time range** but ignore the other global filters — each entry is one `(run × scenario × version × tier)`, so a multi-case pipeline run shows up as several picks."
       },
       "name": "compare-header",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Compare"
+      }
     },
     {
       "type": 9,
@@ -648,9 +1308,14 @@
             "label": "Baseline run",
             "type": 2,
             "isRequired": true,
-            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": true
+            },
             "query": "// One row per (run_id × scenario × version × tier) so a pipeline run that\n// swept multiple cases gets one dropdown entry per case — picking the wrong\n// one would otherwise mix cases via scenario_name joins. value is a composite\n// 'run_id|scenario|version|tier' the comparison queries split on.\n// Baseline default = second-most-recent (the comparison reference); the\n// most-recent run is hidden so showDefault picks the previous one, giving\n// 'previous vs newest' as the default comparison instead of 'newest vs\n// newest' which would render an identity-delta table.\n// parse_status filter excludes failed runs (no_metrics, no_results_dir) - they\n// have a metadata-only row but no sampler data, so picking one as baseline or\n// candidate yields an empty comparison.\nlet pool = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where parse_status == 'ok'\n    | where isnotempty(scenario) and isnotempty(umbraco_version) and isnotempty(infra_tier)\n    | summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier;\nlet newest_ts = toscalar(pool | summarize max(TimeGenerated));\npool\n| where TimeGenerated < newest_ts\n| project value = strcat(run_id, '|', scenario, '|', umbraco_version, '|', infra_tier),\n          label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier, ' (#', run_id, ')'),\n          TimeGenerated\n| order by TimeGenerated desc\n| project value, label",
-            "crossComponentResources": ["{Workspace}"],
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
@@ -661,9 +1326,14 @@
             "label": "Candidate run",
             "type": 2,
             "isRequired": true,
-            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": true
+            },
             "query": "// Candidate is the run under test. Default = most recent, so 'previous vs\n// newest' is the out-of-the-box comparison (Baseline excludes the most\n// recent for exactly this reason). parse_status filter mirrors the Baseline\n// dropdown - failed runs aren't comparable.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where parse_status == 'ok'\n| where isnotempty(scenario) and isnotempty(umbraco_version) and isnotempty(infra_tier)\n| summarize arg_max(TimeGenerated, *) by run_id, scenario, umbraco_version, infra_tier\n| project value = strcat(run_id, '|', scenario, '|', umbraco_version, '|', infra_tier),\n          label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier, ' (#', run_id, ')'),\n          TimeGenerated\n| order by TimeGenerated desc\n| project value, label",
-            "crossComponentResources": ["{Workspace}"],
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
@@ -690,7 +1360,11 @@
         "style": "pills"
       },
       "name": "compare-params",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Compare"
+      }
     },
     {
       "type": 3,
@@ -701,16 +1375,29 @@
         "title": "Comparing",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Diff", "formatter": 7, "formatOptions": { "linkTarget": "Url", "linkIsContextBlade": false } }
+            {
+              "columnMatch": "Diff",
+              "formatter": 7,
+              "formatOptions": {
+                "linkTarget": "Url",
+                "linkIsContextBlade": false
+              }
+            }
           ]
         }
       },
       "name": "compare-summary",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Compare"
+      }
     },
     {
       "type": 3,
@@ -721,30 +1408,90 @@
         "title": "Per-sampler change",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "avg change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
-              { "operator": "Default", "representation": "transparent" }
-            ] } },
-            { "columnMatch": "p95 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
-              { "operator": "Default", "representation": "transparent" }
-            ] } },
-            { "columnMatch": "p99 change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
-              { "operator": "Default", "representation": "transparent" }
-            ] } }
+            {
+              "columnMatch": "avg change %",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "<",
+                    "thresholdValue": "-{Threshold:value}",
+                    "representation": "green"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "{Threshold:value}",
+                    "representation": "redBright"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "transparent"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "p95 change %",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "<",
+                    "thresholdValue": "-{Threshold:value}",
+                    "representation": "green"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "{Threshold:value}",
+                    "representation": "redBright"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "transparent"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "p99 change %",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "<",
+                    "thresholdValue": "-{Threshold:value}",
+                    "representation": "green"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "{Threshold:value}",
+                    "representation": "redBright"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "transparent"
+                  }
+                ]
+              }
+            }
           ]
         }
       },
       "name": "compare-table",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Compare"
+      }
     },
     {
       "type": 3,
@@ -755,18 +1502,32 @@
         "title": "p95 per sampler — baseline vs candidate. Ignore the (Sum) totals in the legend; that's the chart engine summing p95 values across samplers, which isn't a meaningful number — compare individual bars.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "barchart",
         "chartSettings": {
           "xAxis": "Sampler",
           "group": "Series",
           "createOtherGroup": 0,
           "showLegend": true,
-          "ySettings": { "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "useGrouping": false } } }
+          "ySettings": {
+            "numberFormatSettings": {
+              "unit": 0,
+              "options": {
+                "style": "decimal",
+                "useGrouping": false
+              }
+            }
+          }
         }
       },
       "name": "compare-bar",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Compare"
+      }
     },
     {
       "type": 3,
@@ -777,29 +1538,56 @@
         "title": "Server-side change",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "change %", "formatter": 18, "formatOptions": { "thresholdsOptions": "colors", "thresholdsGrid": [
-              { "operator": "<", "thresholdValue": "-{Threshold:value}", "representation": "green" },
-              { "operator": ">", "thresholdValue": "{Threshold:value}",  "representation": "redBright" },
-              { "operator": "Default", "representation": "transparent" }
-            ] } }
+            {
+              "columnMatch": "change %",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "colors",
+                "thresholdsGrid": [
+                  {
+                    "operator": "<",
+                    "thresholdValue": "-{Threshold:value}",
+                    "representation": "green"
+                  },
+                  {
+                    "operator": ">",
+                    "thresholdValue": "{Threshold:value}",
+                    "representation": "redBright"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "transparent"
+                  }
+                ]
+              }
+            }
           ]
         }
       },
       "name": "compare-server",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Compare" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Compare"
+      }
     },
-
     {
       "type": 1,
       "content": {
         "json": "## Runs\nAll runs matching the global filter. To inspect a specific run's per-sampler detail, pick it from the **Drill into run #** dropdown below — the detail panel only renders when one is selected. The two **URL prefix** fields are optional: set them once to turn Run # → AzDO build links and Commit short-SHAs → repo commit links in the table."
       },
       "name": "runs-header",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Runs"
+      }
     },
     {
       "type": 9,
@@ -814,9 +1602,14 @@
             "type": 2,
             "isRequired": false,
             "value": "",
-            "typeSettings": { "additionalResourceOptions": [], "showDefault": false },
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
             "query": "// Dropdown sourced from the same runs the table above shows, in the same\n// time range and global filter scope. value = run_id (string) so the drill\n// queries below can compare directly; label adds context so the right run\n// is easy to spot. Includes failed runs so the per-sampler detail panel\n// can still surface 'no rows' clearly for them.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where '{Scenario}' == '*' or scenario == '{Scenario}'\n| where '{Version}' == '*' or umbraco_version == '{Version}'\n| where '{Tier}' == '*' or infra_tier == '{Tier}'\n| where parse_status in ('ok', 'no_metrics', 'no_results_dir')\n| summarize arg_max(TimeGenerated, scenario, umbraco_version, infra_tier) by run_id\n| project value = tostring(run_id),\n          label = strcat(format_datetime(TimeGenerated, 'yyyy-MM-dd HH:mm'), ' #', run_id, ' · ', scenario, ' / ', umbraco_version, ' / ', infra_tier),\n          TimeGenerated\n| order by TimeGenerated desc\n| project value, label",
-            "crossComponentResources": ["{Workspace}"],
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
@@ -844,7 +1637,11 @@
         "style": "pills"
       },
       "name": "runs-params",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Runs"
+      }
     },
     {
       "type": 3,
@@ -855,27 +1652,85 @@
         "title": "Runs",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "rowLimit": 500,
           "formatters": [
-            { "columnMatch": "Build URL", "formatter": 7, "formatOptions": { "linkTarget": "Url", "linkIsContextBlade": false } },
-            { "columnMatch": "Commit URL", "formatter": 7, "formatOptions": { "linkTarget": "Url", "linkIsContextBlade": false } },
-            { "columnMatch": "Regression", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
-              { "operator": "==", "thresholdValue": "regression detected", "representation": "critical" },
-              { "operator": "==", "thresholdValue": "not enough history",  "representation": "3" },
-              { "operator": "==", "thresholdValue": "checking",            "representation": "info" },
-              { "operator": "==", "thresholdValue": "not run",             "representation": "unknown" },
-              { "operator": "==", "thresholdValue": "no regression",       "representation": "success" },
-              { "operator": "Default", "representation": "unknown" }
-            ] } },
-            { "columnMatch": "Regressed #", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
+            {
+              "columnMatch": "Build URL",
+              "formatter": 7,
+              "formatOptions": {
+                "linkTarget": "Url",
+                "linkIsContextBlade": false
+              }
+            },
+            {
+              "columnMatch": "Commit URL",
+              "formatter": 7,
+              "formatOptions": {
+                "linkTarget": "Url",
+                "linkIsContextBlade": false
+              }
+            },
+            {
+              "columnMatch": "Regression",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "regression detected",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "not enough history",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "checking",
+                    "representation": "info"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "not run",
+                    "representation": "unknown"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "no regression",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "unknown"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "Regressed #",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "redBright",
+                "min": 0,
+                "max": 10
+              }
+            }
           ]
         }
       },
       "name": "runs-table",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Runs"
+      }
     },
     {
       "type": 3,
@@ -886,24 +1741,64 @@
         "title": "Regression breakdown for selected run",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Verdict", "formatter": 18, "formatOptions": { "thresholdsOptions": "icons", "thresholdsGrid": [
-              { "operator": "==", "thresholdValue": "regression detected", "representation": "critical" },
-              { "operator": "==", "thresholdValue": "not enough history",  "representation": "3" },
-              { "operator": "==", "thresholdValue": "no regression",       "representation": "success" },
-              { "operator": "Default", "representation": "unknown" }
-            ] } },
-            { "columnMatch": "# regressed", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10 } }
+            {
+              "columnMatch": "Verdict",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "regression detected",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "not enough history",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "no regression",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "unknown"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "# regressed",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "redBright",
+                "min": 0,
+                "max": 10
+              }
+            }
           ]
         }
       },
       "name": "runs-regression",
       "conditionalVisibilities": [
-        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
-        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Runs"
+        },
+        {
+          "parameterName": "DrillRun",
+          "comparison": "isNotEqualTo",
+          "value": ""
+        }
       ]
     },
     {
@@ -915,21 +1810,70 @@
         "title": "Per-sampler detail for selected run",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "table",
         "gridSettings": {
           "formatters": [
-            { "columnMatch": "Error %", "formatter": 8, "formatOptions": { "palette": "yellowOrangeRed", "min": 0, "max": 5 }, "numberFormat": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 1 } } },
-            { "columnMatch": "p95",   "formatter": 8, "formatOptions": { "palette": "yellow",    "min": 0, "max": 2000 } },
-            { "columnMatch": "p99",   "formatter": 8, "formatOptions": { "palette": "orange",    "min": 0, "max": 2000 } },
-            { "columnMatch": "Max",   "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 10000 } }
+            {
+              "columnMatch": "Error %",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellowOrangeRed",
+                "min": 0,
+                "max": 5
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "decimal",
+                  "maximumFractionDigits": 1
+                }
+              }
+            },
+            {
+              "columnMatch": "p95",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "yellow",
+                "min": 0,
+                "max": 2000
+              }
+            },
+            {
+              "columnMatch": "p99",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "orange",
+                "min": 0,
+                "max": 2000
+              }
+            },
+            {
+              "columnMatch": "Max",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "redBright",
+                "min": 0,
+                "max": 10000
+              }
+            }
           ]
         }
       },
       "name": "runs-detail",
       "conditionalVisibilities": [
-        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
-        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Runs"
+        },
+        {
+          "parameterName": "DrillRun",
+          "comparison": "isNotEqualTo",
+          "value": ""
+        }
       ]
     },
     {
@@ -941,18 +1885,38 @@
         "title": "Per-minute resource pressure (% metrics) — App / SQL CPU, DTU, log-write, physical reads.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "linechart",
         "chartSettings": {
           "xAxis": "TimeGenerated",
           "showLegend": true,
-          "ySettings": { "min": 0, "max": 100, "numberFormatSettings": { "unit": 0, "options": { "style": "decimal", "maximumFractionDigits": 0 } } }
+          "ySettings": {
+            "min": 0,
+            "max": 100,
+            "numberFormatSettings": {
+              "unit": 0,
+              "options": {
+                "style": "decimal",
+                "maximumFractionDigits": 0
+              }
+            }
+          }
         }
       },
       "name": "runs-series-percentages",
       "conditionalVisibilities": [
-        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
-        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Runs"
+        },
+        {
+          "parameterName": "DrillRun",
+          "comparison": "isNotEqualTo",
+          "value": ""
+        }
       ]
     },
     {
@@ -964,7 +1928,9 @@
         "title": "Per-minute HTTP error counts — 4xx (client errors) + 5xx (server errors). Auto-scaled Y-axis.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
-        "crossComponentResources": ["{Workspace}"],
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
         "visualization": "linechart",
         "chartSettings": {
           "xAxis": "TimeGenerated",
@@ -973,9 +1939,220 @@
       },
       "name": "runs-series-errors",
       "conditionalVisibilities": [
-        { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Runs" },
-        { "parameterName": "DrillRun", "comparison": "isNotEqualTo", "value": "" }
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Runs"
+        },
+        {
+          "parameterName": "DrillRun",
+          "comparison": "isNotEqualTo",
+          "value": ""
+        }
       ]
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Client measurements\nClient-side perceived latency in the Umbraco backoffice. All numbers are averages across runs.\n\n- **Summary table** — avg median / p75 / p95 / stddev (+ run count) by metric × tier × version\n- **Cold vs cached** — avg cold vs cached load times + cache savings %\n- **Browser timing** — avg TTFB / DCL / load / LCP marks per metric × tier\n- **Segment table** — avg time-to-first-edit breakdown: login / navigate / editor-ready / keystroke"
+      },
+      "name": "client-measurements-header",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL | where metric == \"time_to_first_edit\" | summarize Runs=dcount(run_id), total_ms=round(avg(median_ms),1), login_ms=round(avg(seg_login_ms),1), navigate_ms=round(avg(seg_navigate_ms),1), editor_ready_ms=round(avg(seg_editor_ready_ms),1), keystroke_ms=round(avg(seg_keystroke_ms),1) by infra_tier, umbraco_version | order by infra_tier asc",
+        "size": 0,
+        "title": "Time-to-first-edit segments (avg ms)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "table"
+      },
+      "name": "client-segment-breakdown",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Long-form (Version, Tier, total_ms) + `group: Tier` so bars render\n// side-by-side per version — compare tiers within each version. Avg\n// end-to-end time-to-first-edit across all matching runs.\nClientMeasurement_CL\n| where metric == \"time_to_first_edit\"\n| summarize ['total_ms'] = round(avg(median_ms), 0) by Version = umbraco_version, Tier = infra_tier\n| order by Version asc, Tier asc",
+        "size": 0,
+        "title": "Time-to-first-edit (avg total ms) — one bar per tier, grouped by version (lower = better)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Version",
+          "group": "Tier",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "client-ttfe-bar",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL | where isnotempty(metric) | summarize Runs=count(), median_ms=round(avg(median_ms),1), p75_ms=round(avg(p75_ms),1), p95_ms=round(avg(p95_ms),1), stddev_ms=round(avg(stddev_ms),1) by metric, infra_tier, umbraco_version | extend _ord = case(metric == \"cold_dashboard_load\",1, metric == \"cached_dashboard_load\",2, metric == \"cold_homenode_load\",3, metric == \"cached_homenode_load\",4, metric == \"time_to_first_edit\",5, 9) | order by infra_tier asc, _ord asc | project-away _ord",
+        "size": 0,
+        "title": "Summary by metric × tier × version (avg)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "table"
+      },
+      "name": "client-summary-table",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "param-client-tier",
+            "version": "KqlParameterItem/1.0",
+            "name": "ClientTier",
+            "label": "Tier (for the p95 chart below)",
+            "type": 2,
+            "isRequired": true,
+            "query": "ClientMeasurement_CL | distinct infra_tier | where isnotempty(infra_tier) | extend r = case(infra_tier=='Starter',1, infra_tier=='Standard',2, infra_tier=='Pro',3, infra_tier=='Enterprise',4, 99) | order by r asc | project infra_tier",
+            "crossComponentResources": [ "{Workspace}" ],
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills"
+      },
+      "name": "client-params",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// p95 per metric, one bar per version, for the selected tier. Shows how each\n// page/action's p95 moves across versions. Lower = better. Tier is picked\n// above because metric x tier x version is 3-D and a bar chart is 2-D.\n// _ord keeps the metrics in cold/cached-per-page then time-to-first-edit order.\nClientMeasurement_CL\n| where infra_tier == '{ClientTier}'\n| summarize ['p95_ms'] = round(avg(p95_ms), 0) by Version = umbraco_version, Metric = metric\n| extend _ord = case(Metric == \"cold_dashboard_load\",1, Metric == \"cached_dashboard_load\",2, Metric == \"cold_homenode_load\",3, Metric == \"cached_homenode_load\",4, Metric == \"time_to_first_edit\",5, 9)\n| order by _ord asc, Version asc\n| project-away _ord",
+        "size": 0,
+        "title": "p95 per metric — one bar per version · tier = {ClientTier} (lower = better)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Metric",
+          "group": "Version",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "client-summary-bar",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL | where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\") | extend page = iff(metric has \"dashboard\", \"Welcome dashboard\", \"Homepage node\") | summarize Runs=dcount(run_id), cold_ms=round(avgif(median_ms, metric startswith \"cold\"),1), cached_ms=round(avgif(median_ms, metric startswith \"cached\"),1) by page, infra_tier, umbraco_version | extend cache_savings_pct = round(100.0 * (cold_ms - cached_ms) / cold_ms, 1) | order by infra_tier asc, page asc",
+        "size": 0,
+        "title": "Cold vs cached load (avg median ms) + cache savings",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "table"
+      },
+      "name": "client-cold-vs-cached",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Cache savings % per page, one bar per version, for the selected tier.\n// Higher = caching helps more (bigger cold->cached drop). Tier picked above\n// (page x tier x version is 3-D, a bar chart is 2-D).\nClientMeasurement_CL\n| where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\")\n| where infra_tier == '{ClientTier}'\n| extend Page = iff(metric has \"dashboard\", \"Welcome dashboard\", \"Homepage node\")\n| summarize cold_ms = avgif(median_ms, metric startswith \"cold\"), cached_ms = avgif(median_ms, metric startswith \"cached\") by Page, Version = umbraco_version\n| extend ['cache_savings_pct'] = round(100.0 * (cold_ms - cached_ms) / cold_ms, 1)\n| project Page, Version, ['cache_savings_pct']\n| order by Page asc, Version asc",
+        "size": 0,
+        "title": "Cache savings % per page — one bar per version · tier = {ClientTier} (higher = better)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Page",
+          "group": "Version",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "client-cache-savings-bar",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "ClientMeasurement_CL | where metric in (\"cold_dashboard_load\",\"cached_dashboard_load\",\"cold_homenode_load\",\"cached_homenode_load\") | summarize ttfb_ms=round(avg(ttfb_ms),1), dcl_ms=round(avg(dcl_ms),1), load_ms=round(avg(load_ms),1), lcp_ms=round(avg(lcp_ms),1) by metric, infra_tier | extend _ord = case(metric == \"cold_dashboard_load\",1, metric == \"cached_dashboard_load\",2, metric == \"cold_homenode_load\",3, metric == \"cached_homenode_load\",4, 9) | order by infra_tier asc, _ord asc | project-away _ord",
+        "size": 0,
+        "title": "Browser timing marks (avg ms; lcp is usually null in the headless backoffice SPA)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "table"
+      },
+      "name": "client-browser-timing",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "**Browser timing marks** — standard Web Performance API timings, measured from navigation start (lower = better):\n- **TTFB** (Time To First Byte) — the first response byte arrives. Reflects server + network latency, before any rendering.\n- **DCL** (DOMContentLoaded) — HTML parsed and the DOM built (images/CSS not yet awaited). The page structure is ready.\n- **load** — every resource (JS, CSS, images, fonts) has finished loading. Full-load time.\n- **LCP** (Largest Contentful Paint) — the largest content element is painted; closest to \"the page appeared\". Often **null** here, because the headless backoffice SPA has no classic LCP element."
+      },
+      "name": "client-browser-timing-glossary",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
     },
     {
       "type": 1,
@@ -983,7 +2160,11 @@
         "json": "## Glossary\n\n### Entities\n- **Run** — one pipeline build. Identified by `Run #` (the AzDO build ID).\n- **Case** — one (scenario × version × tier) slice. A multi-case pipeline run produces several rows per `Run #`.\n- **Scenario** — the workload folder under `loadtests/scenarios/` (e.g. `Default`, `DeliveryApi`); the frontend/backoffice split is the *workload*, not the scenario.\n- **Sampler** — one task or operation inside a scenario (a Locust task for frontend runs, a JMeter transaction controller for backoffice runs). Shown as `Sampler` in tables (underlying column: `scenario_name`).\n- **Tier** — the Azure App Service + SQL Database pairing the case ran on (e.g. Starter, Standard, Pro, Enterprise).\n\n### Metrics\n- **p95 / p99** — 95th / 99th percentile of per-request latency in milliseconds. *5 in 100 / 1 in 100* requests were slower than this.\n- **Max** — the single slowest request observed for that sampler during the run. One observation, not an aggregate. Useful for spotting outliers; noisy run-to-run.\n- **Requests/sec** — throughput the case sustained.\n- **Error %** — percentage of requests that failed.\n- **Server CPU avg / peak %** — average and peak Azure App Service Plan CPU during the run.\n- **Database load avg / peak %** — average and peak Azure SQL Database load (Azure's bundled CPU + IO measure, internally called DTU).\n- **Database CPU peak %** — peak Azure SQL Database CPU during the run (the CPU portion only, distinct from `Database load` which bundles CPU + IO).\n- **Database physical reads peak %** — peak fraction of database reads that hit disk instead of memory cache. Rises *before* DTU saturates — a leading indicator that SQL is memory-constrained.\n- **Database log-write peak %** — peak fraction of the database's transaction-log throughput budget consumed during the run. Surfaces write-heavy bottlenecks (inserts/updates/deletes); pairs with `Database CPU peak %` to separate write pressure from read/compute pressure.\n- **Server HTTP 4xx peak / Server HTTP 5xx peak** — peak count of client errors (4xx — auth failures, validation, missing endpoints) and server errors (5xx — crashes, unhandled exceptions) seen during the run.\n- **spread** — one standard deviation across the runs that produced the median. Rough indicator of variability; latency is skewed so treat as indicative, not symmetric.\n- **change %** — percentage difference vs. the chosen baseline. *Negative* = candidate is faster than baseline, *positive* = slower.\n\n### Verdicts\n- **Capacity status** — verdict on a run's infrastructure: *Saturated* (any resource ≥ 95% or error rate ≥ 1%), *Stressed* (any resource ≥ 85%), or *OK*.\n- **Headroom** — `100 − highest peak %` across all monitored resources. The buffer before the most-saturated resource hits ceiling; higher = more room to grow.\n- **Bottleneck** — names the hottest resource and its peak (e.g. `Database load 92%`). Tells you *what* saturated. `—` means everything was below 50%.\n- **Stability** — how consistent the metric was across runs in this cell. *stable* (CV < 10%), *moderate* (10–25%), *noisy* (≥ 25%), *few runs* (< 5). Noisy cells need wider regression thresholds — a 10% regression in a 30%-noise cell is indistinguishable from run-to-run variance.\n- **Regression** — verdict from `scripts/check-regression.ps1` comparing this run's p95/p99/error against the cell's baseline median: *regression detected*, *no regression*, *not enough history*, *checking*, *not run*.\n- **Cold start** — `true` if the run skipped warmup (queue parameter `skipWarmup: true`). Cold-start runs are excluded from Trends/Tiers/Versions by default; visible on Runs.\n\n### Layout\nThe global filter scopes **Trends**, **Compare**, and **Runs**. The **Tiers** and **Versions** tabs have their own pickers but inherit the global filter when one is set."
       },
       "name": "glossary",
-      "conditionalVisibility": { "parameterName": "SelectedTab", "comparison": "isEqualTo", "value": "Glossary" }
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "Glossary"
+      }
     }
   ],
   "fallbackResourceIds": [],

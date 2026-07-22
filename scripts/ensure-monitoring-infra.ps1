@@ -33,6 +33,10 @@ param(
     # the raw Azure Monitor datapoints that Get-MetricSummary today averages
     # away. The dashboard's per-run drill-down reads from this.
     [string]$SeriesTableName = "LoadTestSeries_CL",
+    # Client-side perceived-latency table (Playwright workload). Semantically
+    # distinct from the throughput tables, so it gets its own table + stream
+    # rather than overloading LoadTestSummary_CL.
+    [string]$ClientTableName = "ClientMeasurement_CL",
     # Days the custom tables retain data. LA includes 31 days free; beyond
     # that is ~$0.12/GB/month. At our row size + cadence this is fractions
     # of a cent per year for 365-day retention. Bumping >2y requires Sentinel
@@ -144,14 +148,46 @@ $seriesColumns = @(
     @{ name = "value";            type = "real"     }
 )
 
+# Client-measurement schema, one row per (run × metric): run metadata + the
+# emitter's summary stats + segment medians (null outside time_to_first_edit).
+$clientColumns = @(
+    @{ name = "TimeGenerated";          type = "datetime" }
+    @{ name = "run_id";                 type = "string"   }
+    @{ name = "commit";                 type = "string"   }
+    @{ name = "branch";                 type = "string"   }
+    @{ name = "umbraco_version";        type = "string"   }
+    @{ name = "app_service_sku";        type = "string"   }
+    @{ name = "pool_dtu_max";           type = "int"      }
+    @{ name = "seeder_preset";          type = "string"   }
+    @{ name = "infra_tier";             type = "string"   }
+    @{ name = "scenario";               type = "string"   }
+    @{ name = "metric";                 type = "string"   }
+    @{ name = "count";                  type = "int"      }
+    @{ name = "median_ms";              type = "real"     }
+    @{ name = "p75_ms";                 type = "real"     }
+    @{ name = "p95_ms";                 type = "real"     }
+    @{ name = "min_ms";                 type = "real"     }
+    @{ name = "max_ms";                 type = "real"     }
+    @{ name = "stddev_ms";              type = "real"     }
+    @{ name = "ttfb_ms";                type = "real"     }
+    @{ name = "dcl_ms";                 type = "real"     }
+    @{ name = "load_ms";                type = "real"     }
+    @{ name = "lcp_ms";                 type = "real"     }
+    @{ name = "seg_login_ms";           type = "real"     }
+    @{ name = "seg_navigate_ms";        type = "real"     }
+    @{ name = "seg_editor_ready_ms";    type = "real"     }
+    @{ name = "seg_keystroke_ms";       type = "real"     }
+)
+
 $streamName       = "Custom-$TableName"
 $seriesStreamName = "Custom-$SeriesTableName"
+$clientStreamName = "Custom-$ClientTableName"
 
 Write-Host "=== Ensuring monitoring infrastructure ==="
 Write-Host "  RG:               $HistoryResourceGroup"
 Write-Host "  Location:         $HistoryLocation"
 Write-Host "  Workspace:        $WorkspaceName"
-Write-Host "  Custom tables:    $TableName, $SeriesTableName (retention $RetentionDays days)"
+Write-Host "  Custom tables:    $TableName, $SeriesTableName, $ClientTableName (retention $RetentionDays days)"
 Write-Host "  DCE / DCR:        $DceName / $DcrName"
 Write-Host "  Ingest principal: $IngestPrincipalId"
 Write-Host ""
@@ -220,6 +256,7 @@ function Set-CustomTable {
 
 Set-CustomTable -Name $TableName       -Columns $columns
 Set-CustomTable -Name $SeriesTableName -Columns $seriesColumns
+Set-CustomTable -Name $ClientTableName -Columns $clientColumns
 
 # Data Collection Endpoint
 Write-Host "-> Data Collection Endpoint"
@@ -243,46 +280,82 @@ $dceUri  = $dceShow.logsIngestion.endpoint
 # because the az CLI's DCR commands don't cover the Logs-Ingestion-API direct
 # stream shape.
 Write-Host "-> Data Collection Rule"
-$dcrBody = @{
-    location   = $HistoryLocation
-    tags       = @{ project = "umbraco-loadtest"; managed_by = "ensure-script" }
-    properties = @{
-        dataCollectionEndpointId = $dceId
-        streamDeclarations       = @{
-            $streamName       = @{ columns = $columns }
-            $seriesStreamName = @{ columns = $seriesColumns }
-        }
-        destinations             = @{
-            logAnalytics = @(
-                @{ name = "loadtest-workspace"; workspaceResourceId = $workspaceId }
-            )
-        }
-        dataFlows                = @(
-            @{
-                streams      = @($streamName)
-                destinations = @("loadtest-workspace")
-                outputStream = $streamName
-                transformKql = "source"
-            },
-            @{
-                streams      = @($seriesStreamName)
-                destinations = @("loadtest-workspace")
-                outputStream = $seriesStreamName
-                transformKql = "source"
-            }
-        )
-    }
-} | ConvertTo-Json -Depth 8 -Compress
-
 $dcrPath = "/subscriptions/$subId/resourceGroups/$HistoryResourceGroup/providers/Microsoft.Insights/dataCollectionRules/${DcrName}?api-version=2022-06-01"
-$dcrBodyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-dcr-$([Guid]::NewGuid()).json"
-try {
-    $dcrBody | Out-File -FilePath $dcrBodyFile -Encoding utf8 -NoNewline
-    az rest --method put --url "https://management.azure.com$dcrPath" --body "@$dcrBodyFile" --headers "Content-Type=application/json" | Out-Null
-    Write-Host "   created/updated"
+
+# This DCR is SHARED with the load-test pipeline. A full-replace PUT drops any
+# stream this script doesn't declare — so a load-test run from a branch without
+# the client stream silently removes Custom-ClientMeasurement_CL, which then 400s
+# as InvalidStream on the next client publish (and vice-versa). So MERGE: preserve
+# foreign streams/dataFlows, own ours, and skip the PUT when nothing changed (a
+# needless re-PUT triggers data-plane re-propagation that can briefly 400 a
+# concurrent publish). NOTE: this merge logic must also live on whatever branch
+# the load-test pipeline runs from, or that pipeline will still clobber.
+$desiredStreams = @{
+    $streamName       = @{ columns = $columns }
+    $seriesStreamName = @{ columns = $seriesColumns }
+    $clientStreamName = @{ columns = $clientColumns }
 }
-finally {
-    Remove-Item $dcrBodyFile -Force -ErrorAction SilentlyContinue
+$ownStreamNames = @($desiredStreams.Keys)
+$desiredFlows = $ownStreamNames | ForEach-Object {
+    @{ streams = @($_); destinations = @("loadtest-workspace"); outputStream = $_; transformKql = "source" }
+}
+
+# Existing DCR (if any) — drives both the merge and the skip decision.
+$existingDcr = $null
+try { $existingDcr = az rest --method get --url "https://management.azure.com$dcrPath" 2>$null | ConvertFrom-Json } catch { }
+
+# Foreign streams/flows (owned by the other pipeline) are carried over untouched.
+$mergedStreams = @{}
+if ($existingDcr -and $existingDcr.properties.streamDeclarations) {
+    foreach ($p in $existingDcr.properties.streamDeclarations.PSObject.Properties) {
+        if ($ownStreamNames -notcontains $p.Name) { $mergedStreams[$p.Name] = $p.Value }
+    }
+}
+foreach ($k in $desiredStreams.Keys) { $mergedStreams[$k] = $desiredStreams[$k] }
+$foreignFlows = @()
+if ($existingDcr -and $existingDcr.properties.dataFlows) {
+    $foreignFlows = @($existingDcr.properties.dataFlows | Where-Object { $ownStreamNames -notcontains $_.outputStream })
+}
+$mergedFlows = @($foreignFlows) + @($desiredFlows)
+
+# Steady-state skip: every owned stream already present with the same columns.
+# Compares name AND type (sorted) so a type change with an unchanged name set
+# (e.g. pool_dtu_max int->string) still forces a PUT rather than skipping it.
+function Test-StreamUpToDate($existing, $name, $desiredCols) {
+    $decl = $existing.properties.streamDeclarations.$name
+    if (-not $decl) { return $false }
+    $have = @($decl.columns  | ForEach-Object { "$($_.name):$($_.type)" } | Sort-Object) -join ','
+    $want = @($desiredCols   | ForEach-Object { "$($_.name):$($_.type)" } | Sort-Object) -join ','
+    return ($have -eq $want)
+}
+$upToDate = [bool]$existingDcr -and
+    (Test-StreamUpToDate $existingDcr $streamName       $columns) -and
+    (Test-StreamUpToDate $existingDcr $seriesStreamName $seriesColumns) -and
+    (Test-StreamUpToDate $existingDcr $clientStreamName $clientColumns)
+
+if ($upToDate) {
+    Write-Host "   all streams present with matching schema — skipping PUT (no churn)"
+}
+else {
+    $dcrBody = @{
+        location   = $HistoryLocation
+        tags       = @{ project = "umbraco-loadtest"; managed_by = "ensure-script" }
+        properties = @{
+            dataCollectionEndpointId = $dceId
+            streamDeclarations       = $mergedStreams
+            destinations             = @{ logAnalytics = @(@{ name = "loadtest-workspace"; workspaceResourceId = $workspaceId }) }
+            dataFlows                = $mergedFlows
+        }
+    } | ConvertTo-Json -Depth 8 -Compress
+    $dcrBodyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-dcr-$([Guid]::NewGuid()).json"
+    try {
+        $dcrBody | Out-File -FilePath $dcrBodyFile -Encoding utf8 -NoNewline
+        az rest --method put --url "https://management.azure.com$dcrPath" --body "@$dcrBodyFile" --headers "Content-Type=application/json" | Out-Null
+        Write-Host "   created/updated (merged $($mergedStreams.Count) stream(s): $($mergedStreams.Keys -join ', '))"
+    }
+    finally {
+        Remove-Item $dcrBodyFile -Force -ErrorAction SilentlyContinue
+    }
 }
 $dcrShow         = az rest --method get --url "https://management.azure.com$dcrPath" -o json | ConvertFrom-Json
 $dcrId           = $dcrShow.id
@@ -364,10 +437,11 @@ Write-Host ""
 Write-Host "Monitoring infrastructure ready."
 Write-Host ""
 Write-Host "Wire these into publish-load-test-results.ps1 (or pass via pipeline variables):"
-Write-Host "  DceUri:           $dceUri"
-Write-Host "  DcrImmutableId:   $dcrImmutableId"
-Write-Host "  StreamName:       $streamName"
-Write-Host "  SeriesStreamName: $seriesStreamName"
+Write-Host "  DceUri:             $dceUri"
+Write-Host "  DcrImmutableId:     $dcrImmutableId"
+Write-Host "  StreamName:         $streamName"
+Write-Host "  SeriesStreamName:   $seriesStreamName"
+Write-Host "  ClientStreamName:   $clientStreamName"
 
 if ($EmitPipelineVars) {
     # Azure DevOps logging-command output. isOutput=true is required for these
@@ -377,4 +451,5 @@ if ($EmitPipelineVars) {
     Write-Host "##vso[task.setvariable variable=MonitoringDcrImmutableId;isOutput=true]$dcrImmutableId"
     Write-Host "##vso[task.setvariable variable=MonitoringStreamName;isOutput=true]$streamName"
     Write-Host "##vso[task.setvariable variable=MonitoringSeriesStreamName;isOutput=true]$seriesStreamName"
+    Write-Host "##vso[task.setvariable variable=MonitoringClientStreamName;isOutput=true]$clientStreamName"
 }

@@ -39,6 +39,15 @@ function Get-UmbracoMajor([string] $Version) {
     return $major
 }
 
+# Normalize a datetime string to ISO-8601 UTC. Azure DevOps' $(System.PipelineStartTime)
+# is space-separated ("2026-06-15 13:45:30+00:00"), which the Log Analytics Logs
+# Ingestion API rejects on datetime columns with a 400. Round-tripping through
+# DateTime gives the required ISO ("o") form. Idempotent on already-ISO input.
+function ConvertTo-IsoUtc([string] $DateTime) {
+    return [datetime]::Parse($DateTime, [System.Globalization.CultureInfo]::InvariantCulture).
+        ToUniversalTime().ToString("o", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
 # Stream-parse one engine_results.csv (JMeter format). Memory-bounded: keeps
 # per-task sample lists, not the whole CSV. Returns:
 #   @{ ByLabel = @{ '<label>' = @{ Samples = List[int]; Errors = int } };

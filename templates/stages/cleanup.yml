@@ -1,0 +1,72 @@
+parameters:
+  - name: validationTimeoutMinutes
+    type: number
+  - name: dependsOn
+    type: object
+  - name: extraValidationInstructions
+    type: string
+    default: ''
+
+stages:
+  # Cleanup must run on every outcome — including pipeline cancel. `always()`
+  # covers cancel; `succeededOrFailed()` would skip cleanup when the user
+  # cancels mid-run, orphaning the ephemeral RG until someone manually deletes
+  # it. Depends on provision so the chain still fires if the test/regression
+  # stages were skipped or failed; depends on them too so cleanup doesn't
+  # race with them.
+  - stage: cleanup
+    displayName: Cleanup
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: always()
+    jobs:
+      - job: checkResourceGroupForCleanup
+        displayName: Check resource group for cleanup
+        steps:
+          - task: AzureCLI@2
+            name: checkResourceGroup
+            displayName: Check if resource group exists
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $exists = az group exists -n $(azureResourceGroup)
+                Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$exists"
+
+      - job: manualValidation
+        dependsOn: checkResourceGroupForCleanup
+        condition: eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.doesExist'], 'true')
+        displayName: Manual validation - keep resources?
+        pool: server
+        timeoutInMinutes: ${{ parameters.validationTimeoutMinutes }}
+        steps:
+          - task: ManualValidation@0
+            displayName: Approve to keep resources
+            timeoutInMinutes: ${{ parameters.validationTimeoutMinutes }}
+            inputs:
+              instructions: |
+                Press "Resume" to KEEP the resource group $(azureResourceGroup).
+                Press "Reject" (or wait ${{ parameters.validationTimeoutMinutes }} minutes) to DELETE all resources.
+                ${{ parameters.extraValidationInstructions }}
+
+      # User pressed Reject, the validation timed out, or the chain skipped: delete the RG.
+      - job: deleteResourceGroup
+        displayName: Delete resource group
+        dependsOn: manualValidation
+        condition: in(dependencies.manualValidation.result, 'Failed', 'Canceled', 'Skipped')
+        steps:
+          - task: AzureCLI@2
+            displayName: Delete resource group
+            retryCountOnTaskFailure: 5
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $exists = az group exists -n $(azureResourceGroup)
+                if ($exists -eq 'true') {
+                  Write-Host "Deleting resource group $(azureResourceGroup)..."
+                  az group delete -n $(azureResourceGroup) --yes
+                } else {
+                  Write-Host "Resource group $(azureResourceGroup) does not exist, skipping deletion."
+                }

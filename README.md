@@ -8,7 +8,7 @@ Establish repeatable CMS performance baselines across Umbraco versions, infrastr
 
 ## Overview
 
-This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario × workload)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs load tests via Azure Load Testing service. Two workload modes ship: **frontend** (Locust — anonymous reads + contact-form submissions against rendered pages and the Delivery API) and **backoffice** (JMeter — authenticated backoffice writes: SaveContent, PublishContent, SaveDocumentType, MemberLogin). See "Workload modes" below.
+This project provisions isolated Azure environments for arbitrary combinations of **(Umbraco version × infrastructure tier × scenario × workload)**, seeds them with test data using [Umbraco.Cms.TestDataSeeder](https://www.nuget.org/packages/Umbraco.Cms.TestDataSeeder/), and runs load tests via Azure Load Testing service. Three workload modes ship: **frontend** (Locust — anonymous reads + contact-form submissions against rendered pages and the Delivery API), **backoffice** (JMeter — authenticated backoffice writes: SaveContent, PublishContent, SaveDocumentType, MemberLogin), and **client** (Playwright — browser-perceived backoffice load/edit timings, run on the pipeline agent via the separate `azure-pipeline-client.yml`). See "Workload modes" below.
 
 **Supported Umbraco versions: v13–v18 (subject to seeder availability).** Each major maps to a specific .NET runtime (see [Umbraco-major → .NET-runtime map](#umbraco-major--net-runtime-map) below). Today only **v17** has a published `Umbraco.Cms.TestDataSeeder` build (`17.0.0-beta.2`); v13–v16 and v18 queues fail at validation with a clear message until the seeder ships for those majors. Update the maps in `scripts/resolve-run-config.ps1` (validator-side) and `Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1` (install-side) in lockstep when a new seeder version ships.
 
@@ -61,14 +61,20 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 ## Project Structure
 
 ```
-├── azure-pipeline.yml           # Main load test pipeline (manual queue)
+├── azure-pipeline.yml           # Load test pipeline — Locust/JMeter (manual queue)
+├── azure-pipeline-client.yml    # Client measurement pipeline — Playwright (manual queue)
 ├── README.md
 │
 ├── dashboards/
-│   └── loadtest.workbook.json   # Azure Workbook: Trends / Tiers / Versions / Compare / Runs / Glossary over LoadTestSummary_CL
+│   └── loadtest.workbook.json   # Azure Workbook over LoadTestSummary_CL (+ "Client measurements" tab over ClientMeasurement_CL)
 │
 ├── templates/
-│   └── load-test-job.yml        # Per-case load test template (testCaseId lookup pattern)
+│   ├── load-test-job.yml        # Per-case load test job (Locust/JMeter)
+│   ├── jobs/
+│   │   └── client-measure-job.yml   # Per-tier Playwright client-measure job
+│   └── stages/
+│       ├── provision.yml        # Shared validate → ensureHistory → ensureMonitoring → provision stages
+│       └── cleanup.yml          # Shared cleanup stage (both pipelines consume these two)
 │
 ├── scripts/
 │   ├── resolve-run-config.ps1          # Pipeline entry: resolves queue-time params + invokes validator
@@ -84,6 +90,8 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │   ├── compare-runs.ps1                # Markdown delta report between two runs (CSV or history)
 │   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
+│   ├── publish-client-results.ps1      # Client measurement NDJSON → history blob (client/ prefix) + ClientMeasurement_CL
+│   ├── check-client-regression.ps1     # Client measurement regression gate (median-of-last-N; report-only)
 │   ├── parameterize-jmx.js             # One-time rewriter: convert hardcoded JMeter Arguments to ${__P()} refs
 │   ├── _helpers.ps1                    # Shared helpers dot-sourced by other scripts (Get-Pct, Get-StorageAccountKey, …)
 │   └── _history-helpers.ps1            # Shared helpers for the history-NDJSON consumers (dot-sourced)
@@ -100,6 +108,7 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │       │   │   ├── v13/                 # one .jmx file per backoffice test (ViewHomePage, SaveContent, …)
 │       │   │   └── v17/                 # v18 reuses v17/ via fallback
 │       │   ├── locustfile.py            # frontend workload (Locust)
+│       │   ├── client/                  # client workload (Playwright): lib/, fixtures/, measurements/, playwright.config.ts
 │       │   └── scenario.yaml
 │       └── DeliveryApi/
 │           ├── AdditionalSetup/
@@ -417,7 +426,7 @@ The non-homepage tasks are **inventory-driven**: at test start, locust calls `/u
 
 ### Workload modes: frontend (Locust) vs backoffice (JMeter)
 
-The `workload` queue-time parameter selects which load harness runs against the provisioned App Service. The two modes are intentionally separate — they exercise different code paths (rendering pipeline vs management API), have different auth models (anonymous vs OAuth/PKCE), and produce different perf signatures that aren't meaningfully comparable head-to-head.
+The `workload` queue-time parameter on the load-test pipeline (`azure-pipeline.yml`) selects which load harness runs against the provisioned App Service: **frontend** or **backoffice**. These two are intentionally separate — they exercise different code paths (rendering pipeline vs management API), have different auth models (anonymous vs OAuth/PKCE), and produce different perf signatures that aren't meaningfully comparable head-to-head. The third mode, **client** (Playwright), is browser-perceived rather than load-generating and runs from its own pipeline (`azure-pipeline-client.yml`) — see "Client measurement (Playwright)" below.
 
 **Frontend (`workload: frontend`, default).** Single Locust test plan (`loadtests/scenarios/{scenario}/locustfile.py`) runs against the App Service. Mix is weighted `@task` methods (Homepage / Section / Category / Page / Detail / Media / submit_contact_form). One ALT testId per scenario (`umbraco-lt-{scenario}`); one TestRun per (version × tier) pipeline run.
 
@@ -457,6 +466,61 @@ These are documented for the next person — fixes are in scope for follow-up wo
    - **Member login**: use `member_username` (built by Groovy from `totalOfMember`) and `member_password` (sourced from seeder discovery).
    - **Backoffice admin**: use `backoffice_username` and `backoffice_password` (Terraform unattended-install admin).
 5. Queue with `workload: backoffice`. The new `.jmx` runs as an additional iteration.
+
+### Client measurement (Playwright)
+
+**Browser-perceived backoffice performance** — measures how long the Umbraco backoffice SPA feels to a real user (login, navigation, editor paint, first keystroke), not just server-side throughput. The workload runs Playwright on the pipeline agent against the provisioned App Service; results land alongside the Locust and JMeter data in the same Log Analytics workspace and history storage container.
+
+**Pipeline:** `azure-pipeline-client.yml` (separate from the main `azure-pipeline.yml`). It reuses the same Terraform provisioning and long-lived history/monitoring infrastructure, then runs Playwright directly on the pipeline agent.
+
+**Project location:** `loadtests/scenarios/{scenario}/client/` — e.g. `loadtests/scenarios/Default/client/`.
+
+#### Test data
+
+Test data is hybrid. `Umbraco.Cms.TestDataSeeder` seeds background bulk during provisioning (the same seeder-preset mechanism used by the other workloads). The Playwright `global-setup.ts` then builds a precise content model via `@umbraco-cms/acceptance-test-helpers`:
+
+- A tabbed **`Page` document type** with 17 distinct editors across 3 compositions — including a Rich Text/TipTap editor with an embedded image, two Media Pickers, a Block Grid, and an SEO tab.
+- Three additional empty document types: `Product-page`, `Marketing-page`, `Newsletter-signup`.
+- A fully-populated **`Homepage`** root node.
+- ~20 top-level nodes each with a child (so `hasChildren: true` is broadly true across the tree).
+
+The model build is idempotent — re-runs against an already-set-up instance are safe.
+
+#### Metrics
+
+Five metrics are measured, each repeated N times (default 10; override with `CLIENT_MEASURE_REPS`). Results are reported as **median / p75 / p95 / stddev** plus Performance API marks (`ttfb` / `dcl` / `load`; `lcp` is null in the headless backoffice SPA).
+
+| Metric | What it captures |
+|---|---|
+| `cold_dashboard_load` | Umbraco Welcome dashboard (Content section) until `umb-news-container` is visible — browser-uncached, against an already-warm server |
+| `cached_dashboard_load` | Same Welcome dashboard, repeat visit in the same browser context |
+| `cold_homenode_load` | Opening the Homepage node until the TipTap editor (`umb-input-tiptap`) is painted — browser-uncached |
+| `cached_homenode_load` | Same node, repeat visit in the same browser context |
+| `time_to_first_edit` | URL → real form login → open Homepage → cursor in TipTap → type a character until rendered; includes a segment breakdown: `seg_login_ms` / `seg_navigate_ms` / `seg_editor_ready_ms` / `seg_keystroke_ms` |
+
+**Cold vs cached:** "Cold" means a fresh browser context against an already-warm server — the warmup step warms the server so the measurement isolates client-side cold rather than a server cold-start. "Cached" is a repeat visit in the same browser context. On a local/localhost instance the cold–cached delta is negligible (no network distance for the cache to save); the delta becomes meaningful against a networked Azure tier where asset delivery distance matters.
+
+#### Results
+
+- Rows land in the **`ClientMeasurement_CL`** Log Analytics custom table.
+- A **"Client measurements"** tab in the Azure Workbook surfaces per-metric medians across versions and tiers.
+- Raw results are stored under the **`client/` prefix** of the history storage container.
+- A report-only regression gate (`scripts/check-client-regression.ps1`) compares the latest run's median per `(version × tier × metric)` against the median of recent baselines. Report-only: it does not fail the pipeline while baselines are being established.
+
+#### Running locally
+
+```bash
+cd loadtests/scenarios/Default/client
+npm install
+npx playwright install chromium
+UMBRACO_BASE_URL=https://localhost:44339 UMBRACO_USER=<admin-email> UMBRACO_PASSWORD=<pw> npx playwright test
+```
+
+The package reads credentials from `URL` / `UMBRACO_USER_LOGIN` / `UMBRACO_USER_PASSWORD`. The project's `lib/env-bridge.ts` maps the friendlier `UMBRACO_BASE_URL` / `UMBRACO_USER` / `UMBRACO_PASSWORD` variables onto those names before the package loads. Set `CLIENT_MEASURE_REPS=3` for a quick iteration run. Set `SKIP_GLOBAL_SETUP=1` to skip the content-model build when iterating on a single spec against an already-built instance.
+
+#### Third-party package cost measurement
+
+The client suite measures a **clean-site baseline**. Running the same suite against an instance with packages installed makes the delta the package load cost. This is a natural extension — the infrastructure is in place, but the side-by-side comparison is not automated yet.
 
 ### Cold-cache vs warm-cache testing
 

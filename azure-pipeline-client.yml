@@ -1,0 +1,271 @@
+name: client_measurement_pipeline
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+parameters:
+  - name: umbracoVersion
+    displayName: Umbraco version (e.g. 17.0.0, 17.0.1-rc.1, 17.1.0-beta.2)
+    type: string
+    default: '17.0.0'
+
+  - name: runStarter
+    displayName: Run Starter tier
+    type: boolean
+    default: true
+
+  - name: runStandard
+    displayName: Run Standard tier
+    type: boolean
+    default: false
+
+  - name: runPro
+    displayName: Run Pro tier
+    type: boolean
+    default: false
+
+  - name: runEnterprise
+    displayName: Run Enterprise tier
+    type: boolean
+    default: false
+
+  - name: azureRegion
+    displayName: Azure region
+    type: string
+    default: West Europe
+    values:
+      - West Europe
+      - North Europe
+      - East US
+      - West US 2
+
+  # Feeds into RG name + resource names. Concurrent runs with the same prefix collide.
+  - name: resourcePrefix
+    displayName: Resource name prefix (max 16 chars, lowercase alphanumeric + hyphens; must be unique per concurrent run)
+    type: string
+    default: umbraco-client
+
+  - name: skipWarmup
+    displayName: Skip warmup (test cold-start behaviour)
+    type: boolean
+    default: false
+
+  - name: validationTimeoutMinutes
+    displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
+    type: number
+    default: 60
+    values:
+      - 15
+      - 30
+      - 60
+      - 120
+      - 240
+
+  # Override the per-DB DTU cap for every case so SQL can be sized independently
+  # of the tier's default — useful for "is SQL actually the bottleneck?"
+  # experiments. Defaults (per loadtests/tiers.json): Starter=20, Standard=50,
+  # Pro=100, Enterprise=200. 'Auto' = use each tier's built-in DTU cap.
+  - name: poolDtuOverride
+    displayName: SQL per-DB DTU override (Auto = match tier)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - '10'
+      - '20'
+      - '50'
+      - '100'
+      - '200'
+
+  # Override the App Service Plan SKU for every case so app size is independent
+  # of the tier — counterpart to poolDtuOverride on the app side. Defaults
+  # (per loadtests/tiers.json): Starter=P0v3, Standard=P1v3, Pro=P2v3,
+  # Enterprise=P3v3. 'Auto' = use each tier's built-in SKU.
+  - name: appSkuOverride
+    displayName: App Service SKU override (Auto = match tier)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'P0v3'
+      - 'P1v3'
+      - 'P2v3'
+      - 'P3v3'
+
+  # Background bulk content created by TestDataSeeder before the precise model is
+  # built. No 'Auto' (there's no load profile to match in the client pipeline) —
+  # pick the content size directly. Approx seeder times: Small ~10m, Medium ~30m,
+  # Large ~60m, Massive ~120m.
+  - name: seederPresetOverride
+    displayName: 'Seeder content size (background bulk)'
+    type: string
+    default: 'Small'
+    values:
+      - 'Small'
+      - 'Medium'
+      - 'Large'
+      - 'Massive'
+
+variables:
+  # Variable group `umbraco-loadtest-history` provides all history* variables:
+  # historyResourceGroup, historyLocation, historyLoadTestName,
+  # historyStorageAccount, historyContainer.
+  - group: umbraco-loadtest-history
+
+  - name: serviceConnection
+    value: 'terraform-umbraco-load-testing-az-connection'
+  - name: azureResourceGroup
+    value: '${{ parameters.resourcePrefix }}-rg'
+  - name: terraformWorkingDirectory
+    value: '$(System.DefaultWorkingDirectory)/Terraform'
+
+  # Long-lived monitoring resources. Defaults are fine for a single team in a
+  # subscription; override in the variable group if multiple teams share one.
+  - name: historyWorkspaceName
+    value: 'umbraco-loadtest-laws'
+  - name: historyDceName
+    value: 'umbraco-loadtest-dce'
+  - name: historyDcrName
+    value: 'umbraco-loadtest-dcr'
+
+stages:
+  - template: templates/stages/provision.yml
+    parameters:
+      umbracoVersion: '${{ parameters.umbracoVersion }}'
+      scenario: 'Default'
+      workload: 'client'
+      loadProfile: 'smoke'
+      resourcePrefix: '${{ parameters.resourcePrefix }}'
+      azureRegion: '${{ parameters.azureRegion }}'
+      runStarter: ${{ parameters.runStarter }}
+      runStandard: ${{ parameters.runStandard }}
+      runPro: ${{ parameters.runPro }}
+      runEnterprise: ${{ parameters.runEnterprise }}
+      poolDtuOverride: '${{ parameters.poolDtuOverride }}'
+      appSkuOverride: '${{ parameters.appSkuOverride }}'
+      seederPresetOverride: '${{ parameters.seederPresetOverride }}'
+
+  - stage: clientMeasure
+    displayName: Run client measurements
+    dependsOn:
+      - validateTestCases
+      - ensureMonitoringInfra
+      - provision
+    condition: succeeded('provision')
+    variables:
+      testCaseOutputs:        $[ stageDependencies.provision.apply.outputs['outputVars.testCaseOutputs'] ]
+      seederResults:          $[ stageDependencies.provision.apply.outputs['outputVars.seederResults'] ]
+      resolvedTestCases:      $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      resolvedSeederPreset:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      monitoringDceUri:           $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId:   $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringClientStreamName: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringClientStreamName'] ]
+    jobs:
+      - job: runClientMeasurements
+        displayName: Run Client Measurements
+        timeoutInMinutes: 360
+        steps:
+          - ${{ if eq(parameters.runStarter, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Starter__Default'
+                tier: 'Starter'
+                scenario: 'Default'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - ${{ if eq(parameters.runStandard, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Standard__Default'
+                tier: 'Standard'
+                scenario: 'Default'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - ${{ if eq(parameters.runPro, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Pro__Default'
+                tier: 'Pro'
+                scenario: 'Default'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - ${{ if eq(parameters.runEnterprise, true) }}:
+            - template: templates/jobs/client-measure-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__Default'
+                tier: 'Enterprise'
+                scenario: 'Default'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsClientStreamName: $(monitoringClientStreamName)
+          - task: AzureCLI@2
+            displayName: 'Stop all App Services'
+            condition: succeededOrFailed()
+            env:
+              TEST_CASE_OUTPUTS: $(testCaseOutputs)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/stop-all-app-services.ps1'
+              arguments: '-ResourceGroupName "$(azureResourceGroup)"'
+
+  - stage: clientRegression
+    displayName: Client regression check
+    dependsOn:
+      - clientMeasure
+    condition: succeeded('clientMeasure')
+    jobs:
+      - job: clientRegressionCheck
+        displayName: Client regression check
+        steps:
+          - task: AzureCLI@2
+            displayName: Compare client run against baseline
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
+                $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                & "$(System.DefaultWorkingDirectory)/scripts/check-client-regression.ps1" `
+                    -Scenario 'Default' -Major $major `
+                    -HistoryResourceGroup '$(historyResourceGroup)' `
+                    -StorageAccountName '$(historyStorageAccount)' `
+                    -ContainerName '$(historyContainer)' `
+                    -OutputPath "$(System.DefaultWorkingDirectory)/client-regression-report.md" `
+                    -NoFailOnRegression
+          - task: PublishBuildArtifacts@1
+            displayName: Publish client regression report
+            condition: succeededOrFailed()
+            continueOnError: true
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/client-regression-report.md'
+              ArtifactName: 'client-regression-report'
+              publishLocation: 'Container'
+
+  - template: templates/stages/cleanup.yml
+    parameters:
+      validationTimeoutMinutes: ${{ parameters.validationTimeoutMinutes }}
+      dependsOn: [provision, clientMeasure, clientRegression]
+      extraValidationInstructions: |2-
+
+        To inspect the backoffice while this window is open: the App Service(s) are in
+        RG $(azureResourceGroup) (Azure Portal). They are STOPPED after measurements —
+        start one with: az webapp start -n <appServiceName> -g $(azureResourceGroup)
+        then open https://<host>/umbraco  (login: loadtest@example.invalid / LoadTest123!).
+        The exact URL is printed in the clientMeasure stage's "Read terraform outputs" step.

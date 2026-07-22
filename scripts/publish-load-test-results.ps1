@@ -78,6 +78,12 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_helpers.ps1"
 
+# $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
+# LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize
+# once so run_started_at and the per-row TimeGenerated both ingest. (The blob date
+# parse below tolerates ISO too.)
+$RunStartedAt = ConvertTo-IsoUtc $RunStartedAt
+
 # Carried into every row so cross-run queries don't need joins.
 $metadata = [ordered]@{
     run_id           = $BuildId
@@ -264,7 +270,10 @@ function Send-RowsToLogAnalytics {
         # of silent partial-publish failures actually gets noticed before the
         # Workbook starts looking stale. Pipeline still succeeds (continueOnError
         # on the publish task) — the issue surfaces as a warning, not a fail.
-        $msg = "Log Analytics ingestion failed: $($_.Exception.Message). Blob upload (if any) remains the source of truth."
+        # $_.ErrorDetails.Message carries the API response body, which names the
+        # rejected field (e.g. an invalid datetime) — the bare status line doesn't.
+        $detail = if ($_.ErrorDetails.Message) { " Body: $($_.ErrorDetails.Message)" } else { "" }
+        $msg = "Log Analytics ingestion failed: $($_.Exception.Message).$detail Blob upload (if any) remains the source of truth."
         Write-Warning $msg
         Write-Host "##vso[task.logissue type=warning]$msg"
     }
@@ -318,7 +327,8 @@ function Send-SeriesToLogAnalytics {
         Write-Host "   ok"
     }
     catch {
-        $msg = "Log Analytics series ingestion failed: $($_.Exception.Message). Summary scalars (plan_*/sql_*/app_*) are still in LoadTestSummary_CL."
+        $detail = if ($_.ErrorDetails.Message) { " Body: $($_.ErrorDetails.Message)" } else { "" }
+        $msg = "Log Analytics series ingestion failed: $($_.Exception.Message).$detail Summary scalars (plan_*/sql_*/app_*) are still in LoadTestSummary_CL."
         Write-Warning $msg
         Write-Host "##vso[task.logissue type=warning]$msg"
     }
