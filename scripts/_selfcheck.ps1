@@ -102,6 +102,19 @@ finally {
     Remove-Item -LiteralPath $tmp.FullName -Force -ErrorAction SilentlyContinue
 }
 
+Write-Host "ConvertTo-DoubleOrNull (blank/malformed -> null, never 0)"
+Assert-Equal 42.5 (ConvertTo-DoubleOrNull '42.5')          "parses a fractional value"
+Assert-Equal 0    (ConvertTo-DoubleOrNull '0')             "literal '0' stays 0 (not null)"
+Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull ''))  "empty -> null (not 0)"
+Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull '  ')) "whitespace -> null"
+Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull 'x')) "non-numeric -> null"
+Assert-Equal 12.5 (ConvertTo-DoubleOrNull '12.5' )         "invariant culture: dot decimal parses"
+
+Write-Host "ConvertTo-IsoUtc (normalize to ISO-8601 UTC; passthrough on bad input)"
+Assert-Equal '2026-06-15T13:45:30.0000000Z' (ConvertTo-IsoUtc '2026-06-15T13:45:30.0000000Z') "already-ISO input is idempotent"
+Assert-Equal ''          (ConvertTo-IsoUtc '')        "empty -> passthrough (no throw)"
+Assert-Equal 'not-a-date' (ConvertTo-IsoUtc 'not-a-date') "malformed -> passthrough (no throw)"
+
 Write-Host ""
 if ($script:failures -gt 0) {
     Write-Host "$($script:failures) of $($script:checks) checks FAILED." -ForegroundColor Red

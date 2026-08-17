@@ -87,6 +87,19 @@
         </elementProp>
       </ThreadGroup>
       <hashTree>
+        <JSR223Timer guiclass="TestBeanGUI" testclass="JSR223Timer" testname="Backoff after error" enabled="true">
+          <stringProp name="scriptLanguage">groovy</stringProp>
+          <stringProp name="parameters"></stringProp>
+          <stringProp name="filename"></stringProp>
+          <stringProp name="cacheKey">true</stringProp>
+          <stringProp name="script">// Pace retries: after a failed sample, wait before the next request so an
+// overloaded app (5xx) is not hammered into a retry storm (on_sample_error=
+// startnextloop retries instantly). No delay on success; timer time is excluded
+// from sample latency.
+def pr = ctx.getPreviousResult()
+return (pr != null &amp;&amp; !pr.isSuccessful()) ? 2000L : 0L</stringProp>
+        </JSR223Timer>
+        <hashTree/>
         <TransactionController guiclass="TransactionControllerGui" testclass="TransactionController" testname="01. Open the Umbraco backoffice" enabled="true">
           <boolProp name="TransactionController.parent">true</boolProp>
           <boolProp name="TransactionController.includeTimers">false</boolProp>

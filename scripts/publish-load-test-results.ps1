@@ -99,18 +99,11 @@ $metadata = [ordered]@{
     infra_tier       = $Tier
     # Null (rather than 0) when the seeder didn't complete (Skipped, Failed,
     # TimedOut, or pre-feature run) — KQL percentile/avg ignore nulls, so
-    # Skipped/Failed runs don't drag the median toward 0.
-    # Invariant-culture TryParse rather than a bare [double] cast: the value may
-    # arrive empty/malformed, and a comma-decimal agent locale would make a raw
-    # cast throw under -ErrorAction Stop, killing the publish before any row is
-    # written. Anything unparseable degrades to $null (KQL ignores nulls).
-    seeder_duration_seconds = $(
-        $sds = 0.0
-        if (-not [string]::IsNullOrWhiteSpace($SeederDurationSeconds) -and
-            [double]::TryParse($SeederDurationSeconds, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$sds)) {
-            $sds
-        } else { $null }
-    )
+    # Skipped/Failed runs don't drag the median toward 0. ConvertTo-DoubleOrNull
+    # (_helpers) invariant-culture TryParses: empty/malformed (or a comma-decimal
+    # agent locale) degrades to $null instead of throwing under -ErrorAction Stop
+    # and killing the publish before any row is written.
+    seeder_duration_seconds = ConvertTo-DoubleOrNull $SeederDurationSeconds
     scenario         = $Scenario
     user_count       = $UserCount
     spawn_rate       = $SpawnRate
