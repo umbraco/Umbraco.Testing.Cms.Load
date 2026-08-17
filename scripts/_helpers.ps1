@@ -58,6 +58,18 @@ function ConvertTo-IsoUtc([string] $DateTime) {
     return $parsed.ToUniversalTime().ToString("o", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+# Tolerant double parse: blank/malformed input -> $null (never 0). Callers that
+# treat a missing metric as 0 would otherwise silently skew medians/comparisons.
+# Invariant culture so a comma-decimal agent locale doesn't misread "42.5".
+function ConvertTo-DoubleOrNull([string] $Value) {
+    $d = 0.0
+    if (-not [string]::IsNullOrWhiteSpace($Value) -and
+        [double]::TryParse($Value, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$d)) {
+        return $d
+    }
+    return $null
+}
+
 # Stream-parse one engine_results.csv (JMeter format). Memory-bounded: keeps
 # per-task sample lists, not the whole CSV. Returns:
 #   @{ ByLabel = @{ '<label>' = @{ Samples = List[int]; Errors = int } };

@@ -21,10 +21,15 @@ param(
     [Parameter(Mandatory = $true)] [int]$SpawnRate,
     [Parameter(Mandatory = $true)] [int]$TestDuration,
     # JMeter thread-group ramp-up (seconds). 0 = fall back to UserAmount (legacy
-    # ~1-thread/sec ramp). A ramp run passes the full duration; that's also the
-    # signal to relax the absolute failure criteria (a ramp is meant to drive
-    # into saturation, so latency/error gates would FAIL/autoStop at the knee).
+    # ~1-thread/sec ramp); the 'ramp' profile passes the full duration so load
+    # climbs across the whole run.
     [int]$RampTime = 0,
+
+    # Load profile name — the authoritative ramp signal. A ramp run relaxes the
+    # absolute failure criteria (it deliberately drives into saturation, so
+    # latency/error gates would FAIL/autoStop at the knee). Keyed on the profile
+    # rather than RampTime or SpawnRate, both of which scenario.yaml can override.
+    [string]$LoadProfile = '',
 
     # Resource IDs — App Service Plan + SQL Database — used to register extra
     # appComponents in ALT so plan-level (CpuPercentage / MemoryPercentage) and
@@ -164,12 +169,11 @@ $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace 
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
 if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 
-# Effective ramp-up + whether this is a ramp run. Identify ramp by its defining
-# knob — SpawnRate == 1 (the only profile that spawns at 1 VU/s), the same signal
-# the workbook uses. Deriving it from RampTime would misfire on any steady case
-# whose thread count >= duration (RampTime falls back to UserAmount for steady).
+# Effective ramp-up + whether this is a ramp run. Keyed on the profile name — the
+# only ramp signal scenario.yaml can't override (it can override users/spawn/
+# duration, so RampTime>=duration and SpawnRate==1 are both unreliable).
 $rampTimeEff = if ($RampTime -gt 0) { $RampTime } else { $UserAmount }
-$isRamp      = ($SpawnRate -eq 1)
+$isRamp      = ($LoadProfile -eq 'ramp')
 
 # Failure criteria + autoStop. A ramp run is *designed* to climb into saturation
 # to find the knee, so the absolute latency gates (and a low autoStop) would FAIL

@@ -15,6 +15,10 @@ param (
     # JMeter ramp-up window (seconds). 0 = fall back to userAmount (legacy
     # ~1-thread/sec ramp); the 'ramp' profile passes the full duration.
     [int]    $RampTime = 0,
+    # Load profile name, carried per-case so generate-loadtest-config can key the
+    # ramp criteria on the profile (scenario.yaml can't override the profile,
+    # unlike users/spawn/duration).
+    [string] $LoadProfile = '',
     [string] $WorkspaceRoot = $PWD
 )
 
@@ -318,6 +322,7 @@ foreach ($case in $cases) {
             spawnRate    = $effSpawn
             testDuration = $effDuration
             rampTime     = $effRampTime
+            loadProfile  = $LoadProfile
             label        = "$($case.umbraco)/${tierName}/$($case.scenario)"
         }
     }

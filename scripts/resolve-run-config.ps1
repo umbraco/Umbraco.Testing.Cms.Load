@@ -184,4 +184,5 @@ Write-Host "##vso[task.setvariable variable=resolvedWorkload;isOutput=true]$Work
     -SpawnRate $spawn `
     -TestDuration $duration `
     -RampTime $rampTime `
+    -LoadProfile $Profile `
     -WorkspaceRoot $WorkspaceRoot
