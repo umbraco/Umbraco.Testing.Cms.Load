@@ -132,7 +132,15 @@ $rows = Build-ClientRows -ResultsDir $ResultsDir -UmbracoVersion $UmbracoVersion
 if ($rows.Count -eq 0) { Write-Warning "No client metric rows parsed from $ResultsDir." }
 
 # Blob path mirrors publish-load-test-results.ps1 with a 'client/' top-level prefix.
-$pipelineStarted = [DateTime]::Parse($RunStartedAt, [System.Globalization.CultureInfo]::InvariantCulture)
+# Parse to UTC so the folder's calendar day matches the ingested row's TimeGenerated
+# (also UTC-normalized) near midnight, and TryParse so a blank/malformed
+# RunStartedAt degrades to "today (UTC)" instead of throwing and aborting the upload.
+$pipelineStarted = [DateTime]::MinValue
+if (-not [DateTime]::TryParse($RunStartedAt, [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AdjustToUniversal, [ref]$pipelineStarted)) {
+    $pipelineStarted = (Get-Date).ToUniversalTime()
+    Write-Warning "RunStartedAt '$RunStartedAt' unparseable - using current UTC date for the blob path."
+}
 $datePart        = $pipelineStarted.ToString("yyyy-MM-dd", [System.Globalization.CultureInfo]::InvariantCulture)
 $majorVersion    = (Get-UmbracoMajor $UmbracoVersion).ToString()
 $blobPrefix      = "client/$majorVersion/$UmbracoVersion/$Tier/${datePart}_$BuildId"

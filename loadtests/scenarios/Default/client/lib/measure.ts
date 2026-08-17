@@ -17,13 +17,32 @@ export async function timeUntilVisible(start: number, locator: Locator, timeoutM
 export async function perfMarks(page: Page): Promise<Record<string, number | null>> {
   return page.evaluate(() => {
     const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
-    const lcp = performance.getEntriesByType('largest-contentful-paint').slice(-1)[0] as PerformanceEntry | undefined;
-    return {
+    // LCP is NOT returned by getEntriesByType — it is only delivered to a
+    // PerformanceObserver. A buffered observer replays entries recorded before
+    // this call; take the latest (LCP can update over the page's life). Marks are
+    // captured after the page has settled, so buffered replay resolves promptly.
+    const lcpMs = new Promise<number | null>((resolve) => {
+      try {
+        let last: number | null = null;
+        const obs = new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) last = Math.round(e.startTime);
+        });
+        obs.observe({ type: 'largest-contentful-paint', buffered: true });
+        setTimeout(() => {
+          for (const e of obs.takeRecords()) last = Math.round(e.startTime);
+          obs.disconnect();
+          resolve(last);
+        }, 200);
+      } catch {
+        resolve(null); // API unavailable (non-Chromium / no LCP element)
+      }
+    });
+    return lcpMs.then((lcp_ms) => ({
       ttfb_ms: nav ? Math.round(nav.responseStart) : null,
       dcl_ms: nav ? Math.round(nav.domContentLoadedEventEnd) : null,
       load_ms: nav ? Math.round(nav.loadEventEnd) : null,
-      lcp_ms: lcp ? Math.round(lcp.startTime) : null,
-    };
+      lcp_ms,
+    }));
   });
 }
 

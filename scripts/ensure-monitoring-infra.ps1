@@ -318,6 +318,20 @@ if ($existingDcr -and $existingDcr.properties.dataFlows) {
 }
 $mergedFlows = @($foreignFlows) + @($desiredFlows)
 
+# Preserve foreign destinations too: a carried-over foreign dataFlow may target a
+# logAnalytics destination other than 'loadtest-workspace', and the PUT must
+# declare every destination its flows reference or ARM rejects it (400). Start
+# from the existing foreign logAnalytics destinations, then add our own.
+$mergedDestinations = @{ logAnalytics = @() }
+if ($existingDcr -and $existingDcr.properties.destinations -and $existingDcr.properties.destinations.logAnalytics) {
+    foreach ($d in @($existingDcr.properties.destinations.logAnalytics)) {
+        if ($d.name -ne "loadtest-workspace") {
+            $mergedDestinations.logAnalytics += @{ name = $d.name; workspaceResourceId = $d.workspaceResourceId }
+        }
+    }
+}
+$mergedDestinations.logAnalytics += @{ name = "loadtest-workspace"; workspaceResourceId = $workspaceId }
+
 # Steady-state skip: every owned stream already present with the same columns.
 # Compares name AND type (sorted) so a type change with an unchanged name set
 # (e.g. pool_dtu_max int->string) still forces a PUT rather than skipping it.
@@ -328,10 +342,16 @@ function Test-StreamUpToDate($existing, $name, $desiredCols) {
     $want = @($desiredCols   | ForEach-Object { "$($_.name):$($_.type)" } | Sort-Object) -join ','
     return ($have -eq $want)
 }
+# A matching stream declaration isn't enough — a stream with no dataFlow routing
+# it ingests nothing (400 InvalidStream). Require both before skipping the PUT.
+function Test-FlowPresent($existing, $name) {
+    if (-not $existing.properties.dataFlows) { return $false }
+    return @($existing.properties.dataFlows | Where-Object { $_.outputStream -eq $name }).Count -gt 0
+}
 $upToDate = [bool]$existingDcr -and
-    (Test-StreamUpToDate $existingDcr $streamName       $columns) -and
-    (Test-StreamUpToDate $existingDcr $seriesStreamName $seriesColumns) -and
-    (Test-StreamUpToDate $existingDcr $clientStreamName $clientColumns)
+    (Test-StreamUpToDate $existingDcr $streamName       $columns)       -and (Test-FlowPresent $existingDcr $streamName) -and
+    (Test-StreamUpToDate $existingDcr $seriesStreamName $seriesColumns) -and (Test-FlowPresent $existingDcr $seriesStreamName) -and
+    (Test-StreamUpToDate $existingDcr $clientStreamName $clientColumns) -and (Test-FlowPresent $existingDcr $clientStreamName)
 
 if ($upToDate) {
     Write-Host "   all streams present with matching schema — skipping PUT (no churn)"
@@ -343,7 +363,7 @@ else {
         properties = @{
             dataCollectionEndpointId = $dceId
             streamDeclarations       = $mergedStreams
-            destinations             = @{ logAnalytics = @(@{ name = "loadtest-workspace"; workspaceResourceId = $workspaceId }) }
+            destinations             = $mergedDestinations
             dataFlows                = $mergedFlows
         }
     } | ConvertTo-Json -Depth 8 -Compress

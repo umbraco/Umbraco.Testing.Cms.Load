@@ -122,20 +122,20 @@ steps:
       script: |
         $dir = "$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)"
         if (-not (Test-Path $dir)) { Write-Host "No client-results dir - Playwright produced no metrics."; exit 0 }
-        $loads = @(); $ttfe = $null
+        $loads = [System.Collections.Generic.List[object]]::new(); $ttfe = $null
         foreach ($f in Get-ChildItem -Path $dir -Filter *.ndjson) {
           foreach ($line in Get-Content $f.FullName) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             $m = $line | ConvertFrom-Json
             if ($m.metric -eq 'time_to_first_edit') { $ttfe = $m; continue }
-            $loads += [pscustomobject][ordered]@{
+            $loads.Add([pscustomobject][ordered]@{
               Metric    = $m.metric
               Reps      = $m.count
               Median_ms = [math]::Round([double]$m.median, 1)
               P75_ms    = [math]::Round([double]$m.p75, 1)
               P95_ms    = [math]::Round([double]$m.p95, 1)
               StdDev_ms = [math]::Round([double]$m.stddev, 1)
-            }
+            })
           }
         }
         # Display order groups cold/cached per page for easy comparison.
