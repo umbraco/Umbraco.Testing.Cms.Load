@@ -78,7 +78,7 @@
       <hashTree/>
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1.  Save document type">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(rampTime,1)}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>

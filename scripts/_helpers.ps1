@@ -44,8 +44,30 @@ function Get-UmbracoMajor([string] $Version) {
 # Ingestion API rejects on datetime columns with a 400. Round-tripping through
 # DateTime gives the required ISO ("o") form. Idempotent on already-ISO input.
 function ConvertTo-IsoUtc([string] $DateTime) {
-    return [datetime]::Parse($DateTime, [System.Globalization.CultureInfo]::InvariantCulture).
-        ToUniversalTime().ToString("o", [System.Globalization.CultureInfo]::InvariantCulture)
+    # TryParse, not Parse: empty/malformed input must not throw under
+    # ErrorActionPreference=Stop — publish-load-test-results calls this before the
+    # blob upload, and a throw here would lose the run entirely (the blob is the
+    # source of truth). On unparseable input, return it unchanged; LA may reject
+    # that one field, but the surrounding try/catch already tolerates that.
+    $parsed = [datetime]::MinValue
+    if ([string]::IsNullOrWhiteSpace($DateTime) -or
+        -not [datetime]::TryParse($DateTime, [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        return $DateTime
+    }
+    return $parsed.ToUniversalTime().ToString("o", [System.Globalization.CultureInfo]::InvariantCulture)
+}
+
+# Tolerant double parse: blank/malformed input -> $null (never 0). Callers that
+# treat a missing metric as 0 would otherwise silently skew medians/comparisons.
+# Invariant culture so a comma-decimal agent locale doesn't misread "42.5".
+function ConvertTo-DoubleOrNull([string] $Value) {
+    $d = 0.0
+    if (-not [string]::IsNullOrWhiteSpace($Value) -and
+        [double]::TryParse($Value, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$d)) {
+        return $d
+    }
+    return $null
 }
 
 # Stream-parse one engine_results.csv (JMeter format). Memory-bounded: keeps

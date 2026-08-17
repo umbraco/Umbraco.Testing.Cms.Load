@@ -10,7 +10,7 @@
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory = $true)] [ValidateSet('smoke', 'standard', 'stress')] [string]$Profile,
+    [Parameter(Mandatory = $true)] [ValidateSet('smoke', 'standard', 'stress', 'ramp')] [string]$Profile,
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$Scenario,
     # Bool-shaped flags pass through as strings — AzDO interpolates booleans as
@@ -44,8 +44,37 @@ if ($tiers.Count -eq 0) {
 switch ($Profile) {
     'smoke'    { $preset = 'Small';  $users = 20;  $spawn = 10; $duration = 60;  $engines = 1 }
     'standard' { $preset = 'Medium'; $users = 50;  $spawn = 10; $duration = 300; $engines = 1 }
-    'stress'   { $preset = 'Large';  $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
+    'stress'   { $preset = 'Medium'; $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
+    # Ramp: climb load across the whole run to find the saturation knee. Low
+    # spawn (frontend/Locust ramps 0->users at 1 VU/s); JMeter ramp handled via
+    # $rampTime below. Single engine so the ramp target isn't silently doubled.
+    'ramp'     { $preset = 'Medium'; $users = 300; $spawn = 1;  $duration = 600; $engines = 1 }
 }
+
+# Backoffice VUs are far heavier than frontend VUs: each one holds a full
+# authenticated editor session (login -> navigate tree -> save/publish), which
+# is CPU-bound (auth hashing, content/cache/index work). 50 such VUs saturated
+# even Standard's App CPU (~96%), so the frontend counts don't translate. Scale
+# backoffice down to realistic editor concurrency and pin a single engine (ALT
+# multiplies threads x engines, and these counts don't need a second engine).
+# Frontend (Locust) keeps the profile defaults above. Tune these freely.
+if ($Workload -eq 'backoffice') {
+    $engines = 1
+    switch ($Profile) {
+        'smoke'    { $users = 5 }
+        'standard' { $users = 15 }
+        'stress'   { $users = 50 }
+        # Ramp to ~60 to bracket the observed backoffice knee (~50 on Standard).
+        'ramp'     { $users = 60 }
+    }
+}
+
+# JMeter ramp-up window (seconds). The 'ramp' profile climbs from 0 to full
+# thread count across the whole run to expose the saturation knee on the
+# per-minute charts; steady profiles keep the legacy ~1-thread/sec ramp
+# (ramp_time = thread count). Locust uses the low spawn rate above; this only
+# drives the JMeter thread group (ThreadGroup.ramp_time = ${__P(rampTime,1)}).
+$rampTime = if ($Profile -eq 'ramp') { $duration } else { $users }
 
 # Seeder preset override (Auto keeps the profile-coupled default). Unlocks
 # off-diagonal cells (Small content + stress load, Massive content + smoke
@@ -69,7 +98,9 @@ $dotnetVersion = switch ($umbracoMajor) {
     default { $null }
 }
 if (-not $dotnetVersion) {
-    Write-PipelineError "Umbraco $UmbracoVersion is unsupported (this pipeline targets v13–v18). Extend the major→runtime map in resolve-run-config.ps1 when a new major is supported."
+    # Note the runnable set is narrower than this TFM map: the seeder gate below
+    # blocks 14/15/16. The honest "what can actually run" answer is v13, v17, v18.
+    Write-PipelineError "Umbraco $UmbracoVersion is unsupported. This pipeline supports v13, v17, and v18 (the majors with a published TestDataSeeder build; v18 reuses v17's). Extend the major→runtime map in resolve-run-config.ps1 when a new major is supported."
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 
@@ -152,4 +183,6 @@ Write-Host "##vso[task.setvariable variable=resolvedWorkload;isOutput=true]$Work
     -UserAmount $users `
     -SpawnRate $spawn `
     -TestDuration $duration `
+    -RampTime $rampTime `
+    -LoadProfile $Profile `
     -WorkspaceRoot $WorkspaceRoot

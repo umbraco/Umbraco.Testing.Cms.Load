@@ -57,13 +57,14 @@ parameters:
     default: false
 
   - name: loadProfile
-    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s'
+    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s, ramp: 0→max / 600s. Backoffice uses lower VU counts (heavier per VU).'
     type: string
     default: 'standard'
     values:
       - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
       - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
-      - 'stress'     # Large,  300 VUs, 600s, 2 engines -- saturate the lower tiers
+      - 'stress'     # Medium, 300 VUs, 600s, 2 engines -- saturate the lower tiers
+      - 'ramp'       # Medium, 0->300 VUs (backoffice 0->60), 600s, 1 engine -- climb to find the saturation knee
 
   - name: azureRegion
     displayName: Azure region
@@ -129,8 +130,9 @@ parameters:
       - 'P3v3'
 
   # Override the TestDataSeeder preset so content size is independent of the
-  # load profile. 'Auto' couples preset to profile (smoke=Small, standard=Medium,
-  # stress=Large). Override unlocks the otherwise-unreachable Massive preset
+  # load profile. 'Auto' couples preset to profile (smoke=Small; standard, stress,
+  # and ramp=Medium — Large hangs the seeder). Override unlocks the otherwise-
+  # unreachable Massive preset
   # and enables off-diagonal cells (Small content + stress load, Massive content
   # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~30 min,
   # Large ~60 min, Massive ~120 min.

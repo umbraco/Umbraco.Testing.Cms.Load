@@ -94,7 +94,7 @@ resource "azurerm_windows_web_app" "app_service" {
       # indistinguishable from real perf regressions. With the seed pinned,
       # any cross-run delta is attributable to code/infra changes only.
       # The exact value doesn't matter — any constant works.
-      "Umbraco.Cms.TestDataSeeder__Options__FakerSeed"    = "42"
+      "Umbraco.Cms.TestDataSeeder__Options__FakerSeed" = "42"
     },
     var.app_settings_overlay
   )
@@ -123,6 +123,11 @@ resource "null_resource" "deploy_umbraco" {
     app_service_id        = azurerm_windows_web_app.app_service.id
     scenario              = var.scenario
     scenario_overlay_hash = local.scenario_overlay_hash
+    # The command below passes -SeederPreset directly, so a preset change must
+    # re-run the deploy/seed. Without this the seeder never re-executes against
+    # the new preset on a persisted backend (no-op under the ephemeral RG model,
+    # where every run recreates this resource — but correct either way).
+    seeder_preset = var.seeder_preset
     # Referenced here purely to establish the implicit dependency on the
     # parent module's firewall rule (Umbraco hits SQL on first boot).
     firewall_rule_id = var.sql_firewall_rule_dependency

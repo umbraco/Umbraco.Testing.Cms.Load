@@ -71,7 +71,7 @@
       <hashTree/>
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1.  Save and Publish existing content">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(rampTime,1)}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
@@ -491,7 +491,15 @@ try {
     def json = new JsonSlurper().parseText(body)
     def nodes = json.children?.findAll { it.id != &quot;-20&quot; }
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def node = nodes[new Random().nextInt(nodes.size()-4)]
+        // Exclude the trailing 4 fixed Contact/Member nodes (present on every seed);
+        // they must not be edited/published. Guarded so a thin seed can't crash.
+        def __sel = nodes.size() &gt; 4 ? nodes[0..&lt;(nodes.size()-4)] : nodes
+        // Prefer already-published nodes (no &quot;not-published&quot; css marker) so the gated
+        // publish block runs against a valid parent instead of silently skipping.
+        def __isPub = { n -&gt; def cc = n?.cssClasses; if (cc instanceof List) { return !cc.any { it?.toString()?.contains(&quot;not-published&quot;) } }; if (cc != null) { return !cc.toString().contains(&quot;not-published&quot;) }; return true }
+        def __pub = __sel.findAll(__isPub)
+        def __pool = __pub ? __pub : __sel
+        def node = __pool[new Random().nextInt(__pool.size())]
         def id = node.id.toString()
         def cssClasses = node.cssClasses
         def isNotPublished = false
@@ -824,7 +832,12 @@ try {
     def parsed = body?.trim() ? new JsonSlurper().parseText(body) : null
     def nodes = asNodeList(parsed)
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def node = nodes[new Random().nextInt(nodes.size())]
+        // Prefer already-published nodes (no &quot;not-published&quot; css marker) so the gated
+        // publish block runs against a valid parent instead of silently skipping.
+        def __isPub = { n -&gt; def cc = n?.cssClasses; if (cc instanceof List) { return !cc.any { it?.toString()?.contains(&quot;not-published&quot;) } }; if (cc != null) { return !cc.toString().contains(&quot;not-published&quot;) }; return true }
+        def __pub = nodes.findAll(__isPub)
+        def __pool = __pub ? __pub : nodes
+        def node = __pool[new Random().nextInt(__pool.size())]
         def id = node.id.toString()
         def published = (node.published != null) ? node.published.toString() : &quot;false&quot;
         vars.put(&quot;node_id_l1&quot;, id)
@@ -997,7 +1010,12 @@ try {
     def parsed = body?.trim() ? new JsonSlurper().parseText(body) : null
     def nodes = asNodeList(parsed)
     if (nodes &amp;&amp; nodes.size() &gt; 0) {
-        def node = nodes[new Random().nextInt(nodes.size())]
+        // Prefer already-published nodes (no &quot;not-published&quot; css marker) so the gated
+        // publish block runs against a valid parent instead of silently skipping.
+        def __isPub = { n -&gt; def cc = n?.cssClasses; if (cc instanceof List) { return !cc.any { it?.toString()?.contains(&quot;not-published&quot;) } }; if (cc != null) { return !cc.toString().contains(&quot;not-published&quot;) }; return true }
+        def __pub = nodes.findAll(__isPub)
+        def __pool = __pub ? __pub : nodes
+        def node = __pool[new Random().nextInt(__pool.size())]
         def id = node.id.toString()
         def published = (node.published != null) ? node.published.toString() : &quot;false&quot;
         vars.put(&quot;node_id_l2&quot;, id)

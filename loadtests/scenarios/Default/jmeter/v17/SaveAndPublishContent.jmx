@@ -73,7 +73,7 @@
       <hashTree/>
       <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="1. Save and Publish existing content" enabled="true">
         <stringProp name="ThreadGroup.num_threads">${numberOfThread}</stringProp>
-        <stringProp name="ThreadGroup.ramp_time">${numberOfThread}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__P(rampTime,1)}</stringProp>
         <stringProp name="ThreadGroup.duration">${duration}</stringProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
         <boolProp name="ThreadGroup.scheduler">true</boolProp>
@@ -860,7 +860,14 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def item = items[new Random().nextInt(items.size()-4)]
+        // Exclude the trailing 4 fixed Contact/Member nodes (present on every seed);
+        // they must not be edited/published. Guarded so a thin seed can't crash.
+        def __sel = items.size() &gt; 4 ? items[0..&lt;(items.size()-4)] : items
+        // Prefer already-published nodes so the gated publish block runs against a
+        // valid parent instead of silently skipping; fall back to any node.
+        def __pub = __sel.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
+        def __pool = __pub ? __pub : __sel
+        def item = __pool[new Random().nextInt(__pool.size())]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -961,7 +968,11 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def item = items[new Random().nextInt(items.size())]
+        // Prefer already-published nodes so the gated publish block runs against a
+        // valid parent instead of silently skipping; fall back to any node.
+        def __pub = items.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
+        def __pool = __pub ? __pub : items
+        def item = __pool[new Random().nextInt(__pool.size())]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -1054,7 +1065,11 @@ def body = prev.getResponseDataAsString()
 try {
     def items = new JsonSlurper().parseText(body).items
     if (items &amp;&amp; items.size() &gt; 0) {
-        def item = items[new Random().nextInt(items.size())]
+        // Prefer already-published nodes so the gated publish block runs against a
+        // valid parent instead of silently skipping; fall back to any node.
+        def __pub = items.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
+        def __pool = __pub ? __pub : items
+        def item = __pool[new Random().nextInt(__pool.size())]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;

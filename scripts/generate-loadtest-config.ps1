@@ -20,6 +20,16 @@ param(
     [Parameter(Mandatory = $true)] [int]$UserAmount,
     [Parameter(Mandatory = $true)] [int]$SpawnRate,
     [Parameter(Mandatory = $true)] [int]$TestDuration,
+    # JMeter thread-group ramp-up (seconds). 0 = fall back to UserAmount (legacy
+    # ~1-thread/sec ramp); the 'ramp' profile passes the full duration so load
+    # climbs across the whole run.
+    [int]$RampTime = 0,
+
+    # Load profile name — the authoritative ramp signal. A ramp run relaxes the
+    # absolute failure criteria (it deliberately drives into saturation, so
+    # latency/error gates would FAIL/autoStop at the knee). Keyed on the profile
+    # rather than RampTime or SpawnRate, both of which scenario.yaml can override.
+    [string]$LoadProfile = '',
 
     # Resource IDs — App Service Plan + SQL Database — used to register extra
     # appComponents in ALT so plan-level (CpuPercentage / MemoryPercentage) and
@@ -159,9 +169,27 @@ $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace 
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
 if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 
-# Shared ALT failure criteria + autoStop + appComponents — applied regardless
-# of runner so cross-workload runs stay comparable on those axes.
-$sharedTail = @"
+# Effective ramp-up + whether this is a ramp run. Keyed on the profile name — the
+# only ramp signal scenario.yaml can't override (it can override users/spawn/
+# duration, so RampTime>=duration and SpawnRate==1 are both unreliable).
+$rampTimeEff = if ($RampTime -gt 0) { $RampTime } else { $UserAmount }
+$isRamp      = ($LoadProfile -eq 'ramp')
+
+# Failure criteria + autoStop. A ramp run is *designed* to climb into saturation
+# to find the knee, so the absolute latency gates (and a low autoStop) would FAIL
+# or cancel it the moment it gets there — defeating the point. For ramp, drop the
+# latency criteria, keep only a high error ceiling, and raise autoStop so the run
+# completes and the per-minute charts show the full climb.
+if ($isRamp) {
+    $criteriaBlock = @"
+failureCriteria:
+  - percentage(error) > 90
+autoStop:
+  errorPercentage: 95
+  timeWindow: 120
+"@
+} else {
+    $criteriaBlock = @"
 failureCriteria:
   - avg(response_time_ms) > 2000
   - p95(response_time_ms) > 5000
@@ -169,6 +197,13 @@ failureCriteria:
 autoStop:
   errorPercentage: 80
   timeWindow: 60
+"@
+}
+
+# Shared ALT failure criteria + autoStop + appComponents — applied regardless
+# of runner so cross-workload runs stay comparable on those axes.
+$sharedTail = @"
+$criteriaBlock
 appComponents:
   - resourceId: "$appServiceResourceId"
     resourceName: "$AppServiceName"
@@ -254,6 +289,7 @@ protocol=https
 port=443
 numberOfThread=$UserAmount
 duration=$TestDuration
+rampTime=$rampTimeEff
 totalOfMember=$SeededMemberCount
 member_password=$SeededMemberPassword
 backoffice_username=loadtest@example.invalid

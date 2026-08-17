@@ -97,16 +97,24 @@ foreach ($cellKey in ($cells.Keys | Sort-Object)) {
     }
     $candidate = $ordered[-1]
     $baselineRows = @($ordered[0..($ordered.Count - 2)] | Select-Object -Last $BaselineWindow)
-    $baselineMedians = [double[]]($baselineRows | ForEach-Object { [double]$_.median_ms })
-    $verdict = Test-ClientRegression -CandidateMedian ([double]$candidate.median_ms) `
+    # Blank/unparseable median_ms -> $null (never 0). A 0 would read as "faster",
+    # masking a regression on the candidate side and dragging the baseline median
+    # down on the other. Candidate with no valid median can't be judged -> skip.
+    $candMedian = ConvertTo-DoubleOrNull ([string]$candidate.median_ms)
+    if ($null -eq $candMedian) {
+        [void]$report.AppendLine("- ${cellKey}: skipped (candidate median missing/unparseable)")
+        continue
+    }
+    $baselineMedians = [double[]]@($baselineRows | ForEach-Object { ConvertTo-DoubleOrNull ([string]$_.median_ms) } | Where-Object { $null -ne $_ })
+    $verdict = Test-ClientRegression -CandidateMedian $candMedian `
         -BaselineMedians $baselineMedians -Threshold $MedianThreshold -MinBaselineRuns $MinBaselineRuns
     if ($verdict.Insufficient) {
-        [void]$report.AppendLine("- ${cellKey}: insufficient baseline ($($baselineRows.Count) < $MinBaselineRuns runs)")
+        [void]$report.AppendLine("- ${cellKey}: insufficient baseline ($($baselineMedians.Count) < $MinBaselineRuns runs)")
     } elseif ($verdict.Regressed) {
         $regressedAny = $true
-        [void]$report.AppendLine("- **${cellKey}: REGRESSED** candidate $([math]::Round([double]$candidate.median_ms))ms > baseline-median $([math]::Round($verdict.BaselineMedian))ms x $(1 + $MedianThreshold)")
+        [void]$report.AppendLine("- **${cellKey}: REGRESSED** candidate $([math]::Round($candMedian))ms > baseline-median $([math]::Round($verdict.BaselineMedian))ms x $(1 + $MedianThreshold)")
     } else {
-        [void]$report.AppendLine("- ${cellKey}: ok ($([math]::Round([double]$candidate.median_ms))ms vs $([math]::Round($verdict.BaselineMedian))ms)")
+        [void]$report.AppendLine("- ${cellKey}: ok ($([math]::Round($candMedian))ms vs $([math]::Round($verdict.BaselineMedian))ms)")
     }
 }
 

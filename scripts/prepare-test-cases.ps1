@@ -12,6 +12,13 @@ param (
     [Parameter(Mandatory = $true)] [int]    $UserAmount,
     [Parameter(Mandatory = $true)] [int]    $SpawnRate,
     [Parameter(Mandatory = $true)] [int]    $TestDuration,
+    # JMeter ramp-up window (seconds). 0 = fall back to userAmount (legacy
+    # ~1-thread/sec ramp); the 'ramp' profile passes the full duration.
+    [int]    $RampTime = 0,
+    # Load profile name, carried per-case so generate-loadtest-config can key the
+    # ramp criteria on the profile (scenario.yaml can't override the profile,
+    # unlike users/spawn/duration).
+    [string] $LoadProfile = '',
     [string] $WorkspaceRoot = $PWD
 )
 
@@ -281,6 +288,14 @@ foreach ($case in $cases) {
         Fail "case ${caseIndex}: resolved testDuration '$effDuration' out of range (30-7200 seconds)."
     }
 
+    # rampTime drives the JMeter thread-group ramp. Default (0) falls back to the
+    # final thread count, reproducing the legacy ~1-thread/sec ramp; the 'ramp'
+    # profile passes the full duration so load climbs across the whole run.
+    $effRampTime = if ($RampTime -gt 0) { $RampTime } else { $effUsers }
+    if ($effRampTime -lt 1 -or $effRampTime -gt 7200) {
+        Fail "case ${caseIndex}: resolved rampTime '$effRampTime' out of range (1-7200 seconds)."
+    }
+
     # Expand: one input entry x N tiers -> N test cases.
     foreach ($tierName in $caseTiers) {
         if ($validTiers -notcontains $tierName) {
@@ -306,6 +321,8 @@ foreach ($case in $cases) {
             userAmount   = $effUsers
             spawnRate    = $effSpawn
             testDuration = $effDuration
+            rampTime     = $effRampTime
+            loadProfile  = $LoadProfile
             label        = "$($case.umbraco)/${tierName}/$($case.scenario)"
         }
     }

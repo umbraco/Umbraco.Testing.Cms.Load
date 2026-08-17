@@ -86,6 +86,8 @@ steps:
         Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
         Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
         Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
+        Write-Host "##vso[task.setvariable variable=rampTime]$($myCase.rampTime)"
+        Write-Host "##vso[task.setvariable variable=loadProfile]$($myCase.loadProfile)"
 
         # Seeder result is captured per-case by install-umbraco-cms-on-appservice.ps1
         # during the provision stage's Terraform local-exec, aggregated into the
@@ -324,6 +326,8 @@ steps:
           -UserAmount $(userAmount)
           -SpawnRate $(spawnRate)
           -TestDuration $(testDuration)
+          -RampTime $(rampTime)
+          -LoadProfile "$(loadProfile)"
           -AppServicePlanId "$(appServicePlanId)"
           -SqlDatabaseId "$(sqlDatabaseId)"
           -SqlDatabaseName "$(sqlDatabaseName)"
@@ -477,6 +481,8 @@ steps:
             -UserAmount $(userAmount)
             -SpawnRate $(spawnRate)
             -TestDuration $(testDuration)
+            -RampTime $(rampTime)
+            -LoadProfile "$(loadProfile)"
             -AppServicePlanId "$(appServicePlanId)"
             -SqlDatabaseId "$(sqlDatabaseId)"
             -SqlDatabaseName "$(sqlDatabaseName)"

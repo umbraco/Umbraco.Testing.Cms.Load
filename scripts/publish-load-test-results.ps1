@@ -100,7 +100,17 @@ $metadata = [ordered]@{
     # Null (rather than 0) when the seeder didn't complete (Skipped, Failed,
     # TimedOut, or pre-feature run) — KQL percentile/avg ignore nulls, so
     # Skipped/Failed runs don't drag the median toward 0.
-    seeder_duration_seconds = $(if ([string]::IsNullOrWhiteSpace($SeederDurationSeconds)) { $null } else { [double]$SeederDurationSeconds })
+    # Invariant-culture TryParse rather than a bare [double] cast: the value may
+    # arrive empty/malformed, and a comma-decimal agent locale would make a raw
+    # cast throw under -ErrorAction Stop, killing the publish before any row is
+    # written. Anything unparseable degrades to $null (KQL ignores nulls).
+    seeder_duration_seconds = $(
+        $sds = 0.0
+        if (-not [string]::IsNullOrWhiteSpace($SeederDurationSeconds) -and
+            [double]::TryParse($SeederDurationSeconds, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$sds)) {
+            $sds
+        } else { $null }
+    )
     scenario         = $Scenario
     user_count       = $UserCount
     spawn_rate       = $SpawnRate
@@ -530,6 +540,20 @@ az storage blob upload `
     --file $summaryFile `
     --name "$blobPrefix/summary.ndjson" `
     --overwrite | Out-Null
+
+# Trim redundant artifacts before the raw upload (the history container has no
+# expiry beyond the lifecycle tier, so anything uploaded here is kept forever):
+#  - *-extracted working dirs: unpacked only to scan engine_results.csv; their
+#    contents already live inside results.zip, so keeping them doubles every CSV.
+#  - report.zip: ALT's generated HTML report. Nothing in this repo consumes it
+#    (the parser reads results.zip) and the same report is in the Azure portal
+#    run view, so archiving it here is pure bloat.
+# results.zip is deliberately kept — it carries the raw per-request data that
+# re-analysis may need beyond what summary.ndjson surfaces.
+Get-ChildItem -Path $ResultsDir -Recurse -Directory -Filter '*-extracted' -ErrorAction SilentlyContinue |
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $ResultsDir -Recurse -File -Filter 'report.zip' -ErrorAction SilentlyContinue |
+    Remove-Item -Force -ErrorAction SilentlyContinue
 
 # Raw artifacts kept for analyses that need fields the summary doesn't surface.
 az storage blob upload-batch `

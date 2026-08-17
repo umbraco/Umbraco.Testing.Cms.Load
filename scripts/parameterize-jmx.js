@@ -27,7 +27,10 @@ const OVERRIDABLE = new Set([
     'member_password',
 ]);
 
-const JMETER_ROOT = path.join(__dirname, '..', 'loadtests', 'scenarios', 'Default', 'jmeter');
+// Walk every scenario's plans, not just Default — a scenario that ships its own
+// jmeter/ folder must get the same treatment, or its .jmx silently runs against
+// the dev-local defaults (localhost:44322) baked into the Arguments.
+const JMETER_ROOT = path.join(__dirname, '..', 'loadtests', 'scenarios');
 
 function parameterizeFile(filepath) {
     let content = fs.readFileSync(filepath, 'utf8');
@@ -56,7 +59,25 @@ function parameterizeFile(filepath) {
     if (changes > 0) {
         fs.writeFileSync(filepath, content, 'utf8');
     }
-    return changes;
+
+    // Diagnostic: an OVERRIDABLE argument whose value the regex couldn't match
+    // (e.g. JMeter reordered the child props, or a manual edit changed the block
+    // shape) stays hardcoded, and the harness's -Jname=value override is then
+    // silently ignored at runtime. Flag any OVERRIDABLE Argument.name whose value
+    // is still neither parameterized nor one we just substituted.
+    const warnings = [];
+    for (const name of OVERRIDABLE) {
+        const nameRe = new RegExp(`<stringProp name="Argument\\.name">${name}</stringProp>`, 'g');
+        if (!nameRe.test(content)) continue; // arg not present in this file — fine
+        const paramRe = new RegExp(
+            `<stringProp name="Argument\\.name">${name}</stringProp>\\s*<stringProp name="Argument\\.value">\\$\\{__P\\(${name},`
+        );
+        if (!paramRe.test(content)) {
+            warnings.push(name);
+        }
+    }
+
+    return { changes, warnings };
 }
 
 function walk(dir) {
@@ -75,8 +96,17 @@ function walk(dir) {
 
 const files = walk(JMETER_ROOT);
 console.log(`Processing ${files.length} .jmx file(s) under ${JMETER_ROOT}`);
+let totalWarnings = 0;
 for (const f of files) {
-    const n = parameterizeFile(f);
+    const { changes, warnings } = parameterizeFile(f);
     const rel = path.relative(path.join(__dirname, '..'), f).replace(/\\/g, '/');
-    console.log(`  ${rel}: ${n} substitution(s)`);
+    console.log(`  ${rel}: ${changes} substitution(s)`);
+    for (const w of warnings) {
+        totalWarnings++;
+        console.warn(`    WARNING: '${w}' is present but NOT parameterized — runtime -J${w}= override will be ignored.`);
+    }
+}
+if (totalWarnings > 0) {
+    console.warn(`\n${totalWarnings} unparameterized OVERRIDABLE argument(s) found — inspect the block shape in the flagged file(s).`);
+    process.exitCode = 1;
 }

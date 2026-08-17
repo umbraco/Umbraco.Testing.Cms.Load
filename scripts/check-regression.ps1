@@ -134,8 +134,18 @@ foreach ($cellKey in $cells.Keys) {
     $sorted = $cells[$cellKey] |
         Sort-Object { Get-RunDate $_ } -Descending
 
+    # Like-for-like baseline: a run only compares against PRIOR runs that drove
+    # the SAME load — same VU count, spawn rate, and duration. This keeps a ramp
+    # run (climbing 0->target, spawn 1) out of the steady baseline, AND stops a
+    # 15-VU backoffice run from comparing against 50-VU history (same profile
+    # name, different load = meaningless delta). A new load just yields
+    # "insufficient history" until same-load baselines accrue — the correct
+    # verdict, not a false regression. (Profile/load isn't a stored key; this
+    # matches the actual published load params, which every metric row carries.)
     $candidate     = $sorted[0]
-    $priorRuns     = @($sorted | Select-Object -Skip 1 -First $BaselineWindow)
+    $candLoad      = "$($candidate.user_count)|$($candidate.spawn_rate)|$($candidate.duration_seconds)"
+    $sameLoad      = @($sorted | Where-Object { "$($_.user_count)|$($_.spawn_rate)|$($_.duration_seconds)" -eq $candLoad })
+    $priorRuns     = @($sameLoad | Select-Object -Skip 1 -First $BaselineWindow)
     $priorRunCount = $priorRuns.Count
 
     # Limit 3 so sampler names that legally contain '__' (e.g. a future

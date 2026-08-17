@@ -99,8 +99,15 @@ try {
     try { dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases" 2>$null | Out-Null } catch {}
     try { dotnet nuget add source "https://www.myget.org/F/umbraconightly/api/v3/index.json" -n "Umbraco Nightly" 2>$null | Out-Null } catch {}
 
-    Write-Host "Installing Umbraco.Templates::$UmbracoVersion..."
-    dotnet new install Umbraco.Templates::$UmbracoVersion
+    Write-Host "Installing Umbraco.Templates@$UmbracoVersion..."
+    # --force makes this idempotent. Multi-case runs (2+ tiers) execute this
+    # script repeatedly on the SAME build agent: the first case installs the
+    # template, and the second case's plain install exits 106 ("already
+    # installed - use --force"), which throws under
+    # $PSNativeCommandUseErrorActionPreference and fails the whole apply.
+    # Same warm-agent hazard as the nuget-source adds above. ('@' replaces the
+    # deprecated '::' separator.)
+    dotnet new install "Umbraco.Templates@$UmbracoVersion" --force
 
     Write-Host "Creating new Umbraco project: $nameToApp..."
     dotnet new umbraco -n $nameToApp
@@ -167,7 +174,23 @@ try {
     # WIF (federated token) takes priority over client-secret auth when both are set.
     Write-Host "Authenticating to Azure..."
     if ($env:ARM_OIDC_TOKEN) {
-        az login --service-principal --username $env:ARM_CLIENT_ID --tenant $env:ARM_TENANT_ID --federated-token $env:ARM_OIDC_TOKEN | Out-Null
+        # Job-start ARM_OIDC_TOKEN can expire before later serial cases get here
+        # (AADSTS700024) — mint a fresh idToken at point of use when possible.
+        $oidcToken = $env:ARM_OIDC_TOKEN
+        if ($env:ARM_OIDC_REQUEST_URI -and $env:ARM_SERVICE_CONNECTION_ID -and $env:SYSTEM_ACCESSTOKEN) {
+            try {
+                $oidcUri = "$($env:ARM_OIDC_REQUEST_URI)?api-version=7.1&serviceConnectionId=$($env:ARM_SERVICE_CONNECTION_ID)"
+                $fresh = Invoke-RestMethod -Method Post -Uri $oidcUri -ContentType 'application/json' `
+                    -Headers @{ Authorization = "Bearer $($env:SYSTEM_ACCESSTOKEN)" }
+                if ($fresh.oidcToken) {
+                    Write-Host "Using freshly minted OIDC token."
+                    $oidcToken = $fresh.oidcToken
+                }
+            } catch {
+                Write-Warning "Fresh OIDC token request failed ($($_.Exception.Message)); falling back to job-start token."
+            }
+        }
+        az login --service-principal --username $env:ARM_CLIENT_ID --tenant $env:ARM_TENANT_ID --federated-token $oidcToken | Out-Null
     } else {
         az login --service-principal --username $env:ARM_CLIENT_ID --password $env:ARM_CLIENT_SECRET --tenant $env:ARM_TENANT_ID | Out-Null
     }
