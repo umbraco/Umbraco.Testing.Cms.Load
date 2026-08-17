@@ -97,7 +97,14 @@ foreach ($cellKey in ($cells.Keys | Sort-Object)) {
     }
     $candidate = $ordered[-1]
     $baselineRows = @($ordered[0..($ordered.Count - 2)] | Select-Object -Last $BaselineWindow)
-    $baselineMedians = [double[]]($baselineRows | ForEach-Object { [double]$_.median_ms })
+    # Drop rows whose median_ms is blank/unparseable rather than coercing them to
+    # 0 ([double]$null == 0), which would drag the baseline median down and risk a
+    # false REGRESSED verdict. Fewer valid rows correctly trips "insufficient".
+    $baselineMedians = [double[]]($baselineRows | ForEach-Object {
+        $m = 0.0
+        if (-not [string]::IsNullOrWhiteSpace([string]$_.median_ms) -and
+            [double]::TryParse([string]$_.median_ms, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$m)) { $m }
+    })
     $verdict = Test-ClientRegression -CandidateMedian ([double]$candidate.median_ms) `
         -BaselineMedians $baselineMedians -Threshold $MedianThreshold -MinBaselineRuns $MinBaselineRuns
     if ($verdict.Insufficient) {

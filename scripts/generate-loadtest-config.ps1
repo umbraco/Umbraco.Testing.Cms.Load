@@ -164,9 +164,12 @@ $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace 
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
 if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 
-# Effective ramp-up + whether this is a ramp run (ramp_time spans the full run).
+# Effective ramp-up + whether this is a ramp run. Identify ramp by its defining
+# knob — SpawnRate == 1 (the only profile that spawns at 1 VU/s), the same signal
+# the workbook uses. Deriving it from RampTime would misfire on any steady case
+# whose thread count >= duration (RampTime falls back to UserAmount for steady).
 $rampTimeEff = if ($RampTime -gt 0) { $RampTime } else { $UserAmount }
-$isRamp      = ($RampTime -gt 0 -and $RampTime -ge $TestDuration)
+$isRamp      = ($SpawnRate -eq 1)
 
 # Failure criteria + autoStop. A ramp run is *designed* to climb into saturation
 # to find the knee, so the absolute latency gates (and a low autoStop) would FAIL
