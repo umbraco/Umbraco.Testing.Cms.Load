@@ -150,6 +150,7 @@ The queue UI splits into three concerns: **what to test**, **which tiers to test
 | `umbracoVersion` | Umbraco CMS version. Free-text — accepts prereleases (`17.0.0-rc.1`, `17.1.0-beta.2`). The validator accepts v13, v17, v18 today (the majors with a published `Umbraco.Cms.TestDataSeeder` build — v18 reuses the v17 seeder as a fallback); v14/v15/v16 fail validation with a "seeder hasn't shipped" message. The major segment maps to the .NET runtime automatically (see table below). | 17.0.0 | free text |
 | `scenario` | Scenario folder name (must match a folder under `loadtests/scenarios/`) | Default | extend the `values` list when adding scenarios |
 | `workload` | Which workload to run. `frontend` runs the scenario's `locustfile.py` (anonymous reads + contact form). `backoffice` runs every `.jmx` under `scenarios/{scenario}/jmeter/v{major}/` sequentially (authenticated backoffice writes). See "Workload modes" below. The validator rejects backoffice when the chosen scenario has no `jmeter/v{major}/` folder. | frontend | `frontend`, `backoffice` |
+| `backofficePlans` | Backoffice only: which JMeter plans to run. Delete entries at queue time to skip a plan (e.g. `SaveDocumentType`). Ignored for frontend; a plan with no `.jmx` for the resolved major is skipped anyway. | all six | edit the list at queue time |
 
 **Which tiers:**
 
@@ -442,6 +443,8 @@ The `workload` queue-time parameter on the load-test pipeline (`azure-pipeline.y
 | `PublishContent` (v17+ only) | publish flow | same |
 
 Each `.jmx` gets its own ALT testId (`umbraco-lt-{scenario}-bo-{jmxStem}`), its own metric-capture window, its own blob path (`{scenario}/{major}/{version}/{tier}/{date}_{buildId}/{JmxName}/`), and its own row in `LoadTestSummary_CL` tagged with `jmeter_test_name`. Iterations are sequential within one tier-job and skip cleanly when a `.jmx` isn't present for the resolved major (e.g. `PublishContent` on v13).
+
+**Selecting which plans run.** The `backofficePlans` queue parameter lists the plans to run; delete entries at queue time to skip them (e.g. drop `SaveDocumentType` when you don't want its known v18 wedge tanking a run, or keep only the write plans). It's ignored for the frontend workload, and a plan with no `.jmx` for the resolved major is skipped regardless. All plans share the resolved backoffice VU count — there's no per-plan VU knob (that would sacrifice cross-plan comparability); scope a run by *which* plans it includes, not by per-plan concurrency.
 
 **State across the loop is intentionally shared.** Iterations run against the same warm App Service without re-seeding between them. SaveContent.jmx creates content; SaveDocumentType.jmx modifies schema; PublishContent.jmx runs against the cumulative state. This mirrors mixed-workload backoffice use, but means later iterations don't measure clean isolated performance. To compare a single `.jmx` cleanly across runs, treat each `jmeter_test_name` row as its own series.
 

@@ -36,6 +36,21 @@ parameters:
       - 'frontend'
       - 'backoffice'
 
+  # Backoffice only: which JMeter plans to run this run. Delete entries at queue
+  # time to skip plans — e.g. drop SaveDocumentType (known v18 lock wedge) to keep
+  # a run readable, or keep only the write plans. Ignored for the frontend
+  # workload. A plan with no .jmx for the resolved major is skipped anyway.
+  - name: backofficePlans
+    displayName: 'Backoffice plans (remove to skip; backoffice workload only)'
+    type: object
+    default:
+      - ViewHomePage
+      - MemberLogin
+      - SaveContent
+      - SaveAndPublishContent
+      - SaveDocumentType
+      - PublishContent
+
   - name: runStarter
     displayName: Run Starter tier
     type: boolean
@@ -228,6 +243,7 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -241,6 +257,7 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -254,6 +271,7 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -267,6 +285,7 @@ stages:
                 scenario: '${{ parameters.scenario }}'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
