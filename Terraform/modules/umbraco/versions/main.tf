@@ -82,7 +82,14 @@ resource "azurerm_windows_web_app" "app_service" {
       # so Oryx/Kudu shouldn't try to build again. False shaves a few seconds per deploy
       # and avoids edge cases where Oryx misidentifies the artifact.
       "SCM_DO_BUILD_DURING_DEPLOYMENT"             = "false"
-      "Serilog__MinimumLevel__Override__Microsoft" = "Information"
+      # Keep the Microsoft namespace at Umbraco's default (Warning). Information
+      # emits per-request ASP.NET + per-SQL EF Core logs, which under seeding +
+      # concurrent load balloon the Serilog file to hundreds of MB — distorting
+      # measurements, pressuring the App Service local disk, and making the single
+      # file sink a prime suspect for backoffice 500s under load (it also makes the
+      # backoffice log viewer refuse to open the file). Raise deliberately when
+      # debugging a specific run, not as a standing default.
+      "Serilog__MinimumLevel__Override__Microsoft" = "Warning"
 
       "Umbraco.Cms.TestDataSeeder__Options__Enabled"      = "true"
       "Umbraco.Cms.TestDataSeeder__Options__Preset"       = var.seeder_preset
