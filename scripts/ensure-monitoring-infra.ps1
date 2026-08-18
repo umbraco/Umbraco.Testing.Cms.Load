@@ -319,14 +319,22 @@ if ($existingDcr -and $existingDcr.properties.dataFlows) {
 $mergedFlows = @($foreignFlows) + @($desiredFlows)
 
 # Preserve foreign destinations too: a carried-over foreign dataFlow may target a
-# logAnalytics destination other than 'loadtest-workspace', and the PUT must
-# declare every destination its flows reference or ARM rejects it (400). Start
-# from the existing foreign logAnalytics destinations, then add our own.
+# destination other than our 'loadtest-workspace' — of ANY kind (logAnalytics,
+# azureMonitorMetrics, ...) — and the PUT must declare every destination its
+# flows reference or ARM rejects it (400). Carry every foreign destination kind
+# through verbatim, then add/replace our own logAnalytics entry.
 $mergedDestinations = @{ logAnalytics = @() }
-if ($existingDcr -and $existingDcr.properties.destinations -and $existingDcr.properties.destinations.logAnalytics) {
-    foreach ($d in @($existingDcr.properties.destinations.logAnalytics)) {
-        if ($d.name -ne "loadtest-workspace") {
-            $mergedDestinations.logAnalytics += @{ name = $d.name; workspaceResourceId = $d.workspaceResourceId }
+if ($existingDcr -and $existingDcr.properties.destinations) {
+    foreach ($kind in $existingDcr.properties.destinations.PSObject.Properties) {
+        if ($kind.Name -eq "logAnalytics") {
+            foreach ($d in @($kind.Value)) {
+                if ($d.name -ne "loadtest-workspace") {
+                    $mergedDestinations.logAnalytics += @{ name = $d.name; workspaceResourceId = $d.workspaceResourceId }
+                }
+            }
+        } else {
+            # Non-logAnalytics kinds (e.g. azureMonitorMetrics) round-trip as-is.
+            $mergedDestinations[$kind.Name] = $kind.Value
         }
     }
 }

@@ -28,11 +28,15 @@ export async function perfMarks(page: Page): Promise<Record<string, number | nul
           for (const e of list.getEntries()) last = Math.round(e.startTime);
         });
         obs.observe({ type: 'largest-contentful-paint', buffered: true });
+        // buffered entries are appended to the observer buffer during observe(),
+        // so drain them synchronously; then yield one task turn to catch any
+        // async delivery. Avoids a fixed multi-hundred-ms wait per call.
+        for (const e of obs.takeRecords()) last = Math.round(e.startTime);
         setTimeout(() => {
           for (const e of obs.takeRecords()) last = Math.round(e.startTime);
           obs.disconnect();
           resolve(last);
-        }, 200);
+        }, 0);
       } catch {
         resolve(null); // API unavailable (non-Chromium / no LCP element)
       }
