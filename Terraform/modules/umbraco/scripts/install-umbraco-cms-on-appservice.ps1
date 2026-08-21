@@ -71,7 +71,13 @@ $terraformCwd = (Get-Location).Path
 $updatedVersionName = $UmbracoVersion.Replace('.', '')
 $pathToApp          = "./NewUmbracoProject$updatedVersionName"
 $nameToApp          = "NewUmbracoProject$updatedVersionName"
-$absoluteBuildDir   = Join-Path $terraformCwd $updatedVersionName
+# Keyed on AppServiceName too, not just version: a local `terraform apply`
+# (default parallelism 10) can run this local-exec for two test cases that
+# share an Umbraco version concurrently on the same build agent - version-only
+# naming would race two processes on one directory. The pipeline is safe only
+# because provision.yml pins -parallelism=1.
+$buildDirName       = "$updatedVersionName-$AppServiceName"
+$absoluteBuildDir   = Join-Path $terraformCwd $buildDirName
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Deploying Umbraco $UmbracoVersion ($Scenario)" -ForegroundColor Cyan
@@ -83,14 +89,14 @@ Write-Host "========================================" -ForegroundColor Cyan
 # touched. Cleanup happens in the finally{} block regardless of outcome.
 
 # Clean any leftover from a previous failed run, otherwise dotnet new would fail.
-if (Test-Path -LiteralPath $updatedVersionName) {
-    Write-Host "Cleaning leftover build dir: $updatedVersionName"
-    Remove-Item -Recurse -Force -LiteralPath $updatedVersionName
+if (Test-Path -LiteralPath $buildDirName) {
+    Write-Host "Cleaning leftover build dir: $buildDirName"
+    Remove-Item -Recurse -Force -LiteralPath $buildDirName
 }
 
 try {
-    New-Item -ItemType Directory -Path $updatedVersionName -Force | Out-Null
-    Set-Location -LiteralPath $updatedVersionName
+    New-Item -ItemType Directory -Path $buildDirName -Force | Out-Null
+    Set-Location -LiteralPath $buildDirName
 
     # Prerelease and nightly feeds — needed for Umbraco versions not yet on nuget.org.
     # `dotnet nuget add source` returns non-zero when the source name already
@@ -115,10 +121,14 @@ try {
     Set-Location -LiteralPath $nameToApp
 
     Write-Host "Adding Umbraco.Cms.TestDataSeeder $seederPackageVersion..."
-    dotnet add package Umbraco.Cms.TestDataSeeder --version $seederPackageVersion
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "dotnet add package Umbraco.Cms.TestDataSeeder failed (exit $LASTEXITCODE)."
-        exit 1
+    # $PSNativeCommandUseErrorActionPreference already makes a nonzero exit here
+    # throw before any post-hoc $LASTEXITCODE check would run - catch it instead
+    # so this failure gets its own diagnostic rather than a generic native-
+    # command error, then rethrow to keep the usual outer try/finally cleanup.
+    try {
+        dotnet add package Umbraco.Cms.TestDataSeeder --version $seederPackageVersion
+    } catch {
+        throw "dotnet add package Umbraco.Cms.TestDataSeeder failed: $($_.Exception.Message)"
     }
 
     # Copy scenario code overlay (everything except appsettings.json) into the project tree.
@@ -204,6 +214,15 @@ try {
     } else {
         Write-Warning "ARM_SUBSCRIPTION_ID not set; deploy will target the SP's default subscription."
     }
+
+    # Ensure the app is running before deploy/poll (idempotent - no-op if
+    # already running). A local re-apply against the SAME existing App Service
+    # (only null_resource.deploy_umbraco's triggers changed, not the web app
+    # resource itself, so Terraform doesn't recreate it) can find it Stopped
+    # from this same script's own end-of-run stop on a prior local run —
+    # without this, the seeder-status poll below fails for the full timeout
+    # window even though the redeploy succeeded.
+    az webapp start -n $AppServiceName -g $ResourceGroupName | Out-Null
 
     $deployZip = Join-Path $absoluteBuildDir "$nameToApp/publish.zip"
     Write-Host "Deploying to App Service: $AppServiceName..."

@@ -81,7 +81,7 @@ resource "azurerm_windows_web_app" "app_service" {
       # Pre-built artifacts are zip-deployed via `az webapp deployment source config-zip`,
       # so Oryx/Kudu shouldn't try to build again. False shaves a few seconds per deploy
       # and avoids edge cases where Oryx misidentifies the artifact.
-      "SCM_DO_BUILD_DURING_DEPLOYMENT"             = "false"
+      "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
       # Keep the Microsoft namespace at Umbraco's default (Warning). Information
       # emits per-request ASP.NET + per-SQL EF Core logs, which under seeding +
       # concurrent load balloon the Serilog file to hundreds of MB — distorting

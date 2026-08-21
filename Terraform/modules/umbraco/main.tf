@@ -4,6 +4,16 @@ locals {
   # Azure SQL admin login must start with a letter; prefix one since random_string can start with a digit.
   sql_admin_login = "u${random_string.admin_login.result}"
 
+  # Per-tier App Service Plan SKU, with the queue-time override applied if set.
+  # Computed once here (not inline on the resource below) so output.tf can
+  # reference the same value instead of re-deriving the override logic - a
+  # resource provisioned with one value and metadata reporting a recomputed
+  # one would silently disagree if the two copies ever drifted.
+  tier_app_sku = {
+    for t in local.tiers_in_use :
+    t => var.app_sku_override != "" ? var.app_sku_override : var.tier_specs[t].app_sku
+  }
+
   # Per-DB DTU cap per tier, with the queue-time override applied if set.
   # The override lets a run size SQL independently of the app tier to isolate
   # which side is the bottleneck.
@@ -108,7 +118,7 @@ resource "azurerm_service_plan" "appserviceplan" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Windows"
-  sku_name            = var.app_sku_override != "" ? var.app_sku_override : var.tier_specs[each.key].app_sku
+  sku_name            = local.tier_app_sku[each.key]
   tags                = merge(local.common_tags, { tier = each.key })
 }
 
