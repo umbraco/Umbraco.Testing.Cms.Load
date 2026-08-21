@@ -299,6 +299,12 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
                 Write-Host "  Duration: $elapsedSeconds seconds"
                 Write-Host "  Executed: $($responseBody.ExecutedCount)"
                 Write-Host "  Failed: $($responseBody.FailedCount)"
+                # CompletedWithErrors is treated as terminal-OK so the run proceeds,
+                # but a partially-seeded DB skews the load test. Surface it loudly
+                # rather than letting a green run hide a half-populated environment.
+                if ($responseBody.Status -eq "CompletedWithErrors") {
+                    Write-Host "##vso[task.logissue type=warning]Seeder reported $($responseBody.FailedCount) failure(s) (CompletedWithErrors) - load-test data may be incomplete for this run."
+                }
                 Write-SeederResult -Status $responseBody.Status -DurationSeconds $elapsedSeconds
             }
             $seederComplete = $true

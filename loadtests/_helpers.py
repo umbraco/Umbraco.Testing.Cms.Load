@@ -95,7 +95,8 @@ def register_delivery_api_probe():
     of items doesn't stall test_start.
     """
     PAGE_SIZE = 100
-    MAX_ITEMS = 5000   # safety cap; current Massive preset is ~10k docs
+    MAX_ITEMS = 20000  # runaway guard only; must stay well above Massive (~10k)
+                       # so delivery_item samples the whole inventory, not half
 
     @events.test_start.add_listener
     def _on_start(environment, **_):
