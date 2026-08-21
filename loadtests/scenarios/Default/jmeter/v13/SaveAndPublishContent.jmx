@@ -543,6 +543,18 @@ try {
               <stringProp name="cacheKey">false</stringProp>
             </JSR223PostProcessor>
             <hashTree/>
+            <ResponseAssertion guiclass="AssertionGui" testclass="ResponseAssertion" testname="Assert root content discovered (seed ok)" enabled="true">
+              <collectionProp name="Asserion.test_strings">
+                <stringProp name="discovery_sentinel">ROOT_CONTENT_ID_NOT_FOUND</stringProp>
+              </collectionProp>
+              <stringProp name="Assertion.custom_message">root_content_id not discovered - seeded content missing (got ROOT_CONTENT_ID_NOT_FOUND); the save block would otherwise be silently skipped</stringProp>
+              <stringProp name="Assertion.test_field">Assertion.response_data</stringProp>
+              <boolProp name="Assertion.assume_success">false</boolProp>
+              <intProp name="Assertion.test_type">20</intProp>
+              <stringProp name="Assertion.scope">variable</stringProp>
+              <stringProp name="Scope.variable">root_content_id</stringProp>
+            </ResponseAssertion>
+            <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/backoffice/umbracoapi/dashboard/GetDashboard" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/backoffice/umbracoapi/dashboard/GetDashboard</stringProp>

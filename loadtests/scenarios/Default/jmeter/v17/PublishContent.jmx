@@ -1258,46 +1258,6 @@ try {
               </stringProp>
             </JSR223PostProcessor>
             <hashTree/>
-            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="Build PUT body from GET response" enabled="true">
-              <stringProp name="scriptLanguage">groovy</stringProp>
-              <stringProp name="parameters"></stringProp>
-              <stringProp name="filename"></stringProp>
-              <stringProp name="cacheKey">true</stringProp>
-              <stringProp name="script">import groovy.json.JsonSlurper
-import groovy.json.JsonOutput
-import java.text.SimpleDateFormat
-import java.util.Date
-
-def responseBody = prev.getResponseDataAsString()
-try {
-    def doc = new JsonSlurper().parseText(responseBody)
-    def newName = &apos;LoadTest_&apos; + new SimpleDateFormat(&quot;yyyyMMdd_HHmmss&quot;).format(new Date())
-    def cultures = []
-    if (doc.variants) {
-        doc.variants.each { v -&gt;
-            v.name = newName
-            if (v.culture) cultures &lt;&lt; v.culture
-        }
-    }
-    def saveMap = doc.collectEntries { k, v -&gt; [k, v] }
-    [&quot;id&quot;, &quot;documentType&quot;, &quot;creator&quot;, &quot;updater&quot;, &quot;createDate&quot;, &quot;updateDate&quot;,
-     &quot;urls&quot;, &quot;isDirty&quot;].each { saveMap.remove(it) }
-
-    vars.put(&quot;document_save_body&quot;, JsonOutput.toJson(saveMap))
-
-    def validateMap = new LinkedHashMap(saveMap)
-    validateMap.put(&quot;cultures&quot;, cultures ?: [&quot;en-US&quot;])
-    vars.put(&quot;document_validate_body&quot;, JsonOutput.toJson(validateMap))
-
-    log.info(&quot;PUT bodies built. newName=&quot; + newName + &quot; | cultures=&quot; + cultures)
-} catch (Exception e) {
-    log.error(&quot;Build PUT body failed: &quot; + e.getMessage())
-    vars.put(&quot;document_save_body&quot;,     &apos;{&quot;template&quot;:null,&quot;values&quot;:[],&quot;variants&quot;:[]}&apos;)
-    vars.put(&quot;document_validate_body&quot;, &apos;{&quot;template&quot;:null,&quot;values&quot;:[],&quot;variants&quot;:[],&quot;cultures&quot;:[&quot;en-US&quot;]}&apos;)
-}
-              </stringProp>
-            </JSR223PostProcessor>
-            <hashTree/>
           </hashTree>
           <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="GET /umbraco/management/api/v1/tree/document/ancestors" enabled="true">
             <stringProp name="HTTPSampler.path">/umbraco/management/api/v1/tree/document/ancestors</stringProp>

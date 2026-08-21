@@ -1610,7 +1610,7 @@ try {
                 </elementProp>
                 <elementProp name="Referer" elementType="Header">
                   <stringProp name="Header.name">Referer</stringProp>
-                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/365bcb53-68b0-49ec-94d4-f41373a86eea</stringProp>
+                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/${randomDocTypeId}</stringProp>
                 </elementProp>
                 <elementProp name="Sec-Fetch-Site" elementType="Header">
                   <stringProp name="Header.name">Sec-Fetch-Site</stringProp>
@@ -1769,7 +1769,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
                 </elementProp>
                 <elementProp name="Referer" elementType="Header">
                   <stringProp name="Header.name">Referer</stringProp>
-                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/365bcb53-68b0-49ec-94d4-f41373a86eea</stringProp>
+                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/${randomDocTypeId}</stringProp>
                 </elementProp>
                 <elementProp name="Sec-Fetch-Site" elementType="Header">
                   <stringProp name="Header.name">Sec-Fetch-Site</stringProp>
@@ -1836,7 +1836,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
                 </elementProp>
                 <elementProp name="Referer" elementType="Header">
                   <stringProp name="Header.name">Referer</stringProp>
-                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/365bcb53-68b0-49ec-94d4-f41373a86eea</stringProp>
+                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/${randomDocTypeId}</stringProp>
                 </elementProp>
                 <elementProp name="Sec-Fetch-Site" elementType="Header">
                   <stringProp name="Header.name">Sec-Fetch-Site</stringProp>
@@ -1908,7 +1908,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
                 </elementProp>
                 <elementProp name="Referer" elementType="Header">
                   <stringProp name="Header.name">Referer</stringProp>
-                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/365bcb53-68b0-49ec-94d4-f41373a86eea/root</stringProp>
+                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/${randomDocTypeId}/root</stringProp>
                 </elementProp>
                 <elementProp name="Sec-Fetch-Site" elementType="Header">
                   <stringProp name="Header.name">Sec-Fetch-Site</stringProp>
@@ -1977,7 +1977,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
                 </elementProp>
                 <elementProp name="Referer" elementType="Header">
                   <stringProp name="Header.name">Referer</stringProp>
-                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/365bcb53-68b0-49ec-94d4-f41373a86eea/root</stringProp>
+                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/${randomDocTypeId}/root</stringProp>
                 </elementProp>
                 <elementProp name="Sec-Fetch-Site" elementType="Header">
                   <stringProp name="Header.name">Sec-Fetch-Site</stringProp>
@@ -2062,7 +2062,7 @@ vars.put(&quot;documentTypeJson&quot;, JsonOutput.toJson(json))</stringProp>
                 </elementProp>
                 <elementProp name="Referer" elementType="Header">
                   <stringProp name="Header.name">Referer</stringProp>
-                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/365bcb53-68b0-49ec-94d4-f41373a86eea/root</stringProp>
+                  <stringProp name="Header.value">${protocol}://${server}:${port}/umbraco/section/settings/workspace/document-type/edit/${randomDocTypeId}/root</stringProp>
                 </elementProp>
                 <elementProp name="Sec-Fetch-Site" elementType="Header">
                   <stringProp name="Header.name">Sec-Fetch-Site</stringProp>
