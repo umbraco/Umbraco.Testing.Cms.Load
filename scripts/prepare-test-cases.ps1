@@ -301,6 +301,12 @@ foreach ($case in $cases) {
         if ($validTiers -notcontains $tierName) {
             Fail "case ${caseIndex}: tier '$tierName' is not in tiers.json (known: $($validTiers -join ', '))"
         }
+        # -notcontains matched case-insensitively above, so normalize to the
+        # canonical casing from tiers.json - a hand-authored -TestCasesJson
+        # (this script's standalone entrypoint) with e.g. tiers: ['standard']
+        # would otherwise pass validation but flow lowercase into testCaseId/
+        # tier/the Terraform var, which may do an exact-case lookup.
+        $tierName = @($validTiers | Where-Object { $_ -ieq $tierName })[0]
 
         # Keep this format in sync with the compile-time testCaseId in azure-pipeline.yml.
         $testCaseId = "$($case.umbraco)__${tierName}__$($case.scenario)"

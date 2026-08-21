@@ -60,7 +60,12 @@ function Build-ClientRows {
     foreach ($f in $files) {
         foreach ($line in (Get-Content $f.FullName)) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            $m = $line | ConvertFrom-Json
+            # One truncated/corrupt line (e.g. the Playwright process killed
+            # mid-write) must not abort the whole publish - skip just that line.
+            try { $m = $line | ConvertFrom-Json } catch {
+                Write-Warning "Couldn't parse a line in $($f.FullName): $($_.Exception.Message) - skipping it."
+                continue
+            }
             $rows.Add([pscustomobject][ordered]@{
                 TimeGenerated       = $timeGenerated
                 run_id              = $BuildId

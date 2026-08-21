@@ -47,6 +47,16 @@ function Test-ClientRegression {
 
 if ($DotSourceForTest) { return }
 
+# $Major has no [Parameter(Mandatory)] (matches this script's other "real" run
+# params, left optional so -DotSourceForTest doesn't need to supply them) - but
+# an omitted/zero value must fail loudly here, not silently build a
+# 'client/0/' blob prefix that matches nothing and reports a false "no client
+# runs found" pass.
+if ($Major -le 0) {
+    Write-Host "##vso[task.logissue type=error]check-client-regression: -Major must be a positive Umbraco major version, got '$Major'."
+    exit 1
+}
+
 # Get-HistoryCells can't be reused: client rows use `metric` + the `client/`
 # prefix (it filters scenario_name and the `{scenario}/` prefix).
 $prefix = "client/$Major/"

@@ -430,7 +430,14 @@ if ($engineFiles.Count -gt 0) {
     $onlyTC = -not [string]::IsNullOrWhiteSpace($JmeterTestName)
     $byLabel = @{}
     foreach ($file in $engineFiles) {
-        $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC
+        # One unreadable/corrupt engine file (e.g. truncated mid-write) must not
+        # abort the whole publish - skip it and keep the other engines' data.
+        try {
+            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC
+        } catch {
+            Write-Warning "Couldn't parse $($file.FullName): $($_.Exception.Message) - skipping this file."
+            continue
+        }
         foreach ($kv in $parsed.ByLabel.GetEnumerator()) {
             $merged = $byLabel[$kv.Key]
             if (-not $merged) {
