@@ -60,7 +60,18 @@ class FrontEndUser(FastHttpUser):
     def delivery_item(self):
         ids = self.environment.delivery_ids
         if not ids:
-            raise RuntimeError("Delivery API probe returned zero items - scenario misconfigured")
+            # Record as a failed request (not just an uncaught exception) so a
+            # misconfigured scenario shows an error spike instead of silently
+            # reduced RPS - raising here happens before any self.client call,
+            # which Locust never counts as a request at all.
+            self.environment.events.request.fire(
+                request_type="LOCUST",
+                name="DeliveryApiItem",
+                response_time=0,
+                response_length=0,
+                exception=RuntimeError("Delivery API probe returned zero items - scenario misconfigured"),
+            )
+            return
         self.client.get(
             f"{DELIVERY_API_LIST_PATH}/item/{random.choice(ids)}",
             name="DeliveryApiItem",
