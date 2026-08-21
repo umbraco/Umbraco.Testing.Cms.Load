@@ -90,6 +90,12 @@ resource "azurerm_windows_web_app" "app_service" {
       # backoffice log viewer refuse to open the file). Raise deliberately when
       # debugging a specific run, not as a standing default.
       "Serilog__MinimumLevel__Override__Microsoft" = "Warning"
+      # Same reasoning as the Microsoft override above, different offender: every
+      # backoffice OAuth cycle (authorize/token/revoke/end_session) logs several
+      # Information-level lines here (matched endpoint, extracted/validated
+      # request, JSON response) — confirmed via a real run's trace log to be ~88%
+      # of total log volume under backoffice load, dwarfing the Microsoft override.
+      "Serilog__MinimumLevel__Override__OpenIddict" = "Warning"
 
       "Umbraco.Cms.TestDataSeeder__Options__Enabled"      = "true"
       "Umbraco.Cms.TestDataSeeder__Options__Preset"       = var.seeder_preset
