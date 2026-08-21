@@ -96,6 +96,16 @@ resource "azurerm_windows_web_app" "app_service" {
       # request, JSON response) — confirmed via a real run's trace log to be ~88%
       # of total log volume under backoffice load, dwarfing the Microsoft override.
       "Serilog__MinimumLevel__Override__OpenIddict" = "Warning"
+      # Fires once per content save/publish: "Notifications can not be sent, no
+      # site URL is set" — this environment has no absolute site URL configured
+      # and no notification consumers (no one needs the load test to email
+      # anyone), so the warning is expected and harmless, but it fired 4452
+      # times in one run (48% of the post-Microsoft/OpenIddict log volume).
+      # Deliberately narrow (this handler only, not a broad namespace) so it
+      # doesn't hide other Umbraco.Cms.Core.Events warnings. If backoffice email
+      # notifications are ever exercised by a test, configure the site URL
+      # instead of raising this back down.
+      "Serilog__MinimumLevel__Override__Umbraco.Cms.Core.Events.UserNotificationsHandler" = "Error"
 
       "Umbraco.Cms.TestDataSeeder__Options__Enabled"      = "true"
       "Umbraco.Cms.TestDataSeeder__Options__Preset"       = var.seeder_preset
