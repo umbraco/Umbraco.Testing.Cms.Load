@@ -70,13 +70,16 @@ def register_inventory_probe():
 
         # Defensive filtering - a single malformed sample would otherwise crash
         # the listener and skip workload setup for every VU in this engine.
-        samples = [s for s in data.get("sampleContentUrls", []) if isinstance(s, dict) and "url" in s]
+        # `or []` (not just a .get default) so an explicit JSON null - not only a
+        # missing key - also falls back to empty instead of raising a TypeError
+        # from iterating None, which would abort ALL buckets, not just this one.
+        samples = [s for s in (data.get("sampleContentUrls") or []) if isinstance(s, dict) and "url" in s]
         environment.urls = {
-            "section":  [u for u in data.get("rootSectionUrls", []) if isinstance(u, str)],
+            "section":  [u for u in (data.get("rootSectionUrls") or []) if isinstance(u, str)],
             "category": [s["url"] for s in samples if s.get("docType") == "Category"],
             "page":     [s["url"] for s in samples if s.get("docType") == "Page"],
             "detail":   [s["url"] for s in samples if s.get("docType") == "Detail"],
-            "media":    [u for u in data.get("sampleMediaUrls", []) if isinstance(u, str)],
+            "media":    [u for u in (data.get("sampleMediaUrls") or []) if isinstance(u, str)],
         }
         counts = ", ".join(f"{k}={len(v)}" for k, v in environment.urls.items())
         logger.info(f"Inventory loaded: {counts}")
@@ -124,11 +127,15 @@ def register_delivery_api_probe():
             if not isinstance(body, dict):
                 break
 
-            page = [i["id"] for i in body.get("items", []) if isinstance(i, dict) and "id" in i]
-            if not page:
+            raw_items = body.get("items", [])
+            page = [i["id"] for i in raw_items if isinstance(i, dict) and "id" in i]
+            if not raw_items:
                 break  # ran past the end
             ids.extend(page)
-            if len(page) < PAGE_SIZE:
+            # Last-page check on the RAW page size, not the post-filter count: a
+            # full page containing a few malformed entries would otherwise look
+            # short and be mistaken for the last page, truncating the pool early.
+            if len(raw_items) < PAGE_SIZE:
                 break  # last page
             skip += PAGE_SIZE
 
@@ -137,10 +144,22 @@ def register_delivery_api_probe():
 
 
 def pick_url(user, bucket: str, name: str) -> None:
-    """Pick a random URL from a probed bucket. Raises on empty bucket."""
+    """Pick a random URL from a probed bucket. Records a failed request on an
+    empty bucket (never raises before a request is made) so a misconfigured run
+    shows up as an error spike on the affected task, not silently reduced RPS -
+    raising here happens before any self.client call, which Locust never counts
+    as a request at all.
+    """
     urls = user.environment.urls.get(bucket)
     if not urls:
-        raise RuntimeError(f"Bucket '{bucket}' is empty - inventory probe failed or seeder didn't seed it")
+        user.environment.events.request.fire(
+            request_type="LOCUST",
+            name=name,
+            response_time=0,
+            response_length=0,
+            exception=RuntimeError(f"Bucket '{bucket}' is empty - inventory probe failed or seeder didn't seed it"),
+        )
+        return
     user.client.get(random.choice(urls), name=name)
 
 
