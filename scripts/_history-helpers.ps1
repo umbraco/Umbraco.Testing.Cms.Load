@@ -104,6 +104,16 @@ function Get-HistoryCells {
             # into the median and disagrees with the dashboard.
             if ($row.parse_status -and $row.parse_status -ne 'ok') { continue }
             if ($row.cold_start -eq $true) { continue }
+            # Pre-TC-discrimination historical rows (old majors, before backoffice
+            # publish was fixed to keep only Transaction Controller labels) can
+            # carry a raw per-request sampler name with an embedded GUID, e.g.
+            # 'GET .../document-type/0099b49e-...'. Each GUID is functionally its
+            # own one-off cell with near-zero shared history, so comparing it
+            # against another run's DIFFERENT random GUID produces meaningless
+            # (and often huge) deltas. Exclude rather than purge the underlying
+            # blob data, and this also backstops any future TC-discrimination
+            # regression from leaking raw samplers again.
+            if ($row.scenario_name -match '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}') { continue }
             if ($Sampler -and $row.scenario_name -ne $Sampler) { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"
