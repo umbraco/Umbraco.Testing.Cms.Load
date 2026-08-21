@@ -512,7 +512,8 @@ try {
         def __isPub = { n -&gt; def cc = n?.cssClasses; if (cc instanceof List) { return !cc.any { it?.toString()?.contains(&quot;not-published&quot;) } }; if (cc != null) { return !cc.toString().contains(&quot;not-published&quot;) }; return true }
         def __pub = __sel.findAll(__isPub)
         def __pool = __pub ? __pub : __sel
-        def node = __pool[new Random().nextInt(__pool.size())]
+        def __idx = ctx.getThreadNum() % __pool.size()
+        def node = __pool[__idx]
         def id = node.id.toString()
         def cssClasses = node.cssClasses
         def isNotPublished = false
@@ -850,7 +851,8 @@ try {
         def __isPub = { n -&gt; def cc = n?.cssClasses; if (cc instanceof List) { return !cc.any { it?.toString()?.contains(&quot;not-published&quot;) } }; if (cc != null) { return !cc.toString().contains(&quot;not-published&quot;) }; return true }
         def __pub = nodes.findAll(__isPub)
         def __pool = __pub ? __pub : nodes
-        def node = __pool[new Random().nextInt(__pool.size())]
+        def __idx = ctx.getThreadNum() % __pool.size()
+        def node = __pool[__idx]
         def id = node.id.toString()
         def published = (node.published != null) ? node.published.toString() : &quot;false&quot;
         vars.put(&quot;node_id_l1&quot;, id)
@@ -1028,7 +1030,8 @@ try {
         def __isPub = { n -&gt; def cc = n?.cssClasses; if (cc instanceof List) { return !cc.any { it?.toString()?.contains(&quot;not-published&quot;) } }; if (cc != null) { return !cc.toString().contains(&quot;not-published&quot;) }; return true }
         def __pub = nodes.findAll(__isPub)
         def __pool = __pub ? __pub : nodes
-        def node = __pool[new Random().nextInt(__pool.size())]
+        def __idx = ctx.getThreadNum() % __pool.size()
+        def node = __pool[__idx]
         def id = node.id.toString()
         def published = (node.published != null) ? node.published.toString() : &quot;false&quot;
         vars.put(&quot;node_id_l2&quot;, id)

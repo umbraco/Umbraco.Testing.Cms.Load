@@ -880,7 +880,8 @@ try {
         // valid parent instead of silently skipping; fall back to any node.
         def __pub = __sel.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
         def __pool = __pub ? __pub : __sel
-        def item = __pool[new Random().nextInt(__pool.size())]
+        def __idx = ctx.getThreadNum() % __pool.size()
+        def item = __pool[__idx]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -985,7 +986,8 @@ try {
         // valid parent instead of silently skipping; fall back to any node.
         def __pub = items.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
         def __pool = __pub ? __pub : items
-        def item = __pool[new Random().nextInt(__pool.size())]
+        def __idx = ctx.getThreadNum() % __pool.size()
+        def item = __pool[__idx]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
@@ -1082,7 +1084,8 @@ try {
         // valid parent instead of silently skipping; fall back to any node.
         def __pub = items.findAll { it?.variants &amp;&amp; it.variants[0]?.state?.toString() == &quot;Published&quot; }
         def __pool = __pub ? __pub : items
-        def item = __pool[new Random().nextInt(__pool.size())]
+        def __idx = ctx.getThreadNum() % __pool.size()
+        def item = __pool[__idx]
         def id = item.id.toString()
         def firstVariantState = item.variants ? item.variants[0]?.state?.toString() : null
         def published = (firstVariantState == &quot;Published&quot;) ? &quot;true&quot; : &quot;false&quot;
