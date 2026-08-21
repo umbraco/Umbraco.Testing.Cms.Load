@@ -6,10 +6,15 @@ export const TIPTAP = 'umb-input-tiptap .tiptap, umb-input-tiptap .ProseMirror';
 // Content section root (renders the tree with the Homepage root node).
 export const CONTENT_URL = `${env.baseUrl}/umbraco/section/content`;
 
+// Escape a value for use inside a double-quoted CSS attribute selector.
+function cssAttrValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 // The Homepage tree node, scoped to the sidebar so it can't drift onto a
 // same-named workspace/breadcrumb element.
 export function homepageTreeItem(page: Page, homepageName: string) {
-  return page.locator(`umb-section-sidebar uui-menu-item[label="${homepageName}"]`).first();
+  return page.locator(`umb-section-sidebar uui-menu-item[label="${cssAttrValue(homepageName)}"]`).first();
 }
 
 // Wait for the Homepage tree node with an actionable error if it's missing.

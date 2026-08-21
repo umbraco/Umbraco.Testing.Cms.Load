@@ -108,23 +108,38 @@ export async function runColdCached(
     beforeEach?: (page: Page) => Promise<void>;
     cold: (page: Page) => Promise<number>;
     cached: (page: Page) => Promise<number>;
+    // Navigation Timing / LCP only reflect the page's last full navigation, not
+    // an SPA-internal transition (e.g. a tree-item click that triggers no new
+    // navigation entry). Callers whose cold/cached action isn't a real
+    // navigation should set this false, or the marks silently describe an
+    // earlier, unrelated page load instead of the action being measured.
+    capturePerfMarks?: boolean;
   },
 ): Promise<void> {
+  const capturePerfMarks = opts.capturePerfMarks ?? true;
   const cold: number[] = [];
   const cached: number[] = [];
   const coldMarks: Record<string, number | null>[] = [];
   const cachedMarks: Record<string, number | null>[] = [];
   for (let i = 0; i < env.reps; i++) {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    const page = await context.newPage();
-    await loginByForm(page);
-    if (opts.beforeEach) await opts.beforeEach(page);
-    cold.push(await opts.cold(page));
-    coldMarks.push(await perfMarks(page));
-    cached.push(await opts.cached(page));
-    cachedMarks.push(await perfMarks(page));
-    await context.close();
+    try {
+      const page = await context.newPage();
+      await loginByForm(page);
+      if (opts.beforeEach) await opts.beforeEach(page);
+      cold.push(await opts.cold(page));
+      if (capturePerfMarks) coldMarks.push(await perfMarks(page));
+      cached.push(await opts.cached(page));
+      if (capturePerfMarks) cachedMarks.push(await perfMarks(page));
+    } catch (e) {
+      // One slow/flaky rep (exactly what this harness is built to catch) must not
+      // discard every prior successful rep — skip it and keep going. cold/cached
+      // don't need equal length; each is summarized independently.
+      console.warn(`runColdCached: rep ${i} failed, skipping: ${(e as Error).message}`);
+    } finally {
+      await context.close().catch(() => {});
+    }
   }
-  emitMetric(opts.coldMetric, cold, medianMarks(coldMarks));
-  emitMetric(opts.cachedMetric, cached, medianMarks(cachedMarks));
+  emitMetric(opts.coldMetric, cold, capturePerfMarks ? medianMarks(coldMarks) : {});
+  emitMetric(opts.cachedMetric, cached, capturePerfMarks ? medianMarks(cachedMarks) : {});
 }

@@ -14,6 +14,10 @@ test('homepage node cold + cached load', async ({ browser }) => {
   await runColdCached(browser, {
     coldMetric: 'cold_homenode_load',
     cachedMetric: 'cached_homenode_load',
+    // cold/cached open the node via a tree-item click (SPA route change, no new
+    // navigation entry) — Navigation Timing/LCP marks would describe the
+    // preceding beforeEach/cached goto(CONTENT_URL), not this click.
+    capturePerfMarks: false,
     beforeEach: async (page) => {
       await page.goto(CONTENT_URL);
       await waitForHomepageNode(page, HOMEPAGE_NAME);

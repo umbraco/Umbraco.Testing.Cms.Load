@@ -13,17 +13,36 @@ export async function loginByForm(page: Page): Promise<number> {
   // An already-authenticated session redirects straight to the shell, so the
   // login form never appears. Only fill/submit when the username field shows up.
   const username = page.locator('input[name="username"]');
-  // Treat ONLY a visibility timeout as "already authenticated, skip form"; let
-  // any other error propagate instead of masking it as a 60s sidebar-wait.
-  const loginFormShown = await username.waitFor({ state: 'visible', timeout: 15_000 })
-    .then(() => true, (e) => { if (e instanceof PwErrors.TimeoutError) return false; throw e; });
-  if (loginFormShown) {
+  const sidebar = page.locator('umb-section-sidebar').first();
+
+  // Wait for whichever appears first, rather than guessing "already
+  // authenticated" from a short timeout on the login field alone: under the
+  // load this harness itself generates, a genuinely-showing login form can take
+  // longer than a short guess-timeout to render, which previously got
+  // misclassified as "already authenticated" and masked as a 60s sidebar-wait
+  // failure with no hint of the real cause.
+  try {
+    await username.or(sidebar).first().waitFor({ state: 'visible', timeout: 60_000 });
+  } catch (e) {
+    if (e instanceof PwErrors.TimeoutError) {
+      throw new Error('Neither the login form nor the backoffice sidebar appeared within 60s - the app may be down or unresponsive.');
+    }
+    throw e;
+  }
+
+  if (await username.isVisible()) {
     await username.fill(env.user);
     await page.locator('input[name="password"]').fill(env.password);
     await page.locator('button[type="submit"]').click();
+    try {
+      await sidebar.waitFor({ state: 'visible', timeout: 60_000 });
+    } catch (e) {
+      if (e instanceof PwErrors.TimeoutError) {
+        throw new Error('Login form was submitted but the backoffice sidebar never appeared - check credentials/seeded member state or the auth backend.');
+      }
+      throw e;
+    }
   }
 
-  await page.locator('umb-section-sidebar').first()
-    .waitFor({ state: 'visible', timeout: 60_000 });
   return performance.now() - start;
 }

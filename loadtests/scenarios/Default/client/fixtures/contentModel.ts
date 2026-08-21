@@ -184,13 +184,23 @@ async function ensureBlockGridAllowsHeroBlock(
     return;
   }
 
-  const values = new BlockGridDataTypeBuilder()
+  const built = new BlockGridDataTypeBuilder()
     .withName(DT.blockGrid)
     .addBlock()
     .withContentElementTypeKey(heroBlockElementTypeId)
     .withAllowAtRoot(true)
     .done()
     .build().values;
+
+  // Merge into current.values rather than replacing it outright: the builder
+  // only ever emits 'blocks' + 'blockGroups', so a wholesale replace would
+  // silently drop any other pre-existing config (validationLimit, gridColumns,
+  // useLiveEditing, maxPropertyWidth, ...) on this data type's first write.
+  const builtAliases = new Set(built.map((v: any) => v.alias));
+  const values = [
+    ...(current.values ?? []).filter((v: any) => !builtAliases.has(v.alias)),
+    ...built,
+  ];
 
   await api.dataType.update(blockGridDataTypeId, {
     name: current.name,
