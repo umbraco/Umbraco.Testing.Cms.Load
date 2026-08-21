@@ -143,10 +143,12 @@ foreach ($blob in $blobs) {
             --file $tmp `
             --no-progress | Out-Null
 
-        $rows = @()
+        # List[object] + .Add(): += on a PowerShell array is O(N²) and dominates
+        # wall-clock on large multi-sampler/multi-engine history files.
+        $rows = [System.Collections.Generic.List[object]]::new()
         foreach ($line in (Get-Content $tmp)) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
-            try { $rows += ($line | ConvertFrom-Json) }
+            try { $rows.Add(($line | ConvertFrom-Json)) }
             catch { Write-Warning "   $blobName : skip malformed line" }
         }
         if ($rows.Count -eq 0) {
