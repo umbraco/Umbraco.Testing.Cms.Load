@@ -127,5 +127,44 @@ else {
         --public-access off | Out-Null
     Write-Host "   created"
 }
+
+# Blob lifecycle: tier aged results to Cool/Archive so this long-lived account
+# doesn't grow unbounded on hot tier. Idempotent (create replaces any existing
+# policy). Set either threshold to 0 to disable that transition.
+Write-Host "-> Lifecycle policy"
+$baseBlob = @{}
+if ($LifecycleCoolAfterDays -gt 0)    { $baseBlob.tierToCool    = @{ daysAfterModificationGreaterThan = $LifecycleCoolAfterDays } }
+if ($LifecycleArchiveAfterDays -gt 0) { $baseBlob.tierToArchive = @{ daysAfterModificationGreaterThan = $LifecycleArchiveAfterDays } }
+if ($baseBlob.Count -eq 0) {
+    Write-Host "   skipped (both thresholds disabled)"
+}
+else {
+    $policy = @{ rules = @(@{
+        enabled    = $true
+        name       = "tier-loadtest-results"
+        type       = "Lifecycle"
+        definition = @{ filters = @{ blobTypes = @("blockBlob") }; actions = @{ baseBlob = $baseBlob } }
+    }) }
+    $policyFile = Join-Path ([IO.Path]::GetTempPath()) "loadtest-lifecycle-$([Guid]::NewGuid()).json"
+    ($policy | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $policyFile -Encoding utf8
+    try {
+        az storage account management-policy create `
+            --account-name $StorageAccountName `
+            --resource-group $HistoryResourceGroup `
+            --policy "@$policyFile" | Out-Null
+        Write-Host "   applied (Cool@${LifecycleCoolAfterDays}d, Archive@${LifecycleArchiveAfterDays}d; 0=disabled)"
+    }
+    catch {
+        # The lifecycle policy is a cost optimisation, not correctness. A failed
+        # write (Azure Policy deny, RBAC gap on managementPolicies/write, throttle)
+        # must NOT fail this stage — it gates provision/loadTest for the whole run.
+        # Warn and continue; results still upload, they just won't auto-tier yet.
+        Write-Host "##vso[task.logissue type=warning]Could not apply blob lifecycle policy ($($_.Exception.Message)); continuing. Hot-tier data won't auto-tier until this is resolved."
+    }
+    finally {
+        Remove-Item -LiteralPath $policyFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host ""
 Write-Host "History infrastructure ready."
