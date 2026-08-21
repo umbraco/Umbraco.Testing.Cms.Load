@@ -92,8 +92,8 @@ variable "budget_alert_threshold_pct" {
   description = "Percentage of budget_alert_amount that triggers the email notification (0-100)."
   default     = 80
   validation {
-    condition     = var.budget_alert_threshold_pct > 0 && var.budget_alert_threshold_pct <= 1000
-    error_message = "budget_alert_threshold_pct must be between 1 and 1000."
+    condition     = var.budget_alert_threshold_pct > 0 && var.budget_alert_threshold_pct <= 100
+    error_message = "budget_alert_threshold_pct must be between 1 and 100 (Actual-cost budgets cap the notification threshold at 100)."
   }
 }
 

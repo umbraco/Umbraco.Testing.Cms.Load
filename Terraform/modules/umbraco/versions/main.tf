@@ -151,6 +151,10 @@ resource "null_resource" "deploy_umbraco" {
     # the new preset on a persisted backend (no-op under the ephemeral RG model,
     # where every run recreates this resource — but correct either way).
     seeder_preset = var.seeder_preset
+    # Same reasoning, for the appsettings overlay: a re-apply onto reused state
+    # with a changed overlay must also re-run deploy/seed, or the app keeps the
+    # stale settings until something else happens to retrigger it.
+    app_settings_hash = sha256(jsonencode(var.app_settings_overlay))
     # Referenced here purely to establish the implicit dependency on the
     # parent module's firewall rule (Umbraco hits SQL on first boot).
     firewall_rule_id = var.sql_firewall_rule_dependency
