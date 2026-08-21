@@ -293,9 +293,11 @@ stages:
                 logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
 
           # Stop all apps so none run idle during the manual validation window.
+          # always() (not succeededOrFailed) so a cancelled run also stops the
+          # apps — otherwise they bill idle until the cleanup stage deletes the RG.
           - task: AzureCLI@2
             displayName: 'Stop all App Services'
-            condition: succeededOrFailed()
+            condition: always()
             env:
               TEST_CASE_OUTPUTS: $(testCaseOutputs)
             inputs:

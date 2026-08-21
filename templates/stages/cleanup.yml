@@ -53,7 +53,17 @@ stages:
       - job: deleteResourceGroup
         displayName: Delete resource group
         dependsOn: manualValidation
-        condition: in(dependencies.manualValidation.result, 'Failed', 'Canceled', 'Skipped')
+        # always() wraps the result check so the delete is still evaluated when
+        # the run is cancelled mid-cleanup (e.g. user cancels during the manual
+        # keep/delete prompt). Without it, a cancel skips this job and orphans
+        # the ephemeral RG, which then bills until someone deletes it by hand.
+        condition: and(always(), in(dependencies.manualValidation.result, 'Failed', 'Canceled', 'Skipped'))
+        # On cancel/timeout AzDO gives a job only the default 5 min to finish and
+        # would force-kill a synchronous RG delete mid-flight (orphaning a half-
+        # deleted, still-billing RG). 30 min is ample for a seeded RG, so the
+        # delete below stays synchronous — which surfaces server-side failures
+        # in-task and lets retryCountOnTaskFailure re-attempt them.
+        cancelTimeoutInMinutes: 30
         steps:
           - task: AzureCLI@2
             displayName: Delete resource group
@@ -66,6 +76,10 @@ stages:
                 $exists = az group exists -n $(azureResourceGroup)
                 if ($exists -eq 'true') {
                   Write-Host "Deleting resource group $(azureResourceGroup)..."
+                  # Synchronous (no --no-wait): a server-side failure (resource lock,
+                  # undeletable child, policy deny) surfaces here and is retried via
+                  # retryCountOnTaskFailure. cancelTimeoutInMinutes (job-level) gives
+                  # this time to finish even when the run is cancelling.
                   az group delete -n $(azureResourceGroup) --yes
                 } else {
                   Write-Host "Resource group $(azureResourceGroup) does not exist, skipping deletion."
