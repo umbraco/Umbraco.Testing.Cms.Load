@@ -231,8 +231,10 @@ function Add-CellTable {
     foreach ($c in $ordered) {
         $bas  = "$($c.BaselineP95) / $($c.BaselineP99) / $($c.BaselineErr)% (n=$($c.PriorRunCount))"
         $cand = "$($c.CandidateP95) / $($c.CandidateP99) / $($c.CandidateErr)%"
-        $dp95 = "{0:+0.0;-0.0;0.0}%" -f $c.DeltaP95Pct
-        $dp99 = "{0:+0.0;-0.0;0.0}%" -f $c.DeltaP99Pct
+        # PositiveInfinity (baseline 0, candidate positive) formats as a bogus
+        # "8%" under the composite format string — render it as "new" instead.
+        $dp95 = if ([double]::IsInfinity($c.DeltaP95Pct)) { 'new' } else { "{0:+0.0;-0.0;0.0}%" -f $c.DeltaP95Pct }
+        $dp99 = if ([double]::IsInfinity($c.DeltaP99Pct)) { 'new' } else { "{0:+0.0;-0.0;0.0}%" -f $c.DeltaP99Pct }
         $derr = "{0:+0.00;-0.00;0.00}pp" -f $c.DeltaErrPP
         [void]$sb.AppendLine("| $($c.Version) | $($c.Tier) | $($c.Sampler) | $bas | $cand | $dp95 | $dp99 | $derr |")
     }

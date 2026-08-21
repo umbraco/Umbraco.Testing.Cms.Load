@@ -157,7 +157,12 @@ function Get-HistoryStats {
     )
 
     # cellKey = "{version}__{tier}__{sampler}"
-    $relevantKeys = @($Cells.Keys | Where-Object { $_ -like "${Version}__${Tier}__*" })
+    # Exact field compare, not -like: version/tier are free-text and a glob
+    # metacharacter ([ ] ? *) in either would make -like mis-match or throw.
+    $relevantKeys = @($Cells.Keys | Where-Object {
+        $parts = $_ -split '__', 3
+        $parts.Count -eq 3 -and $parts[0] -eq $Version -and $parts[1] -eq $Tier
+    })
 
     $perLabel    = @{}
     $matchedRuns = @{}

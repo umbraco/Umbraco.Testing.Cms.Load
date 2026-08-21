@@ -97,6 +97,13 @@ function Get-HistoryCells {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try { $row = $line | ConvertFrom-Json } catch { continue }
             if (-not $row.scenario_name) { continue }
+            # Match the Workbook's filters so every Get-HistoryCells consumer
+            # (regression gate, compare-runs, show-trends) works over the same
+            # population the dashboard shows: warm, ok rows. Without this the
+            # regression baseline mixes cold-start (JIT-inflated) and failed runs
+            # into the median and disagrees with the dashboard.
+            if ($row.parse_status -and $row.parse_status -ne 'ok') { continue }
+            if ($row.cold_start -eq $true) { continue }
             if ($Sampler -and $row.scenario_name -ne $Sampler) { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"
