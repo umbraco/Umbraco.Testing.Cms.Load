@@ -149,8 +149,10 @@ parameters:
   # and ramp=Medium — Large hangs the seeder). Override unlocks the otherwise-
   # unreachable Massive preset
   # and enables off-diagonal cells (Small content + stress load, Massive content
-  # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~30 min,
-  # Large ~60 min, Massive ~120 min.
+  # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~3 min
+  # (re-verified 2026-08-22 at 178.62s post-logging-fix, was ~30 min before the
+  # Serilog quieting — Small/Large/Massive not yet re-verified), Large ~60 min,
+  # Massive ~120 min.
   - name: seederPresetOverride
     displayName: Seeder preset override (Auto = match load profile)
     type: string
