@@ -105,15 +105,17 @@ function Get-HistoryCells {
             if ($row.parse_status -and $row.parse_status -ne 'ok') { continue }
             if ($row.cold_start -eq $true) { continue }
             # Pre-TC-discrimination historical rows (old majors, before backoffice
-            # publish was fixed to keep only Transaction Controller labels) can
-            # carry a raw per-request sampler name with an embedded GUID, e.g.
-            # 'GET .../document-type/0099b49e-...'. Each GUID is functionally its
-            # own one-off cell with near-zero shared history, so comparing it
-            # against another run's DIFFERENT random GUID produces meaningless
-            # (and often huge) deltas. Exclude rather than purge the underlying
-            # blob data, and this also backstops any future TC-discrimination
-            # regression from leaking raw samplers again.
-            if ($row.scenario_name -match '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}') { continue }
+            # publish was fixed to keep only Transaction Controller labels) carry a
+            # raw per-request sampler name instead of a 'NN. Step' TC label - e.g.
+            # 'GET /umbraco/management/api/v1/language' or a GUID-suffixed path
+            # like '.../document-type/0099b49e-...'. A GUID-only check missed the
+            # non-GUID raw paths (confirmed live: 81 of 105 flagged regressions on
+            # 2026-08-22 were exactly this, all on old majors, zero on the current
+            # one) - the real, general signature is "raw backoffice management-API
+            # path used as a sampler identity", which today's TC-only publish path
+            # can never produce. Exclude rather than purge the underlying blob
+            # data; this also backstops any future TC-discrimination regression.
+            if ($row.scenario_name -match '^(GET|POST|PUT|DELETE|PATCH) /umbraco/management/api/') { continue }
             if ($Sampler -and $row.scenario_name -ne $Sampler) { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"
