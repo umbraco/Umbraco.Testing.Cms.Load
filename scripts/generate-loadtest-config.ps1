@@ -185,6 +185,17 @@ if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 $rampTimeEff = if ($RampTime -gt 0) { $RampTime } else { $UserAmount }
 $isRamp      = ($LoadProfile -eq 'ramp')
 
+# Backoffice ops whose latency is dominated by global serialization rather
+# than per-request work - e.g. SaveDocumentType triggers an Umbraco content-
+# type/schema change, which rebuilds the whole published-content cache and
+# so queues concurrent writers behind each other. An absolute latency gate
+# calibrated for a page GET doesn't fit an op whose tail latency scales with
+# how many other VUs are doing the same thing at once - relax the latency
+# gates here and lean on check-regression.ps1's relative baseline comparison
+# instead. Not exhaustive; add to this list as more heavy write ops turn up.
+$heavyWriteJmx = @('SaveDocumentType')
+$isHeavyWrite  = $Workload -eq 'backoffice' -and $JmxName -in $heavyWriteJmx
+
 # Failure criteria + autoStop. A ramp run is *designed* to climb into saturation
 # to find the knee, so the absolute latency gates (and a low autoStop) would FAIL
 # or cancel it the moment it gets there — defeating the point. For ramp, drop the
@@ -197,6 +208,14 @@ failureCriteria:
 autoStop:
   errorPercentage: 95
   timeWindow: 120
+"@
+} elseif ($isHeavyWrite) {
+    $criteriaBlock = @"
+failureCriteria:
+  - percentage(error) > 5
+autoStop:
+  errorPercentage: 80
+  timeWindow: 60
 "@
 } else {
     $criteriaBlock = @"
