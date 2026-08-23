@@ -75,6 +75,7 @@ steps:
 
         if (-not $myCase)  { Write-Host "##vso[task.logissue type=error]No resolved entry for case $testCaseId"; exit 1 }
         if (-not $tfOut) { Write-Host "##vso[task.logissue type=error]No terraform output entry for case $testCaseId"; exit 1 }
+        if (-not $tfOut.hostname) { Write-Host "##vso[task.logissue type=error]Terraform output for case $testCaseId has no hostname"; exit 1 }
 
         Write-Host "##vso[task.setvariable variable=hostName]$($tfOut.hostname)"
         Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
