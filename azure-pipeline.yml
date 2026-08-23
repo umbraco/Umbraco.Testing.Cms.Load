@@ -339,12 +339,13 @@ stages:
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
                 $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
                 # -NoFailOnRegression: report-only, never hard-fails the stage.
-                # TEMPORARY. The scenario_name discriminator (publish step) just
-                # reset the backoffice baseline keys, and the baseline window
-                # still holds pre-auth-fix runs (~100% error / multi-minute p95),
-                # so the gate would fire on bookkeeping noise, not real regressions.
-                # Re-enable blocking (drop this flag) once each cell has >=3 clean
-                # post-fix runs (matches check-regression's MinBaselineRuns).
+                # Deliberate soft-launch: baseline keys were reset by the
+                # scenario_name discriminator fix, so the baseline window still
+                # mixes in pre-fix runs and would flag bookkeeping noise as
+                # regressions rather than real ones. Drop this flag to switch
+                # the gate to hard-fail once each cell has >=3 clean post-fix
+                # runs (matches check-regression's MinBaselineRuns) - a manual
+                # follow-up step, not part of this change.
                 & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" `
                     -Scenario '${{ parameters.scenario }}' `
                     -Major $major `
