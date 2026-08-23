@@ -89,7 +89,17 @@ Write-Host "##vso[task.setvariable variable=loadTestConfigPath]"
 Write-Host "##vso[task.setvariable variable=appServiceResourceId]"
 Write-Host "##vso[task.setvariable variable=jmeterTestName]"
 
-$subscriptionId = az account show --query id -o tsv
+# The backoffice loop in load-test-job.yml invokes this script once per .jmx
+# (up to 6x per case), each as a fresh process - cache the subscription ID
+# (constant for the whole pipeline run) in a file next to the generated
+# configs instead of paying the `az account show` round-trip on every call.
+$subIdCachePath = Join-Path $OutputDir ".subscription-id-cache"
+if (Test-Path -LiteralPath $subIdCachePath) {
+    $subscriptionId = (Get-Content -LiteralPath $subIdCachePath -Raw).Trim()
+} else {
+    $subscriptionId = az account show --query id -o tsv
+    $subscriptionId | Out-File -FilePath $subIdCachePath -Encoding utf8 -NoNewline
+}
 $appServiceResourceId = "/subscriptions/$subscriptionId/resourceGroups/$ResourceGroupName/providers/Microsoft.Web/sites/$AppServiceName"
 
 # CpuPercentage / MemoryPercentage live on the App Service Plan
