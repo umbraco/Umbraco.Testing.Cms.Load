@@ -68,7 +68,7 @@
             "value": "*",
             "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| distinct scenario\n| where isnotempty(scenario)\n| order by scenario asc",
             "crossComponentResources": ["{Workspace}"],
-            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true, "selectAllValue": "*" },
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true },
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
@@ -82,7 +82,7 @@
             "value": "*",
             "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| distinct umbraco_version\n| where isnotempty(umbraco_version)\n| order by parse_version(umbraco_version) asc",
             "crossComponentResources": ["{Workspace}"],
-            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true, "selectAllValue": "*" },
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true },
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
@@ -96,7 +96,7 @@
             "value": "*",
             "query": "LoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| distinct infra_tier\n| where isnotempty(infra_tier)\n| order by infra_tier asc",
             "crossComponentResources": ["{Workspace}"],
-            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true, "selectAllValue": "*" },
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true },
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
@@ -110,7 +110,7 @@
             "value": "*",
             "query": "// Profile isn't a stored column; derive it from spawn_rate/duration_seconds.\n// spawn_rate==1 is unique to ramp; the durations separate smoke/standard/stress.\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend profile = case(spawn_rate == 1, 'ramp', duration_seconds <= 60, 'smoke', duration_seconds <= 300, 'standard', 'stress')\n| distinct profile\n| order by profile asc",
             "crossComponentResources": ["{Workspace}"],
-            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true, "selectAllValue": "*" },
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true },
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           },
@@ -124,7 +124,7 @@
             "value": "*",
             "query": "// Workload = frontend (Locust) vs backoffice (JMeter), derived EXACTLY from\n// jmeter_test_name (set to the .jmx stem on backoffice rows, empty on frontend).\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where isnotempty(scenario_name) and parse_status == 'ok'\n| extend workload = iif(isnotempty(jmeter_test_name), 'backoffice', 'frontend')\n| distinct workload\n| order by workload asc",
             "crossComponentResources": ["{Workspace}"],
-            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true, "selectAllValue": "*" },
+            "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true },
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
           }
