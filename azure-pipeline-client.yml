@@ -227,8 +227,13 @@ stages:
   - stage: clientRegression
     displayName: Client regression check
     dependsOn:
+      - ensureMonitoringInfra
       - clientMeasure
     condition: succeeded('clientMeasure')
+    variables:
+      monitoringDceUri:           $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId:   $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringClientStreamName: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringClientStreamName'] ]
     jobs:
       - job: clientRegressionCheck
         displayName: Client regression check
@@ -242,12 +247,20 @@ stages:
               inlineScript: |
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
                 $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                # -NoFailOnRegression: report-only, never hard-fails the stage.
+                # Deliberate soft-launch, matching the load-test regression stage -
+                # baselines need a few clean runs before the gate is trustworthy.
+                # Drop this flag to switch to hard-fail once history looks clean;
+                # a manual follow-up step, not part of this change.
                 & "$(System.DefaultWorkingDirectory)/scripts/check-client-regression.ps1" `
                     -Scenario 'Default' -Major $major `
                     -HistoryResourceGroup '$(historyResourceGroup)' `
                     -StorageAccountName '$(historyStorageAccount)' `
                     -ContainerName '$(historyContainer)' `
                     -OutputPath "$(System.DefaultWorkingDirectory)/client-regression-report.md" `
+                    -LogAnalyticsDceUri '$(monitoringDceUri)' `
+                    -LogAnalyticsDcrImmutableId '$(monitoringDcrImmutableId)' `
+                    -LogAnalyticsClientStreamName '$(monitoringClientStreamName)' `
                     -NoFailOnRegression
           - task: PublishBuildArtifacts@1
             displayName: Publish client regression report

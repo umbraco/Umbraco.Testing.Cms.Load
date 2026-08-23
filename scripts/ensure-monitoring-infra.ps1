@@ -177,6 +177,14 @@ $clientColumns = @(
     @{ name = "seg_navigate_ms";        type = "real"     }
     @{ name = "seg_editor_ready_ms";    type = "real"     }
     @{ name = "seg_keystroke_ms";       type = "real"     }
+    # Regression-check status fields, mirroring LoadTestSummary_CL's regression_*
+    # columns. Populated by check-client-regression.ps1 after the client run
+    # completes. Rows with these fields have metric='regression_check' as the
+    # row-type marker (ClientMeasurement_CL has no parse_status column to
+    # overload the way LoadTestSummary_CL does).
+    @{ name = "regression_status";      type = "string"   }
+    @{ name = "regressed_metrics";      type = "string"   }
+    @{ name = "regressed_count";        type = "int"      }
 )
 
 $streamName       = "Custom-$TableName"

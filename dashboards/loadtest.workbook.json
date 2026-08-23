@@ -2014,7 +2014,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "ClientMeasurement_CL | where TimeGenerated {TimeRange} | where isnotempty(metric) | summarize Runs=count(), median_ms=round(avg(median_ms),1), p75_ms=round(avg(p75_ms),1), p95_ms=round(avg(p95_ms),1), stddev_ms=round(avg(stddev_ms),1) by metric, infra_tier, umbraco_version | extend _ord = case(metric == \"cold_dashboard_load\",1, metric == \"cached_dashboard_load\",2, metric == \"cold_homenode_load\",3, metric == \"cached_homenode_load\",4, metric == \"time_to_first_edit\",5, 9) | order by infra_tier asc, _ord asc | project-away _ord",
+        "query": "ClientMeasurement_CL | where TimeGenerated {TimeRange} | where isnotempty(metric) and metric != 'regression_check' | summarize Runs=count(), median_ms=round(avg(median_ms),1), p75_ms=round(avg(p75_ms),1), p95_ms=round(avg(p95_ms),1), stddev_ms=round(avg(stddev_ms),1) by metric, infra_tier, umbraco_version | extend _ord = case(metric == \"cold_dashboard_load\",1, metric == \"cached_dashboard_load\",2, metric == \"cold_homenode_load\",3, metric == \"cached_homenode_load\",4, metric == \"time_to_first_edit\",5, 9) | order by infra_tier asc, _ord asc | project-away _ord",
         "size": 0,
         "title": "Summary by metric × tier × version (avg)",
         "queryType": 0,
@@ -2023,6 +2023,26 @@
         "visualization": "table"
       },
       "name": "client-summary-table",
+      "conditionalVisibility": {
+        "parameterName": "SelectedTab",
+        "comparison": "isEqualTo",
+        "value": "ClientMeasurements"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Regression verdict per (version x tier), sourced from the regression_check\n// rows posted by scripts/check-client-regression.ps1. Latest run per (version x\n// tier) shown. Empty result = no client regression check has posted yet for\n// this filter (stage skipped, hasn't completed, or this run predates the\n// client-regression-LA integration).\nClientMeasurement_CL\n| where TimeGenerated {TimeRange}\n| where metric == 'regression_check'\n| summarize arg_max(TimeGenerated, regression_status, regressed_metrics, regressed_count, run_id) by umbraco_version, infra_tier\n| project Started = TimeGenerated,\n          Version = umbraco_version,\n          Tier = infra_tier,\n          Verdict = case(\n              regression_status == 'regress',      'regression detected',\n              regression_status == 'pass',         'no regression',\n              regression_status == 'insufficient', 'not enough history',\n              regression_status),\n          ['Regressed metrics'] = replace_string(coalesce(regressed_metrics, ''), ',', ', '),\n          ['# regressed'] = coalesce(regressed_count, 0)\n| order by Version asc, Tier asc",
+        "size": 0,
+        "title": "Client regression status (latest per version × tier)",
+        "noDataMessage": "No client regression-check runs yet for this filter — queue azure-pipeline-client.yml and let the clientRegression stage complete.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [ "{Workspace}" ],
+        "visualization": "table"
+      },
+      "name": "client-regression-table",
       "conditionalVisibility": {
         "parameterName": "SelectedTab",
         "comparison": "isEqualTo",
@@ -2061,7 +2081,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// p95 per metric, one bar per version, for the selected tier. Shows how each\n// page/action's p95 moves across versions. Lower = better. Tier is picked\n// above because metric x tier x version is 3-D and a bar chart is 2-D.\n// _ord keeps the metrics in cold/cached-per-page then time-to-first-edit order.\nClientMeasurement_CL\n| where infra_tier == '{ClientTier}'\n| summarize ['p95_ms'] = round(avg(p95_ms), 0) by Version = umbraco_version, Metric = metric\n| extend _ord = case(Metric == \"cold_dashboard_load\",1, Metric == \"cached_dashboard_load\",2, Metric == \"cold_homenode_load\",3, Metric == \"cached_homenode_load\",4, Metric == \"time_to_first_edit\",5, 9)\n| order by _ord asc, Version asc\n| project-away _ord",
+        "query": "// p95 per metric, one bar per version, for the selected tier. Shows how each\n// page/action's p95 moves across versions. Lower = better. Tier is picked\n// above because metric x tier x version is 3-D and a bar chart is 2-D.\n// _ord keeps the metrics in cold/cached-per-page then time-to-first-edit order.\nClientMeasurement_CL\n| where infra_tier == '{ClientTier}'\n| where metric != 'regression_check'\n| summarize ['p95_ms'] = round(avg(p95_ms), 0) by Version = umbraco_version, Metric = metric\n| extend _ord = case(Metric == \"cold_dashboard_load\",1, Metric == \"cached_dashboard_load\",2, Metric == \"cold_homenode_load\",3, Metric == \"cached_homenode_load\",4, Metric == \"time_to_first_edit\",5, 9)\n| order by _ord asc, Version asc\n| project-away _ord",
         "size": 0,
         "title": "p95 per metric — one bar per version · tier = {ClientTier} (lower = better)",
         "queryType": 0,

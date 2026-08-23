@@ -19,7 +19,16 @@ param(
     [int]$MinBaselineRuns = 3,
     [int]$BaselineWindow = 5,
     [switch]$NoFailOnRegression,
-    [switch]$DotSourceForTest
+    [switch]$DotSourceForTest,
+
+    # Optional Logs Ingestion API target for ClientMeasurement_CL, mirroring
+    # check-regression.ps1's LoadTestSummary_CL posting. When all three are
+    # provided, POSTs one regression_check row per (run_id x scenario x version
+    # x tier) so the Workbook can surface client regression status the same
+    # way it does for load-test runs. Empty (default) skips the post.
+    [string]$LogAnalyticsDceUri,
+    [string]$LogAnalyticsDcrImmutableId,
+    [string]$LogAnalyticsClientStreamName
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,6 +101,10 @@ $report = New-Object System.Text.StringBuilder
 $regressedAny = $false
 if ($cells.Count -eq 0) { [void]$report.AppendLine("No client runs found under $prefix.") }
 
+# Per-cell verdict + candidate row, keyed by cellKey — used below to build the
+# Log Analytics rows (one per run, aggregated across that run's metric cells).
+$cellVerdicts = @{}
+
 foreach ($cellKey in ($cells.Keys | Sort-Object)) {
     # Order chronologically by parsed datetime, not string compare: rows written
     # before TimeGenerated was normalized to ISO-8601 use a different format and
@@ -101,11 +114,12 @@ foreach ($cellKey in ($cells.Keys | Sort-Object)) {
         try { [datetime]::Parse([string]$_.TimeGenerated, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal) }
         catch { [datetime]::MinValue }
     })
+    $candidate = $ordered[-1]
     if ($ordered.Count -lt 2) {
         [void]$report.AppendLine("- ${cellKey}: insufficient baseline (1 run)")
+        $cellVerdicts[$cellKey] = [pscustomobject]@{ Candidate = $candidate; Regressed = $false; Insufficient = $true }
         continue
     }
-    $candidate = $ordered[-1]
     $baselineRows = @($ordered[0..($ordered.Count - 2)] | Select-Object -Last $BaselineWindow)
     # Blank/unparseable median_ms -> $null (never 0). A 0 would read as "faster",
     # masking a regression on the candidate side and dragging the baseline median
@@ -113,11 +127,13 @@ foreach ($cellKey in ($cells.Keys | Sort-Object)) {
     $candMedian = ConvertTo-DoubleOrNull ([string]$candidate.median_ms)
     if ($null -eq $candMedian) {
         [void]$report.AppendLine("- ${cellKey}: skipped (candidate median missing/unparseable)")
+        $cellVerdicts[$cellKey] = [pscustomobject]@{ Candidate = $candidate; Regressed = $false; Insufficient = $true }
         continue
     }
     $baselineMedians = [double[]]@($baselineRows | ForEach-Object { ConvertTo-DoubleOrNull ([string]$_.median_ms) } | Where-Object { $null -ne $_ })
     $verdict = Test-ClientRegression -CandidateMedian $candMedian `
         -BaselineMedians $baselineMedians -Threshold $MedianThreshold -MinBaselineRuns $MinBaselineRuns
+    $cellVerdicts[$cellKey] = [pscustomobject]@{ Candidate = $candidate; Regressed = $verdict.Regressed; Insufficient = $verdict.Insufficient }
     if ($verdict.Insufficient) {
         [void]$report.AppendLine("- ${cellKey}: insufficient baseline ($($baselineMedians.Count) < $MinBaselineRuns runs)")
     } elseif ($verdict.Regressed) {
@@ -131,6 +147,92 @@ foreach ($cellKey in ($cells.Keys | Sort-Object)) {
 $reportText = $report.ToString()
 if ($OutputPath) { $reportText | Out-File -FilePath $OutputPath -Encoding utf8 }
 Write-Host $reportText
+
+# Post regression-check status to ClientMeasurement_CL, mirroring
+# check-regression.ps1's LoadTestSummary_CL posting. One row per (run_id x
+# scenario x version x tier), aggregated up from the per-metric cell verdicts
+# above. metric='regression_check' marks the row type (ClientMeasurement_CL
+# has no parse_status column to overload the way LoadTestSummary_CL does).
+#
+# Same defensive posture as check-regression.ps1 / publish-load-test-results.ps1:
+# failure here warns and continues - the gate's pass/fail and the build
+# artifact remain authoritative; this is the queryable mirror.
+if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsClientStreamName) {
+    $statusByGroup = @{}   # key: run_id|scenario|version|tier
+    foreach ($cellKey in $cellVerdicts.Keys) {
+        $v         = $cellVerdicts[$cellKey]
+        $candidate = $v.Candidate
+        $parts     = $cellKey -split '__', 3
+        $version   = $parts[0]
+        $tier      = $parts[1]
+        $metric    = $parts[2]
+
+        $groupKey = "$($candidate.run_id)|$($candidate.scenario)|$version|$tier"
+        if (-not $statusByGroup.ContainsKey($groupKey)) {
+            $statusByGroup[$groupKey] = [pscustomobject]@{
+                run_id             = $candidate.run_id
+                scenario           = $candidate.scenario
+                umbraco_version    = $version
+                infra_tier         = $tier
+                commit             = $candidate.commit
+                branch             = $candidate.branch
+                app_service_sku    = $candidate.app_service_sku
+                pool_dtu_max       = $candidate.pool_dtu_max
+                seeder_preset      = $candidate.seeder_preset
+                regressed_metrics  = New-Object System.Collections.Generic.List[string]
+                insufficient_count = 0
+                checked_count      = 0
+            }
+        }
+        $g = $statusByGroup[$groupKey]
+        $g.checked_count++
+        if ($v.Regressed)     { $g.regressed_metrics.Add($metric) }
+        if ($v.Insufficient)  { $g.insufficient_count++ }
+    }
+
+    if ($statusByGroup.Count -gt 0) {
+        $now = (Get-Date).ToUniversalTime().ToString("o")
+        $rows = foreach ($g in $statusByGroup.Values) {
+            $regressedList = ($g.regressed_metrics -join ',')
+            $verdict =
+                if ($g.regressed_metrics.Count -gt 0) { 'regress' }
+                elseif ($g.insufficient_count -eq $g.checked_count) { 'insufficient' }
+                else { 'pass' }
+            [pscustomobject]@{
+                TimeGenerated     = $now
+                run_id            = [string]$g.run_id
+                scenario          = [string]$g.scenario
+                umbraco_version   = [string]$g.umbraco_version
+                infra_tier        = [string]$g.infra_tier
+                commit            = [string]$g.commit
+                branch            = [string]$g.branch
+                app_service_sku   = [string]$g.app_service_sku
+                pool_dtu_max      = $g.pool_dtu_max
+                seeder_preset     = [string]$g.seeder_preset
+                metric            = 'regression_check'
+                regression_status = $verdict
+                regressed_metrics = $regressedList
+                regressed_count   = $g.regressed_metrics.Count
+            }
+        }
+
+        Write-Host ""
+        Write-Host "Posting $($rows.Count) regression-status row(s) to Log Analytics ($LogAnalyticsClientStreamName)"
+        try {
+            $token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv
+            $body  = ConvertTo-Json -InputObject @($rows) -Depth 5 -Compress -AsArray
+            $url   = "$LogAnalyticsDceUri/dataCollectionRules/$LogAnalyticsDcrImmutableId/streams/${LogAnalyticsClientStreamName}?api-version=2023-01-01"
+            Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" `
+                -Headers @{ Authorization = "Bearer $token" } | Out-Null
+            Write-Host "   ok"
+        }
+        catch {
+            $msg = "Client regression-status ingestion failed: $($_.Exception.Message). Build artifact ($OutputPath) remains authoritative."
+            Write-Warning $msg
+            Write-Host "##vso[task.logissue type=warning]$msg"
+        }
+    }
+}
 
 if ($regressedAny -and -not $NoFailOnRegression) {
     Write-Host "##vso[task.logissue type=error]Client measurement regression detected."
