@@ -116,7 +116,11 @@ function Get-HistoryCells {
             # can never produce. Exclude rather than purge the underlying blob
             # data; this also backstops any future TC-discrimination regression.
             if ($row.scenario_name -match '^(GET|POST|PUT|DELETE|PATCH) /umbraco/management/api/') { continue }
-            if ($Sampler -and $row.scenario_name -ne $Sampler) { continue }
+            # Backoffice rows are published as "$JmeterTestName / $label" (e.g.
+            # 'SaveContent / 01. Save content'), so a bare-label -Sampler value
+            # (the style used across every -Sampler example in this repo) must
+            # also match the label half, not just the full scenario_name.
+            if ($Sampler -and $row.scenario_name -ne $Sampler -and $row.scenario_name -notlike "* / $Sampler") { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"
             if (-not $cells.ContainsKey($cellKey)) {

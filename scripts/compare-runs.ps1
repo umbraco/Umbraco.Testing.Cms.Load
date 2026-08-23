@@ -60,7 +60,13 @@ param (
     [string]$BaselineLabel,
     [string]$CandidateLabel,
     [string]$OutputPath,
-    [int]$SignificantDeltaPercent = 10
+    [int]$SignificantDeltaPercent = 10,
+
+    # CSV mode, backoffice (JMeter) runs only: matches publish-load-test-results.ps1's
+    # $onlyTC flip (set whenever JmeterTestName is non-empty) so a backoffice engine
+    # CSV compares by "01. <step>" Transaction Controller rows, the same rows history
+    # mode and the workbook use - not the dozens of raw per-request sampler rows.
+    [switch]$OnlyTransactionControllers
 )
 
 $ErrorActionPreference = "Stop"
@@ -118,7 +124,7 @@ function Get-RunStats {
     # Parser is shared with publish-load-test-results.ps1 - see Parse-JmeterCsv
     # in _helpers.ps1. -BuildAggregate keeps the per-CSV all-samples list so we
     # can compute a true aggregate percentile (which history mode can't).
-    $parsed = Parse-JmeterCsv -Path $Path -BuildAggregate
+    $parsed = Parse-JmeterCsv -Path $Path -BuildAggregate -OnlyTransactionControllers:$OnlyTransactionControllers
 
     function Get-Stats ($samples, $errors) {
         $sorted = ($samples | Sort-Object)
@@ -216,8 +222,12 @@ function Format-Delta {
 
 function Format-Cell {
     param ([int]$Baseline, [int]$Candidate, [int]$ThresholdPct)
-    $delta = if ($Baseline -le 0) { 0 } else { [math]::Abs(($Candidate - $Baseline) / [double]$Baseline * 100) }
     $deltaStr = Format-Delta $Baseline $Candidate
+    # A zero baseline going to a nonzero candidate is the most extreme possible
+    # regression - bold it same as Format-Delta's "n/a", don't silently treat
+    # it as insignificant.
+    if ($Baseline -le 0) { return $(if ($Candidate -gt 0) { "**$deltaStr**" } else { $deltaStr }) }
+    $delta = [math]::Abs(($Candidate - $Baseline) / [double]$Baseline * 100)
     if ($delta -ge $ThresholdPct) { return "**$deltaStr**" }
     return $deltaStr
 }
