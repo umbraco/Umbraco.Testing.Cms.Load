@@ -36,16 +36,6 @@
             <stringProp name="Argument.value">${__P(port,44322)}</stringProp>
             <stringProp name="Argument.metadata">=</stringProp>
           </elementProp>
-          <elementProp name="backoffice_username" elementType="Argument">
-            <stringProp name="Argument.name">backoffice_username</stringProp>
-            <stringProp name="Argument.value">${__P(backoffice_username,hnd@acceptance.test)}</stringProp>
-            <stringProp name="Argument.metadata">=</stringProp>
-          </elementProp>
-          <elementProp name="backoffice_password" elementType="Argument">
-            <stringProp name="Argument.name">backoffice_password</stringProp>
-            <stringProp name="Argument.value">${__P(backoffice_password,0123456789)}</stringProp>
-            <stringProp name="Argument.metadata">=</stringProp>
-          </elementProp>
           <elementProp name="totalOfMember" elementType="Argument">
             <stringProp name="Argument.name">totalOfMember</stringProp>
             <stringProp name="Argument.value">${__P(totalOfMember,30)}</stringProp>
