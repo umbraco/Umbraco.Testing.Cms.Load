@@ -99,13 +99,21 @@ if (-not $Force) {
 $storageKey = Get-StorageAccountKey -StorageAccountName $StorageAccountName -ResourceGroupName $HistoryResourceGroup
 
 Write-Host "-> Listing summary.ndjson blobs"
-$blobs = @(az storage blob list `
+$allBlobs = @(az storage blob list `
     --account-name $StorageAccountName `
     --account-key $storageKey `
     --container-name $ContainerName `
     --query "[?ends_with(name, 'summary.ndjson')].{name:name}" `
     -o json | ConvertFrom-Json)
-Write-Host "   $($blobs.Count) blob(s) found"
+
+# publish-client-results.ps1 writes summary.ndjson under a 'client/' prefix
+# with a different schema (metric/median_ms, no scenario_name) destined for
+# ClientMeasurement_CL - an unscoped listing would otherwise pick those up
+# too and POST them into whichever table -TableName targets, mismatched
+# schema and all. Scope by prefix based on which table this run is backfilling.
+$isClientTable = $TableName -eq "ClientMeasurement_CL"
+$blobs = @($allBlobs | Where-Object { ($_.name -like "client/*") -eq $isClientTable })
+Write-Host "   $($blobs.Count) blob(s) found (of $($allBlobs.Count) total summary.ndjson blobs in the container)"
 
 if ($blobs.Count -eq 0) {
     Write-Host "Nothing to backfill."

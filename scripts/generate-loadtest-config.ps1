@@ -76,6 +76,8 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
+. "$PSScriptRoot/_helpers.ps1"
+
 # Clear every pipeline variable this script emits BEFORE any logic that could
 # fail. The backoffice loop in load-test-job.yml runs this script per .jmx, and
 # downstream steps gate on `ne(loadTestConfigPath, '')` to skip skipped/failed
@@ -265,7 +267,7 @@ if ($Workload -eq 'backoffice') {
         Write-Error "Workload=backoffice requires -JmxName (e.g. 'ViewHomePage') to pick the .jmx file."
         exit 1
     }
-    $umbracoMajor = [int](($UmbracoVersion -split '\.')[0])
+    $umbracoMajor = Get-UmbracoMajor $UmbracoVersion
     $jmeterMajor  = if ($umbracoMajor -eq 18) { 17 } else { $umbracoMajor }
     $jmeterDir    = "loadtests/scenarios/$Scenario/jmeter/v$jmeterMajor"
 

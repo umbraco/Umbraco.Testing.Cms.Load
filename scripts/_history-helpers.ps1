@@ -120,7 +120,7 @@ function Get-HistoryCells {
             # 'SaveContent / 01. Save content'), so a bare-label -Sampler value
             # (the style used across every -Sampler example in this repo) must
             # also match the label half, not just the full scenario_name.
-            if ($Sampler -and $row.scenario_name -ne $Sampler -and $row.scenario_name -notlike "* / $Sampler") { continue }
+            if ($Sampler -and $row.scenario_name -ne $Sampler -and -not $row.scenario_name.EndsWith(" / $Sampler")) { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"
             if (-not $cells.ContainsKey($cellKey)) {
