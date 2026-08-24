@@ -2061,6 +2061,7 @@
             "label": "Tier (for the p95 chart below)",
             "type": 2,
             "isRequired": true,
+            "value": "Starter",
             "query": "ClientMeasurement_CL | distinct infra_tier | where isnotempty(infra_tier) | extend r = case(infra_tier=='Starter',1, infra_tier=='Standard',2, infra_tier=='Pro',3, infra_tier=='Enterprise',4, 99) | order by r asc | project infra_tier",
             "crossComponentResources": [ "{Workspace}" ],
             "typeSettings": { "additionalResourceOptions": [], "showDefault": true },
