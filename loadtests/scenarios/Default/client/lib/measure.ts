@@ -60,6 +60,14 @@ export function emitMetric(
   extra: Record<string, unknown> = {},
   dir: string = env.resultsDir,
 ): void {
+  // summarize([]) returns median/p75/p95/min/max = 0, not null - a real zero
+  // reads as "instant", the opposite of "no data". Emitting that row would
+  // drag downstream medians/regression baselines toward 0 instead of the run
+  // just contributing no sample, so skip entirely when every rep failed.
+  if (samples.length === 0) {
+    console.warn(`emitMetric: no samples for '${metric}' - skipping (every rep must have failed)`);
+    return;
+  }
   mkdirSync(dir, { recursive: true });
   const s = summarize(samples);
   const row = {

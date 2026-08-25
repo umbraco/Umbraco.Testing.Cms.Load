@@ -45,7 +45,6 @@ if (-not $env:ARM_CLIENT_SECRET -and -not $env:ARM_OIDC_TOKEN) {
 # Umbraco.Cms.TestDataSeeder package version per Umbraco major. Update an entry
 # here when a new seeder build ships; null means the seeder isn't available yet
 # for that major and the run will fail-fast below with a clear message.
-# The version is baked into the build cache key, so bumps auto-invalidate stale builds.
 $seederPackageVersions = @{
     13 = "13.0.0-beta.1"
     17 = "17.0.0-beta.2"
@@ -101,9 +100,11 @@ try {
     # Prerelease and nightly feeds — needed for Umbraco versions not yet on nuget.org.
     # `dotnet nuget add source` returns non-zero when the source name already
     # exists, which would throw under $PSNativeCommandUseErrorActionPreference.
-    # Wrap so a re-run on a warm agent (or local-dev re-apply) is a no-op.
-    try { dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases" 2>$null | Out-Null } catch {}
-    try { dotnet nuget add source "https://www.myget.org/F/umbraconightly/api/v3/index.json" -n "Umbraco Nightly" 2>$null | Out-Null } catch {}
+    # Wrap so a re-run on a warm agent (or local-dev re-apply) is a no-op, but
+    # warn rather than swallow silently - the only other realistic failure here
+    # is a config/argument problem in this script itself, worth surfacing.
+    try { dotnet nuget add source "https://www.myget.org/F/umbracoprereleases/api/v3/index.json" -n "Umbraco Prereleases" 2>$null | Out-Null } catch { Write-Warning "Adding 'Umbraco Prereleases' nuget source failed (may already exist): $($_.Exception.Message)" }
+    try { dotnet nuget add source "https://www.myget.org/F/umbraconightly/api/v3/index.json" -n "Umbraco Nightly" 2>$null | Out-Null } catch { Write-Warning "Adding 'Umbraco Nightly' nuget source failed (may already exist): $($_.Exception.Message)" }
 
     Write-Host "Installing Umbraco.Templates@$UmbracoVersion..."
     # --force makes this idempotent. Multi-case runs (2+ tiers) execute this

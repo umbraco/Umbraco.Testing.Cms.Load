@@ -58,7 +58,7 @@ def register_inventory_probe():
             response = requests.get(environment.host.rstrip("/") + INVENTORY_PATH, timeout=15)
             response.raise_for_status()
             data = response.json()
-        except (requests.RequestException, ValueError) as ex:
+        except (requests.RequestException, ValueError, TypeError) as ex:
             # Buckets stay empty; pick_url then raises per-call so the run shows up
             # as 100%-error on the affected tasks rather than silently homepage-only.
             logger.error(f"Inventory unreachable ({ex}); workload tasks will fail")
@@ -121,7 +121,7 @@ def register_delivery_api_probe():
 
             try:
                 body = response.json()
-            except ValueError:
+            except (ValueError, TypeError):
                 logger.warning(f"Delivery API probe returned 200 at skip={skip} but body was not JSON")
                 break
 
@@ -194,7 +194,7 @@ def post_contact_form(user, name: str = "ContactFormSubmit") -> None:
             return
         try:
             body = response.json()
-        except ValueError:
+        except (ValueError, TypeError):
             if response.text:
                 response.failure("non-JSON body")
             return
