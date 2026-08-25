@@ -143,6 +143,13 @@
       "name": "global-filters-scope-note"
     },
     {
+      "type": 1,
+      "content": {
+        "json": "**Reviewing a run? Two things to check before treating a red flag as a new problem:**\n1. **Is the regression gate actually blocking right now?** The `Regression` column reflects `scripts/check-regression.ps1`'s verdict, but the pipeline can run that gate in report-only mode (`-NoFailOnRegression`) — check `azure-pipeline.yml`'s `regression`/`clientRegression` stages for whether the flag is currently set before assuming \"regression detected\" already blocked anything.\n2. **`SaveDocumentType`'s `04.`/`05.` steps are a known outlier, not evidence the build is broken.** They show severe tail latency (60-230s+) and high error rates by design — a small, fixed-size seeded document-type pool (~4-5 types) colliding under concurrent writes, independent of tier size (confirmed across Starter/Standard/Pro). See the README's backoffice-workload section for the full mechanism. Judge these two steps only by *relative* change vs their own prior runs, not by their absolute numbers."
+      },
+      "name": "reviewer-context-note"
+    },
+    {
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
@@ -1288,7 +1295,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## Compare\nPick two runs to see per-sampler + server-side changes. The dropdowns honour the global **Time range** but ignore the other global filters — each entry is one `(run × scenario × version × tier)`, so a multi-case pipeline run shows up as several picks."
+        "json": "## Compare\nPick two runs to see per-sampler + server-side changes. The dropdowns honour the global **Time range** but ignore the other global filters — each entry is one `(run × scenario × version × tier)`, so a multi-case pipeline run shows up as several picks.\n\n**Baseline defaults to the second-most-recent matching run, not a known-good release.** If you need a specific reference point (last release, a known-stable build), pick it explicitly from the dropdown rather than trusting the default."
       },
       "name": "compare-header",
       "conditionalVisibility": {
