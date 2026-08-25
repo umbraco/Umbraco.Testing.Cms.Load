@@ -127,6 +127,18 @@
             "typeSettings": { "additionalResourceOptions": [], "includeAll": true, "showDefault": true },
             "queryType": 0,
             "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "param-detail-level",
+            "version": "KqlParameterItem/1.0",
+            "name": "DetailLevel",
+            "label": "Detail level",
+            "description": "Compact hides the large per-sampler matrix/detail tables (Trends/Tiers/Versions) so the top verdict cards aren't buried in scroll. Switch to Full detail to drill in.",
+            "type": 2,
+            "isRequired": true,
+            "value": "Compact",
+            "jsonData": "[\n    { \"value\": \"Compact\", \"label\": \"Compact\" },\n    { \"value\": \"Full detail\", \"label\": \"Full detail\" }\n]",
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": true }
           }
         ],
         "style": "pills",
@@ -557,11 +569,18 @@
       "styleSettings": {
         "showBorder": true
       },
-      "conditionalVisibility": {
-        "parameterName": "SelectedTab",
-        "comparison": "isEqualTo",
-        "value": "Trends"
-      }
+      "conditionalVisibilities": [
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Trends"
+        },
+        {
+          "parameterName": "DetailLevel",
+          "comparison": "isEqualTo",
+          "value": "Full detail"
+        }
+      ]
     },
     {
       "type": 1,
@@ -1023,11 +1042,18 @@
         }
       },
       "name": "tiers-table",
-      "conditionalVisibility": {
-        "parameterName": "SelectedTab",
-        "comparison": "isEqualTo",
-        "value": "Tiers"
-      }
+      "conditionalVisibilities": [
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Tiers"
+        },
+        {
+          "parameterName": "DetailLevel",
+          "comparison": "isEqualTo",
+          "value": "Full detail"
+        }
+      ]
     },
     {
       "type": 1,
@@ -1286,11 +1312,18 @@
         }
       },
       "name": "versions-table",
-      "conditionalVisibility": {
-        "parameterName": "SelectedTab",
-        "comparison": "isEqualTo",
-        "value": "Versions"
-      }
+      "conditionalVisibilities": [
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Versions"
+        },
+        {
+          "parameterName": "DetailLevel",
+          "comparison": "isEqualTo",
+          "value": "Full detail"
+        }
+      ]
     },
     {
       "type": 1,
