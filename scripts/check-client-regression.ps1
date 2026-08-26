@@ -21,11 +21,8 @@ param(
     [switch]$NoFailOnRegression,
     [switch]$DotSourceForTest,
 
-    # Optional Logs Ingestion API target for ClientMeasurement_CL, mirroring
-    # check-regression.ps1's LoadTestSummary_CL posting. When all three are
-    # provided, POSTs one regression_check row per (run_id x scenario x version
-    # x tier) so the Workbook can surface client regression status the same
-    # way it does for load-test runs. Empty (default) skips the post.
+    # Optional LA target for ClientMeasurement_CL, mirroring check-regression.ps1.
+    # Empty (default) skips posting.
     [string]$LogAnalyticsDceUri,
     [string]$LogAnalyticsDcrImmutableId,
     [string]$LogAnalyticsClientStreamName
@@ -149,14 +146,8 @@ if ($OutputPath) { $reportText | Out-File -FilePath $OutputPath -Encoding utf8 }
 Write-Host $reportText
 
 # Post regression-check status to ClientMeasurement_CL, mirroring
-# check-regression.ps1's LoadTestSummary_CL posting. One row per (run_id x
-# scenario x version x tier), aggregated up from the per-metric cell verdicts
-# above. metric='regression_check' marks the row type (ClientMeasurement_CL
-# has no parse_status column to overload the way LoadTestSummary_CL does).
-#
-# Same defensive posture as check-regression.ps1 / publish-load-test-results.ps1:
-# failure here warns and continues - the gate's pass/fail and the build
-# artifact remain authoritative; this is the queryable mirror.
+# check-regression.ps1. Failure here warns and continues - the build
+# artifact remains authoritative.
 if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsClientStreamName) {
     $statusByGroup = @{}   # key: run_id|scenario|version|tier
     foreach ($cellKey in $cellVerdicts.Keys) {

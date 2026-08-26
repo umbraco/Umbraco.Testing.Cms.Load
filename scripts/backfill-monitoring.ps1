@@ -106,11 +106,8 @@ $allBlobs = @(az storage blob list `
     --query "[?ends_with(name, 'summary.ndjson')].{name:name}" `
     -o json | ConvertFrom-Json)
 
-# publish-client-results.ps1 writes summary.ndjson under a 'client/' prefix
-# with a different schema (metric/median_ms, no scenario_name) destined for
-# ClientMeasurement_CL - an unscoped listing would otherwise pick those up
-# too and POST them into whichever table -TableName targets, mismatched
-# schema and all. Scope by prefix based on which table this run is backfilling.
+# client/ blobs have a different schema (destined for ClientMeasurement_CL) -
+# scope by prefix so they don't get posted into the wrong table.
 $isClientTable = $TableName -eq "ClientMeasurement_CL"
 $blobs = @($allBlobs | Where-Object { ($_.name -like "client/*") -eq $isClientTable })
 Write-Host "   $($blobs.Count) blob(s) found (of $($allBlobs.Count) total summary.ndjson blobs in the container)"

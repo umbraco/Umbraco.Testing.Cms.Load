@@ -76,11 +76,8 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
 
       total.push(performance.now() - tStart);
     } catch (e) {
-      // One slow/flaky rep must not discard every prior successful rep - skip
-      // it and keep going, matching runColdCached's pattern in lib/measure.ts.
-      // Segment arrays can end up with uneven lengths across reps (a rep that
-      // fails at segment 3 still contributes segments 1-2); each is
-      // summarized independently so that's fine.
+      // One flaky rep shouldn't discard every prior rep - skip and continue,
+      // matching runColdCached's pattern in lib/measure.ts.
       console.warn(`time to first edit: rep ${i} failed, skipping: ${(e as Error).message}`);
     } finally {
       await context.close().catch(() => {});
