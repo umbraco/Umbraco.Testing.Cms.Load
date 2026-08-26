@@ -89,8 +89,6 @@ foreach ($blob in $blobNames) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try { $row = $line | ConvertFrom-Json } catch { continue }
         if (-not $row.metric) { continue }
-        # Row-type marker written by this script's own LA post - not a measurement.
-        if ($row.metric -eq 'regression_check') { continue }
         # Rows predating the scenario field are treated as Default.
         if ($Scenario) {
             $rowScenario = if ($row.scenario) { [string]$row.scenario } else { 'Default' }

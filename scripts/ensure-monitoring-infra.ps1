@@ -400,7 +400,7 @@ $upToDate = [bool]$existingDcr -and
     (Test-StreamUpToDate $existingDcr $clientStreamName $clientColumns) -and (Test-FlowPresent $existingDcr $clientStreamName)
 
 if ($upToDate) {
-    Write-Host "   all streams present with matching schema - skipping PUT (no churn)"
+    Write-Host "   all streams present with matching schema — skipping PUT (no churn)"
 }
 else {
     $dcrBody = @{
@@ -469,7 +469,7 @@ else {
         Write-Host "  The principal running this script lacks"
         Write-Host "  Microsoft.Authorization/roleAssignments/write at the DCR scope."
         Write-Host ""
-        Write-Host "  One-time fix - pick CLI or portal, then re-queue the pipeline."
+        Write-Host "  One-time fix — pick CLI or portal, then re-queue the pipeline."
         Write-Host ""
         Write-Host "  CLI (as a User Access Administrator on the RG):"
         Write-Host ""

@@ -151,8 +151,7 @@ $sqlComponent = @"
 # from -backoffice- to -bo- so even the longest .jmx stem
 # ('saveandpublishcontent', 21 chars) plus scenario fits within 50 chars.
 $scenarioSafe = (($Scenario.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
-# .Trim('-') to match $scenarioSafe above.
-$jmxSafe = if ($JmxName) { (($JmxName.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-') } else { '' }
+$jmxSafe = if ($JmxName) { ($JmxName.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-' } else { '' }
 $workloadSuffix = if ($Workload -eq 'backoffice') { "-bo-$jmxSafe" } else { '' }
 $testId = "umbraco-lt-$scenarioSafe$workloadSuffix"
 if ($testId.Length -gt 50) {
@@ -180,13 +179,7 @@ if ($displayName.Length -gt 50) {
 # overwrite iteration N-1's outputs in the same agent workspace).
 $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
-if ($safeKey.Length -gt 50) {
-    # Unreachable with the current .jmx set (longest key ~44 chars), so a plain
-    # truncation - but warn, because two keys colliding here would silently share
-    # a config file, .properties file and build artifact.
-    $safeKey = $safeKey.Substring(0, 50)
-    Write-Host "##vso[task.logissue type=warning]safeTestCaseId exceeded 50 chars and was truncated to '$safeKey'. If two .jmx plans truncate to the same value they will overwrite each other's config and artifacts - shorten the .jmx stem, scenario or version."
-}
+if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 
 # Effective ramp-up + whether this is a ramp run. Keyed on the profile name — the
 # only ramp signal scenario.yaml can't override (it can override users/spawn/

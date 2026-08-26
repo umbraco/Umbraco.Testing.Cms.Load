@@ -12,15 +12,6 @@ parameters:
     type: string
     default: '17.0.0'
 
-  # Single source of truth; was the literal 'Default' in five places. Only
-  # scenarios shipping a client/ project are listed.
-  - name: scenario
-    displayName: Scenario (must have a client/ Playwright project)
-    type: string
-    default: 'Default'
-    values:
-      - 'Default'
-
   - name: runStarter
     displayName: Run Starter tier
     type: boolean
@@ -151,7 +142,7 @@ stages:
   - template: templates/stages/provision.yml
     parameters:
       umbracoVersion: '${{ parameters.umbracoVersion }}'
-      scenario: '${{ parameters.scenario }}'
+      scenario: 'Default'
       workload: 'client'
       loadProfile: 'smoke'
       resourcePrefix: '${{ parameters.resourcePrefix }}'
@@ -187,9 +178,9 @@ stages:
           - ${{ if eq(parameters.runStarter, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Starter__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Starter__Default'
                 tier: 'Starter'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -198,9 +189,9 @@ stages:
           - ${{ if eq(parameters.runStandard, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Standard__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Standard__Default'
                 tier: 'Standard'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -209,9 +200,9 @@ stages:
           - ${{ if eq(parameters.runPro, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Pro__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Pro__Default'
                 tier: 'Pro'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -220,9 +211,9 @@ stages:
           - ${{ if eq(parameters.runEnterprise, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__${{ parameters.scenario }}'
+                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__Default'
                 tier: 'Enterprise'
-                scenario: '${{ parameters.scenario }}'
+                scenario: 'Default'
                 umbracoVersion: '${{ parameters.umbracoVersion }}'
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
@@ -266,7 +257,7 @@ stages:
                 # Report-only unless failOnRegression is ticked at queue time,
                 # same reasoning as azure-pipeline.yml's regressionCheck stage.
                 $splat = @{
-                    Scenario                     = '${{ parameters.scenario }}'
+                    Scenario                     = 'Default'
                     Major                        = $major
                     HistoryResourceGroup         = '$(historyResourceGroup)'
                     StorageAccountName           = '$(historyStorageAccount)'
