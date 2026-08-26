@@ -151,3 +151,6 @@ if ($script:failures -gt 0) {
     exit 1
 }
 Write-Host "All $($script:checks) checks passed." -ForegroundColor Green
+# Explicit 0: falling off the end leaves $LASTEXITCODE unset in the caller, and
+# a caller testing `-ne 0` then sees $null and reads success as failure.
+exit 0

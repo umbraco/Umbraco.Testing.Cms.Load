@@ -44,7 +44,10 @@ stages:
                 $ErrorActionPreference = 'Stop'
 
                 & "$(System.DefaultWorkingDirectory)/scripts/_selfcheck.ps1"
-                if ($LASTEXITCODE -ne 0) { throw "scripts/_selfcheck.ps1 reported failures." }
+                # Truthiness, not -ne 0: $LASTEXITCODE is $null until something
+                # sets it, and $null -ne 0 is true - which read a clean run as a
+                # failure. Both $null and 0 are falsy here.
+                if ($LASTEXITCODE) { throw "scripts/_selfcheck.ps1 reported failures (exit $LASTEXITCODE)." }
 
                 # Suites are Pester 5 syntax; agents ship v3. An INSTALL failure
                 # only warns; a TEST failure fails the stage.
