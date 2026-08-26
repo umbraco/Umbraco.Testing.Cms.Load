@@ -38,10 +38,9 @@ stages:
         condition: eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.doesExist'], 'true')
         displayName: 'Manual validation - Resume = DELETE, Reject = KEEP alive'
         pool: server
-        # Fixed backstop well above the 240-min parameter max. The gate's real
-        # window is the task timeout below; if the job timed out first it would
-        # resolve Failed (= KEEP) instead of the task's onTimeout resume
-        # (= DELETE), leaking a billing RG on an unattended run.
+        # Backstop above the 240-min parameter max; the task timeout below is the
+        # real window. A job timeout would resolve Failed (= KEEP) and defeat the
+        # task's onTimeout resume (= DELETE).
         timeoutInMinutes: 300
         steps:
           - task: ManualValidation@0
@@ -53,14 +52,12 @@ stages:
                 Press "Reject" to explicitly KEEP the resource group alive for further testing.
                 Timeout after ${{ parameters.validationTimeoutMinutes }} minutes behaves like Resume — DELETE (cost-safe default for an unattended run).
                 ${{ parameters.extraValidationInstructions }}
-              # Timeout resolves as Resume (Succeeded), not Reject (Failed) — a
-              # forgotten gate defaults to deleting rather than leaving a seeded
-              # RG (App Service Plan + SQL) billing indefinitely.
+              # Timeout resolves as Resume, so a forgotten gate deletes rather
+              # than leaving a seeded RG billing indefinitely.
               onTimeout: 'resume'
 
-      # Fires on Resume, timeout-as-resume, cancel, or a skipped chain, so the
-      # normal teardown path reports the run as succeeded. Explicit Reject
-      # (Failed) is the only outcome that keeps the RG alive.
+      # Fires on Resume, timeout, cancel or a skipped chain, so the normal
+      # teardown path goes green. Explicit Reject (Failed) is the only keep.
       - job: deleteResourceGroup
         displayName: Delete resource group
         dependsOn: manualValidation

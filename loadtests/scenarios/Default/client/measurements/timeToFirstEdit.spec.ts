@@ -27,12 +27,9 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
 
   for (let i = 0; i < env.reps; i++) {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    // Buffer this rep's segments and commit them only once the rep completes.
-    // Pushing straight into `seg` meant a rep failing at (say) segment 3 still
-    // contributed to seg.login and seg.navigate but not to `total`, so the four
-    // emitted seg_*_median values summarized a larger, differently-shaped
-    // population than median_ms — they described partly-failed reps the total
-    // excluded.
+    // Buffered, committed only on success: pushing straight into `seg` let a rep
+    // that failed midway contribute segments but no total, so the seg_* medians
+    // described a different population than median_ms.
     const rep = { login: 0, navigate: 0, editorReady: 0, keystroke: 0 };
     try {
       const page = await context.newPage();
@@ -82,8 +79,7 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
       await handle!.dispose();
 
       total.push(performance.now() - tStart);
-      // Rep completed: commit its segments alongside its total so both describe
-      // the same population.
+      // Rep completed - commit its segments alongside its total.
       seg.login.push(rep.login);
       seg.navigate.push(rep.navigate);
       seg.editorReady.push(rep.editorReady);

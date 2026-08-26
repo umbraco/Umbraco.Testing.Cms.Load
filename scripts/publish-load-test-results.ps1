@@ -429,8 +429,7 @@ if ($engineFiles.Count -gt 0) {
     # underlying GET/POST sampler rows per .jmx.
     $onlyTC = -not [string]::IsNullOrWhiteSpace($JmeterTestName)
     $byLabel = @{}
-    # Observed sample window across every engine file, for the throughput
-    # denominator below.
+    # Sample window across every engine file, for the throughput denominator.
     $spanMinTs = [long]::MaxValue
     $spanMaxTs = [long]::MinValue
     foreach ($file in $engineFiles) {
@@ -458,23 +457,13 @@ if ($engineFiles.Count -gt 0) {
         if ($null -ne $parsed.MaxTimestamp -and $parsed.MaxTimestamp -gt $spanMaxTs) { $spanMaxTs = $parsed.MaxTimestamp }
     }
 
-    # Throughput denominator: the span the samples actually cover, not the
-    # CONFIGURED duration. They diverge whenever ALT autoStops early
-    # (errorPercentage/timeWindow) or the run fast-fails, and using the
-    # configured value understated requests_per_sec by exactly the fraction of
-    # the window that never ran — worst on the saturated runs where throughput
-    # is the number you care about.
-    #
-    # Fall back to $DurationSeconds when the CSV carried no parseable
-    # timestamps, and floor the span at 1s so a sub-second sample window can't
-    # produce an absurd rate. NOTE: requests_per_sec is therefore not
-    # comparable with rows published before this change on truncated runs;
-    # full-length runs are unaffected (span ≈ configured duration).
+    # Throughput denominator: the span the samples cover, not the configured
+    # duration - they diverge when ALT autoStops early or the run fast-fails,
+    # and the configured value then understates the rate. Floored at 1s; falls
+    # back to $DurationSeconds when no timestamp parsed. timeStamp is the sample
+    # START, so the last sample's own latency is deliberately not added.
     $observedSpanSec = 0.0
     if ($spanMaxTs -ge $spanMinTs -and $spanMinTs -ne [long]::MaxValue) {
-        # +elapsed is deliberately NOT added: timeStamp is the sample START in
-        # ALT's JMeter output, and the last sample's own latency isn't part of
-        # the load window for throughput purposes.
         $observedSpanSec = [math]::Round(($spanMaxTs - $spanMinTs) / 1000.0, 3)
     }
     $testDurationSec = if ($observedSpanSec -ge 1) { $observedSpanSec } else { [double]$DurationSeconds }

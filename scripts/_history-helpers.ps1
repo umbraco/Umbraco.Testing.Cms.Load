@@ -43,12 +43,9 @@ function Get-Median([double[]] $values) {
     return ($sorted[[int]($n / 2 - 1)] + $sorted[[int]($n / 2)]) / 2
 }
 
-# Decides whether one history row belongs in the analysed population. Extracted
-# from Get-HistoryCells so it can be unit-tested without touching storage: these
-# four rules silently determine which runs constitute a regression baseline for
-# every downstream tool, and a mistake here produces confidently wrong verdicts
-# with no error anywhere — exactly the "silently wrong numbers" failure mode
-# scripts/_selfcheck.ps1 exists to catch. Returns $true to keep the row.
+# $true to keep the row. Split out of Get-HistoryCells to be testable without
+# storage: these rules decide which runs form a regression baseline, and getting
+# them wrong is silently wrong rather than loud. See tests/history-helpers.Tests.ps1.
 function Test-HistoryRowIncluded {
     [CmdletBinding()]
     param(
@@ -140,8 +137,6 @@ function Get-HistoryCells {
         foreach ($line in $lines) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try { $row = $line | ConvertFrom-Json } catch { continue }
-            # All inclusion rules live in Test-HistoryRowIncluded (above) so they
-            # can be unit-tested without storage access.
             if (-not (Test-HistoryRowIncluded -Row $row -Sampler $Sampler)) { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"

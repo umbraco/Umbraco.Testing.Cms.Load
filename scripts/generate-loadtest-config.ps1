@@ -151,8 +151,7 @@ $sqlComponent = @"
 # from -backoffice- to -bo- so even the longest .jmx stem
 # ('saveandpublishcontent', 21 chars) plus scenario fits within 50 chars.
 $scenarioSafe = (($Scenario.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
-# .Trim('-') to match $scenarioSafe above: without it a stem like 'Save_Content_'
-# yields a trailing hyphen that then propagates into testId and every derived name.
+# .Trim('-') to match $scenarioSafe above.
 $jmxSafe = if ($JmxName) { (($JmxName.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-') } else { '' }
 $workloadSuffix = if ($Workload -eq 'backoffice') { "-bo-$jmxSafe" } else { '' }
 $testId = "umbraco-lt-$scenarioSafe$workloadSuffix"
@@ -182,14 +181,9 @@ if ($displayName.Length -gt 50) {
 $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
 if ($safeKey.Length -gt 50) {
-    # Truncation is collision-prone in principle: safeKey names the config file,
-    # the .properties file AND the AzDO artifact
-    # (loadtest-results-$safeTestCaseId), so two names sharing a 50-char prefix
-    # would have one iteration reuse another's config and merge their artifacts.
-    # Unreachable with the current .jmx set (longest key ≈ 44 chars), so it stays
-    # a plain truncation rather than carrying hashing machinery for a
-    # hypothetical - but it warns now instead of doing it silently, so the day it
-    # does fire there's a thread to pull.
+    # Unreachable with the current .jmx set (longest key ~44 chars), so a plain
+    # truncation - but warn, because two keys colliding here would silently share
+    # a config file, .properties file and build artifact.
     $safeKey = $safeKey.Substring(0, 50)
     Write-Host "##vso[task.logissue type=warning]safeTestCaseId exceeded 50 chars and was truncated to '$safeKey'. If two .jmx plans truncate to the same value they will overwrite each other's config and artifacts - shorten the .jmx stem, scenario or version."
 }

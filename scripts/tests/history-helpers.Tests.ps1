@@ -1,19 +1,11 @@
-# Covers Test-HistoryRowIncluded — the row filter that decides which runs form a
-# regression baseline for check-regression, compare-runs and show-trends. It has
-# no crash mode: a wrong rule here just quietly changes the population every
-# verdict is computed from, which is why it's worth pinning.
+# Covers Test-HistoryRowIncluded, the filter deciding which runs form a
+# regression baseline. It has no crash mode - a wrong rule is silently wrong.
 
 BeforeAll {
     . "$PSScriptRoot/../_history-helpers.ps1"
 
-    # Helper lives in BeforeAll, not at script scope: Pester 5 runs the
-    # top-level body during Discovery, and relying on a function defined there
-    # surviving into the Run phase is an assumption this suite doesn't need to
-    # make. BeforeAll-defined functions are reachable from every It in the
-    # container, which is the same mechanism the sibling suites already use for
-    # their dot-sourced functions.
-    #
-    # Minimal valid row; each test overrides only the field under test.
+    # In BeforeAll, not at script scope: Pester 5 runs the top-level body during
+    # Discovery. Minimal valid row; each test overrides the field under test.
     function New-Row {
         param([hashtable]$Override = @{})
         $base = @{

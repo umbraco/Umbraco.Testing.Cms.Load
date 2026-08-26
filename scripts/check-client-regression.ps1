@@ -9,10 +9,8 @@
 
 [CmdletBinding()]
 param(
-    # Filters rows by their `scenario` field. Required in practice for the
-    # pipeline: the client blob prefix carries no scenario segment, so this is
-    # the only thing keeping two scenarios' client measurements out of one cell.
-    # Leave empty only for a deliberate cross-scenario sweep.
+    # Filters on the row's `scenario` field. The client blob prefix has no
+    # scenario segment, so this is the only thing separating them. Empty = all.
     [string]$Scenario,
     [int]$Major,
     [string]$HistoryResourceGroup,
@@ -93,13 +91,7 @@ foreach ($blob in $blobNames) {
         if (-not $row.metric) { continue }
         # Row-type marker written by this script's own LA post - not a measurement.
         if ($row.metric -eq 'regression_check') { continue }
-        # Scenario filter. The client blob layout is client/{major}/{version}/
-        # {tier}/... with NO scenario segment (unlike the load-test layout's
-        # {scenario}/{major}/...), so scenario can only be separated on the row
-        # field. Without this, -Scenario was accepted and ignored, and cells
-        # would silently mix scenarios the moment a second one ships a client/
-        # project. Rows predating the scenario field fall through when the
-        # requested scenario is the default.
+        # Rows predating the scenario field are treated as Default.
         if ($Scenario) {
             $rowScenario = if ($row.scenario) { [string]$row.scenario } else { 'Default' }
             if ($rowScenario -ne $Scenario) { continue }

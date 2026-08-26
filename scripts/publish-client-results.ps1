@@ -104,13 +104,9 @@ function Build-ClientRows {
 
 # Logs Ingestion mirror — same shape as publish-load-test-results.ps1's sender.
 function Send-ClientRowsToLogAnalytics {
-    # AllowEmptyCollection: Build-ClientRows legitimately returns zero rows when
-    # every NDJSON line failed to parse (Playwright killed mid-write - the case
-    # its per-line try/catch is there to survive). Without this attribute
-    # PowerShell's strict Mandatory-collection binding rejects the empty array
-    # BEFORE the body's early-return can fire, so the graceful "warn and
-    # continue" path became an opaque binding error instead. Same fix as
-    # Send-SeriesToLogAnalytics in publish-load-test-results.ps1.
+    # AllowEmptyCollection: Build-ClientRows returns zero rows when every NDJSON
+    # line failed to parse, and Mandatory alone rejects an empty array before the
+    # early-return can fire. Same fix as Send-SeriesToLogAnalytics.
     param([Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Rows)
     if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsClientStreamName)) { return }
     if ($Rows.Count -eq 0) {

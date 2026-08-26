@@ -22,13 +22,9 @@ param (
 
 $ErrorActionPreference = "Stop"
 
-# Explicitly OFF, not merely left at its default. This script's best-effort loop
-# depends on a failing `az webapp stop` returning a non-zero $LASTEXITCODE
-# instead of throwing — every sibling script in this folder sets this to $true,
-# so relying on the implicit default made the behaviour one consistency edit (or
-# one changed pwsh default) away from silently becoming fail-fast, aborting the
-# sweep on the first app that won't stop. $ErrorActionPreference stays "Stop" so
-# cmdlet errors (JSON parse, etc.) still fail loudly.
+# Explicitly OFF: the loop below needs a failed `az webapp stop` to set
+# $LASTEXITCODE rather than throw. Every sibling script sets this to $true, so
+# leaving it implicit is one consistency edit away from a fail-fast sweep.
 $PSNativeCommandUseErrorActionPreference = $false
 
 . "$PSScriptRoot/_helpers.ps1"

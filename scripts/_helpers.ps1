@@ -117,11 +117,9 @@ function Parse-JmeterCsv {
     $byLabel = @{}
     $allElapsed = if ($BuildAggregate) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
     $totalErrors = 0
-    # Observed sample window (JMeter timeStamp is epoch milliseconds). Callers
-    # use this to derive throughput from the span the samples actually cover
-    # rather than the CONFIGURED duration — they diverge whenever ALT autoStops
-    # early or the run fast-fails, and they diverge most on the saturated runs
-    # where throughput matters. $null when no row carried a parseable timestamp.
+    # Sample window (JMeter timeStamp is epoch ms), so callers can derive
+    # throughput from the span covered rather than the configured duration.
+    # $null when no row carried a parseable timestamp.
     $minTs = [long]::MaxValue
     $maxTs = [long]::MinValue
 
@@ -191,8 +189,7 @@ function Parse-JmeterCsv {
             $bucket.Samples.Add($elapsed)
             if (-not $success) { $bucket.Errors++ }
 
-            # Track the window across every KEPT row (post-filter), so the span
-            # matches the samples the metrics are computed from.
+            # Post-filter, so the span matches the samples the metrics come from.
             $ts = [long]0
             if ([long]::TryParse($cols[$idxTimestamp], [ref]$ts)) {
                 if ($ts -lt $minTs) { $minTs = $ts }

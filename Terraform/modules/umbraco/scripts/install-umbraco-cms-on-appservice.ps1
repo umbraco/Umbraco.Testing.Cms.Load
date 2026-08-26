@@ -311,10 +311,8 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
             $seederComplete = $true
             $seederSuccess = $true
         }
-        # Terminal-FAIL. Keyed on the reported Status as well as the 503, because
-        # a 200 carrying Status="Failed" previously fell through to the "still
-        # working" branch below and burned the entire timeout budget (up to 120
-        # minutes on Massive) waiting for a seeder that had already given up.
+        # Status as well as the 503: a 200 carrying Status="Failed" otherwise
+        # looks like "still working" for the whole timeout budget.
         elseif ($seederStatusCode -eq 503 -or $responseBody.Status -eq "Failed") {
             Write-Host ""
             Write-Host "ERROR: Seeder reported failure (HTTP $seederStatusCode, Status=$($responseBody.Status)) - $($responseBody.ErrorMessage)" -ForegroundColor Red
@@ -327,11 +325,8 @@ while ($attempt -lt $maxAttempts -and -not $seederComplete) {
         }
     }
     catch {
-        # Include the reason. A message-less "Waiting for seeder endpoint..."
-        # made a DNS failure, a TLS error and normal polling look identical for
-        # up to 120 minutes — the same hazard the non-JSON guard above was added
-        # to close, left open on the transport path. First line only: the full
-        # WebException stack repeated 720 times is its own kind of unreadable.
+        # With the reason: a bare "waiting" made a DNS or TLS failure look like
+        # normal polling for the whole timeout. First line only.
         $reason = $_.Exception.Message.Split([Environment]::NewLine)[0]
         Write-Host "  [$attempt/$maxAttempts] Waiting for seeder endpoint... ($reason)"
     }

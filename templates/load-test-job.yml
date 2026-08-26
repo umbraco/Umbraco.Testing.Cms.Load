@@ -246,22 +246,13 @@ steps:
           }
           Write-Host "Warm-up complete."
 
-  # Phase 3, backoffice only: prime the management-API / OAuth surface the .jmx
-  # plans actually hit. Phases 1-2 above prime rendered content URLs, which warm
-  # nothing the write plans touch — so whichever .jmx ran first absorbed the JIT
-  # cost of the whole backoffice stack (route table, OpenIddict pipeline, the
-  # management-API controllers) into its measurement. With iterations sequential
-  # and sharing state, that landed entirely on iteration 1.
+  # Phase 3, backoffice only: prime the management-API / OAuth surface. Phases
+  # 1-2 warm rendered content, which the write plans don't touch, so the first
+  # .jmx absorbed the JIT cost of the whole backoffice stack.
   #
-  # Unauthenticated on purpose: a 401/302/400 still forces route resolution,
-  # model binding and controller JIT, which is the expensive part. We are NOT
-  # trying to complete an auth handshake here — the .jmx plans do that with real
-  # credentials, and doing it here would mutate state before measurement starts.
-  # Every response code is acceptable; only a transport failure is worth a note.
-  #
-  # NOTE: this shifts backoffice numbers (iteration 1 especially) — pre-existing
-  # backoffice baselines are not comparable across this change. Landed while the
-  # gate is still report-only, which is the right time for it.
+  # Unauthenticated on purpose - a 4xx still forces route resolution, model
+  # binding and controller JIT, without mutating state before measurement.
+  # Shifts backoffice numbers, so earlier backoffice baselines don't carry over.
   - ${{ if and(eq(parameters.workload, 'backoffice'), not(parameters.skipWarmup)) }}:
     - task: PowerShell@2
       displayName: 'Warm up backoffice surface [${{ parameters.testCaseId }}]'
@@ -272,14 +263,11 @@ steps:
           $base = "https://$(hostName)"
           Write-Host "Phase 3: priming the backoffice/management-API surface..."
 
-          # Path list is DERIVED from the .jmx plans, not guessed - it's every
-          # parameter-free path the v17 plans actually request:
+          # Derived from the plans, not guessed - re-run this when a .jmx changes:
           #   grep -ho 'name="HTTPSampler.path"[^<]*>[^<]*' \
           #     loadtests/scenarios/Default/jmeter/v17/*.jmx \
           #     | sed 's/.*>//' | sort -u | grep '^/umbraco' | grep -v '\${'
-          # Re-run that when you add or change a .jmx so this stays in step;
-          # paths needing runtime substitution (${target_document_id} etc.) are
-          # excluded because we have no ids yet, but they share controllers with
+          # Paths needing runtime ids are excluded; they share controllers with
           # the tree/ and document/ reads below.
           $gets = @(
               '/umbraco',
@@ -302,11 +290,9 @@ steps:
               '/umbraco/management/api/v1/tree/template/root',
               '/umbraco/management/api/v1/security/back-office/authorize'
           )
-          # A 404 means the path no longer exists on this Umbraco major, so it
-          # primed routing but not the controller the .jmx will hit - i.e. the
-          # list above has drifted. Surface that instead of leaving it buried in
-          # 19 lines of log output; this is the only self-check available, since
-          # a wrong path is otherwise indistinguishable from a warmed one.
+          # A 404 primes routing but not the controller, i.e. the list has
+          # drifted for this major. Only self-check available without a live
+          # instance, so surface it rather than burying it in the log.
           $notFound = New-Object System.Collections.Generic.List[string]
           foreach ($path in $gets) {
               try {
@@ -323,10 +309,8 @@ steps:
               Write-Host "##vso[task.logissue type=warning]Backoffice warm-up: $($notFound.Count) path(s) returned 404 and primed nothing useful - the list in load-test-job.yml has drifted from the .jmx plans for this Umbraco major. Re-derive it (see the grep in the comment above). Paths: $($notFound -join ', ')"
           }
 
-          # The token endpoint is the hot path for every authenticated plan and
-          # the most expensive thing to JIT. An empty POST returns 400 after
-          # traversing the full OpenIddict pipeline, which is exactly what we
-          # want warmed.
+          # Hot path for every authenticated plan. An empty POST 400s only after
+          # traversing the full OpenIddict pipeline, which is what we want warmed.
           try {
               $r = Invoke-WebRequest -Uri "$base/umbraco/management/api/v1/security/back-office/token" `
                    -Method Post -ContentType 'application/x-www-form-urlencoded' -Body 'grant_type=' `
@@ -337,8 +321,8 @@ steps:
               Write-Host "  warn: token endpoint -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
           }
 
-          # Member login is a frontend endpoint but its own controller + the
-          # anti-forgery pipeline still need a first touch for MemberLogin.jmx.
+          # Frontend endpoint, but MemberLogin.jmx still needs its controller and
+          # the anti-forgery pipeline touched once.
           try {
               $r = Invoke-WebRequest -Uri "$base/umbraco/api/memberlogin/login" -Method Post `
                    -ContentType 'application/x-www-form-urlencoded' -Body '' `

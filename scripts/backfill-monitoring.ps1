@@ -71,14 +71,9 @@ if ([string]::IsNullOrWhiteSpace($dcrImmutableId)) {
 # 2. Optionally collect existing run_ids so we can skip blobs we've already
 #    ingested. The Logs Ingestion API doesn't dedupe — re-running without this
 #    check creates duplicate rows.
-# Dedup keys are (run_id + jmeter_test_name), not run_id alone. A backoffice
-# pipeline run publishes ONE BLOB PER .jmx (publish-load-test-results.ps1
-# suffixes the blob prefix with the .jmx stem) and all six share a single
-# run_id. Keyed on run_id alone, a re-run of this script after a partial
-# failure would see the run_id from the one blob that made it and skip the
-# five that didn't — silently defeating the "replay a failed ingestion" use
-# case this script exists for. ClientMeasurement_CL rows have no
-# jmeter_test_name, so the key degrades to run_id there (one blob per run).
+# Keyed on (run_id, jmeter_test_name): a backoffice run publishes one blob per
+# .jmx, all sharing a run_id, so run_id alone would skip five of six on a replay.
+# Client rows have no jmeter_test_name, so the key degrades to run_id there.
 $existingKeys = @{}
 function Get-DedupKey($row) {
     $jmx = if ($row.PSObject.Properties.Name -contains 'jmeter_test_name') { [string]$row.jmeter_test_name } else { '' }
@@ -90,9 +85,7 @@ if (-not $Force) {
     if ([string]::IsNullOrWhiteSpace($workspaceCustomerId)) {
         Write-PipelineError "Couldn't resolve workspace customerId. Run ensure-monitoring-infra.ps1 first or pass -Force to skip the dedup query."
     }
-    # ClientMeasurement_CL has no jmeter_test_name column, so only project it for
-    # the load-test tables — referencing a missing column is a KQL error, not an
-    # empty result.
+    # Referencing a column the table lacks is a KQL error, not an empty result.
     $dedupQuery = if ($TableName -eq "ClientMeasurement_CL") {
         "$TableName | where isnotempty(run_id) | distinct run_id"
     } else {
@@ -194,17 +187,12 @@ foreach ($blob in $blobs) {
             $stats.skipped++
             continue
         }
-        # Also guard within THIS invocation: two blobs sharing a dedup key (a
-        # duplicate publish) would otherwise both ingest and double-count.
+        # Guard within this invocation too, against a duplicate publish.
         $existingKeys[$dedupKey] = $true
 
-        # Mirror publish-load-test-results.ps1: TimeGenerated = run_started_at,
-        # so all per-sampler rows of one run share a single point on the time
-        # axis. Client rows (Build-ClientRows in publish-client-results.ps1)
-        # carry TimeGenerated but NO run_started_at, so fall through to it
-        # before the now() fallback — otherwise every client backfill row got
-        # stamped with the backfill moment, silently destroying the time axis.
-        # Only genuinely timestamp-less rows land on now().
+        # TimeGenerated = run_started_at, so one run's rows share a point on the
+        # time axis. Client rows carry only TimeGenerated, hence the middle
+        # fallback; without it every client backfill row got stamped with now().
         $ingestRows = $rows | ForEach-Object {
             $row = $_ | Select-Object *
             $ts  = $row.run_started_at

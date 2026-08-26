@@ -310,17 +310,11 @@ $desiredFlows = $ownStreamNames | ForEach-Object {
 
 # Existing DCR (if any) — drives both the merge and the skip decision.
 #
-# The PUT below is a full replace, so it MUST NOT run while we're merely unable
-# to see the current stream set: $existingDcr would stay $null, the merge would
-# find no foreign streams, and the PUT would write a DCR holding only this
-# script's three — exactly the clobber the merge logic exists to prevent.
-#
-# So "does it exist" is answered structurally (a list filtered by name) rather
-# than by string-matching an error message. That keeps the two failure modes
-# distinct without making the FIRST-RUN path depend on az's error wording:
-#   list ok + 0 matches -> genuinely absent, fall through and create
-#   list ok + 1 match   -> must GET it; any GET failure is now unambiguous
-#   list fails          -> unknown state, refuse to PUT
+# The PUT below is a full replace, so "can't see the current streams" must never
+# look like "there are none" - that's the clobber the merge logic prevents.
+# Existence is therefore a name-filtered list, not a parsed error string, so the
+# first-run path doesn't depend on az's wording: 0 matches = create, 1 match =
+# GET it and treat any failure as fatal, list failure = refuse to PUT.
 $existingDcr = $null
 
 $dcrCount = az monitor data-collection rule list `
@@ -331,8 +325,7 @@ if ($dcrCount -eq '0') {
     Write-Host "   no existing DCR (first run) - will create"
 }
 else {
-    # It exists, so a failed read means "unknown state", full stop. Let the
-    # native-command preference throw rather than interpreting text.
+    # It exists, so let the native-command preference throw on a failed read.
     $dcrGetRaw = az rest --method get --url "https://management.azure.com$dcrPath"
     try {
         $existingDcr = $dcrGetRaw | ConvertFrom-Json

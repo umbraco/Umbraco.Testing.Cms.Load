@@ -12,11 +12,8 @@ parameters:
     type: string
     default: '17.0.0'
 
-  # Single source of truth for the scenario. Was the literal 'Default' repeated
-  # in five places (provision template + four tier jobs), which meant the
-  # regression check's -Scenario could silently disagree with the scenario the
-  # measurements actually ran against. Only scenarios that ship a client/
-  # project are listed — resolve-run-config.ps1 rejects the rest at validation.
+  # Single source of truth; was the literal 'Default' in five places. Only
+  # scenarios shipping a client/ project are listed.
   - name: scenario
     displayName: Scenario (must have a client/ Playwright project)
     type: string
@@ -269,10 +266,6 @@ stages:
                 # Report-only unless failOnRegression is ticked at queue time,
                 # same reasoning as azure-pipeline.yml's regressionCheck stage.
                 $splat = @{
-                    # Was hardcoded to 'Default'. Now that -Scenario actually
-                    # filters rows (the client blob prefix carries no scenario
-                    # segment, so the row field is the only separator), passing
-                    # the real scenario matters.
                     Scenario                     = '${{ parameters.scenario }}'
                     Major                        = $major
                     HistoryResourceGroup         = '$(historyResourceGroup)'

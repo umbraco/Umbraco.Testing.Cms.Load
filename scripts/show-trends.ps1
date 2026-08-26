@@ -47,10 +47,8 @@ function Get-PopulationStdDev([double[]] $values) {
 function Format-Cell($runs) {
     if (-not $runs -or $runs.Count -eq 0) { return '-' }
 
-    # Median, not mean, to match the p95/p99 statistic in the same cell (and the
-    # header's "median ±stddev" label). A mean let one bad run skew the error
-    # figure in a way the latency figures beside it are explicitly protected
-    # from, which made the cell internally inconsistent.
+    # Median, not mean, to match the p95/p99 statistic in the same cell - a mean
+    # let one bad run skew the figure the latencies beside it are protected from.
     $errPct = [math]::Round((Get-Median (@($runs | ForEach-Object { [double]$_.error_rate }))) * 100, 2)
 
     if ($runs.Count -eq 1) {
