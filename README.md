@@ -533,7 +533,13 @@ The client suite measures a **clean-site baseline**. Running the same suite agai
 
 ### Cold-cache vs warm-cache testing
 
-By default, the pipeline **warms up** the App Service (5-minute poll for `200` on `/`) before starting the load test, so measurements reflect steady-state cache-warm behaviour — the most stable comparison surface across tiers and versions.
+By default, the pipeline **warms up** the App Service before starting the load test, so measurements reflect steady-state cache-warm behaviour — the most stable comparison surface across tiers and versions. Three phases:
+
+1. Poll `/` for `200` (max 5 minutes) — App Service + Umbraco bootstrap is up.
+2. Prime every URL in every seeded content bucket (from the seeder inventory), so each frontend sampler starts warm rather than absorbing first-touch latency into its early measurement window.
+3. **Backoffice workload only:** prime the management-API / OAuth surface the `.jmx` plans hit. The path list is derived mechanically from the plans (the `grep` that produces it is in the comment above the list in `templates/load-test-job.yml`) — re-run it when you add or change a `.jmx`. Requests are unauthenticated on purpose: a 401/400 still forces route resolution, model binding and controller JIT, which is the expensive part, without mutating state before measurement. Any path returning `404` raises a warning, since that means the list has drifted from the plans for this major and primed nothing useful.
+
+Without phase 3, phases 1–2 warmed only rendered content, so whichever `.jmx` ran first absorbed the JIT cost of the entire backoffice stack — and since iterations are sequential and share state, that landed entirely on iteration 1. **This shifts backoffice numbers**, so backoffice baselines established before it are not comparable.
 
 Set `skipWarmup: true` to skip the warmup. The load test then hits a freshly-started App Service with cold caches, measuring the full delivery pipeline including initial cache population — useful for understanding cache warm-up latency, restart behaviour, and the front-edge of a request burst against a cold app.
 
