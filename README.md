@@ -480,7 +480,7 @@ These are documented for the next person — fixes are in scope for follow-up wo
 
 **Pipeline:** `azure-pipeline-client.yml` (separate from the main `azure-pipeline.yml`). It reuses the same Terraform provisioning and long-lived history/monitoring infrastructure, then runs Playwright directly on the pipeline agent.
 
-**Umbraco v17+ only.** `global-setup.ts` builds the content model through `@umbraco-cms/acceptance-test-helpers`, pinned in `client/package.json` and coupled to the v17+ management API — v13 has no management API in that shape at all. `resolve-run-config.ps1` rejects `workload: client` on other majors at validation (mirroring the `DeliveryApi` v17+ gate) rather than letting it fail ~15 minutes deep inside globalSetup. v18 runs against the v17-pinned helpers, matching the seeder's v17→v18 reuse; if a content-model build ever fails on a new major, that pin is the first thing to check. Extend `$clientSupportedMajors` and bump the package together when a new major is verified.
+**Version support.** `global-setup.ts` builds the content model through `@umbraco-cms/acceptance-test-helpers`, pinned in `client/package.json`. Runs on the same majors as the rest of the pipeline (v13, v17, v18 — whatever `$seederShippedMajors` allows); there's no separate client-side major gate. v18 runs against the v17-pinned helpers, matching the seeder's v17→v18 reuse. If a content-model build ever fails on a major, that pin is the first thing to check.
 
 **Project location:** `loadtests/scenarios/{scenario}/client/` — e.g. `loadtests/scenarios/Default/client/`.
 
