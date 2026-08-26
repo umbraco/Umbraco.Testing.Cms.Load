@@ -308,7 +308,9 @@ if ($missing.Count -gt 0) {
     [void]$out.AppendLine("## Candidate missing (no row for run ``$RunId``)")
     [void]$out.AppendLine()
     if ($publishedNone) {
-        [void]$out.AppendLine("**This run published no rows at all** for any of the $($cells.Keys.Count) cell(s) in history - a publish/load-test failure, not a trimmed plan. Check the loadTest stage before reading anything else here.")
+        # Not necessarily a failure: Get-HistoryCells drops cold_start rows, so a
+        # skipWarmup run has every row filtered out even though it published fine.
+        [void]$out.AppendLine("**No rows from this run matched** any of the $($cells.Keys.Count) cell(s) in history. Either the run published nothing (check the loadTest stage), or its rows were filtered out - a ``skipWarmup`` run is excluded from comparison because every row is flagged ``cold_start``.")
         [void]$out.AppendLine()
     }
     foreach ($grp in ($missing | Group-Object Plan | Sort-Object Name)) {
@@ -353,7 +355,7 @@ if ($regressions.Count -gt 0) {
 # it pass silently (that silence is what made the un-pinned gate misleading).
 # Partial absences only - see the classification above.
 if ($RunId -and $missingPartialPlans.Count -gt 0) {
-    Write-Host "##vso[task.logissue type=warning]Run '$RunId' published only some of the expected samplers for: $($missingPartialPlans -join ', '). The plan(s) ran but the publish step didn't land every cell - see 'Candidate missing' in the report."
+    Write-Host "##vso[task.logissue type=warning]No comparable rows from run '$RunId' for: $($missingPartialPlans -join ', '). Either the publish step didn't land every cell, or the rows were filtered (a skipWarmup run is excluded as cold_start). See 'Candidate missing' in the report."
 }
 elseif ($RunId -and $missing.Count -gt 0) {
     Write-Host "$($missing.Count) cell(s) with history had no row for run '$RunId', all accounted for by plans that didn't run in this queue. See 'Candidate missing' in the report."
