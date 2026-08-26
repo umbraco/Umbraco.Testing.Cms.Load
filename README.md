@@ -1064,6 +1064,8 @@ The cleanup gate is **Resume = delete, Reject = keep**. Resume is the normal pat
 
 So when you click Reject, write yourself a reminder. There's no scheduled reaper, no auto-expiry beyond the validation window, and a forgotten rejected-kept RG persists until you (or the next pipeline run, which will fail with "resource group already exists" and surface the orphan) catches it.
 
+**Cleanup only ever touches an RG this run created.** `checkResourceGroupForCleanup` compares the RG's `build_id` tag (set by Terraform from `local.common_tags`) against `$(Build.BuildId)`. If they don't match — a previous run kept its RG and someone re-queued the same prefix — the keep/delete gate is skipped entirely and the delete job refuses, with a warning naming both ids and the manual `az group delete` command. Without that check, a prefix collision would offer a gate for somebody else's environment, and since **Resume deletes**, pressing it out of habit would destroy it. An untagged RG that happens to share the name is likewise left alone: a leaked billing RG is recoverable and visible, a wrongly-deleted environment is neither.
+
 One residual failure mode: if the `manualValidation` job itself fails for an infrastructure reason (rather than an operator pressing Reject), the delete job treats it as a keep and the RG survives. That's why the job's `timeoutInMinutes` is a fixed 300-minute backstop rather than the parameter value — a job timeout would resolve `Failed` (keep) and defeat the task's `onTimeout: resume` (delete).
 
 ### Security: hardcoded backoffice creds on a public-internet App Service
