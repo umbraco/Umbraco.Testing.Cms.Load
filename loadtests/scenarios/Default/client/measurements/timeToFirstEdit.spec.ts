@@ -27,26 +27,33 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
 
   for (let i = 0; i < env.reps; i++) {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    // Buffer this rep's segments and commit them only once the rep completes.
+    // Pushing straight into `seg` meant a rep failing at (say) segment 3 still
+    // contributed to seg.login and seg.navigate but not to `total`, so the four
+    // emitted seg_*_median values summarized a larger, differently-shaped
+    // population than median_ms — they described partly-failed reps the total
+    // excluded.
+    const rep = { login: 0, navigate: 0, editorReady: 0, keystroke: 0 };
     try {
       const page = await context.newPage();
 
       const tStart = performance.now();
 
       // Segment 1: login.
-      seg.login.push(await loginByForm(page));
+      rep.login = await loginByForm(page);
 
       // Segment 2: navigate to Content + open the Homepage node.
       const tNav = performance.now();
       await page.goto(CONTENT_URL);
       await waitForHomepageNode(page, HOMEPAGE_NAME);
       await homepageTreeItem(page, HOMEPAGE_NAME).click();
-      seg.navigate.push(performance.now() - tNav);
+      rep.navigate = performance.now() - tNav;
 
       // Segment 3: editor ready (TipTap field visible).
       const tEditor = performance.now();
       const editor = page.locator(TIPTAP).first();
       await editor.waitFor({ state: 'visible', timeout: 60_000 });
-      seg.editorReady.push(performance.now() - tEditor);
+      rep.editorReady = performance.now() - tEditor;
 
       // Segment 4: first keystroke rendered. Poll via waitForFunction on the
       // editor's ELEMENT HANDLE — the editor lives in a shadow root, so a
@@ -65,7 +72,7 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
         { el: handle, s: SENTINEL },
         { timeout: 30_000, polling: 'raf' },
       );
-      seg.keystroke.push(performance.now() - tKey);
+      rep.keystroke = performance.now() - tKey;
 
       // Confirm the character actually landed (guards against a false-positive
       // resolution if the editor were ever swapped out mid-poll).
@@ -75,6 +82,12 @@ test('time to first edit (end-to-end + segments)', async ({ browser }) => {
       await handle!.dispose();
 
       total.push(performance.now() - tStart);
+      // Rep completed: commit its segments alongside its total so both describe
+      // the same population.
+      seg.login.push(rep.login);
+      seg.navigate.push(rep.navigate);
+      seg.editorReady.push(rep.editorReady);
+      seg.keystroke.push(rep.keystroke);
     } catch (e) {
       // One flaky rep shouldn't discard every prior rep - skip and continue,
       // matching runColdCached's pattern in lib/measure.ts.

@@ -1,9 +1,13 @@
 #requires -Version 7.3
 
-# Compare the most recent run for each (version, tier, sampler) cell against the
-# median of the previous N runs and flag regressions exceeding configurable
-# thresholds. Exits non-zero when any cell regresses (default), making this safe
-# to wire into the pipeline as a post-load-test gate once baselines exist.
+# Compare one run for each (version, tier, sampler) cell against the median of
+# the previous N runs and flag regressions exceeding configurable thresholds.
+# Exits non-zero when any cell regresses (default), making this safe to wire
+# into the pipeline as a post-load-test gate once baselines exist.
+#
+# Pass -RunId to pin WHICH run is graded. Without it the candidate is just the
+# newest row in each cell, which is not necessarily the run you meant — see the
+# -RunId parameter comment below. The pipeline always pins it.
 #
 # A cell with fewer than -MinBaselineRuns prior runs is reported as "insufficient
 # baseline" and never contributes to a fail — you can't regress against nothing.
@@ -13,8 +17,8 @@
 #       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history
 #
-#   # CI-friendly (non-zero exit on regression):
-#   ./scripts/check-regression.ps1 ... -OutputPath regression-report.md
+#   # CI-friendly (non-zero exit on regression), gating a specific run:
+#   ./scripts/check-regression.ps1 ... -RunId 12345 -OutputPath regression-report.md
 #
 #   # Tighter thresholds for a release-gate run:
 #   ./scripts/check-regression.ps1 ... -P95Threshold 5 -P99Threshold 10
@@ -29,6 +33,16 @@ param (
     [string]$Major,
     [string]$Sampler,
     [string]$OutputPath,
+
+    # run_id of the run being gated. Without it the candidate is just "newest row
+    # in history", which is NOT necessarily this run: the publish step runs with
+    # continueOnError, so a failed publish leaves the PREVIOUS run newest and the
+    # gate silently grades run N-1 against N-2 and reports PASS for a run it never
+    # saw. Concurrent pipelines on the same cell have the same hazard. When set,
+    # the candidate must carry this run_id or the cell is reported as
+    # 'candidate missing' rather than graded against the wrong run.
+    # Omit for ad-hoc local analysis ("how does the latest run look?").
+    [string]$RunId,
 
     # Percentage thresholds: latest > baseline-median * (1 + threshold/100) is a regression.
     # p99 gets a wider band because tail latency is noisier than p95 by nature.
@@ -129,24 +143,16 @@ $regressions  = @()
 $improvements = @()
 $stable       = @()
 $insufficient = @()
+$missing      = @()
+
+# Candidate row per cell, retained so the Log Analytics block below reuses this
+# loop's selection instead of re-sorting every cell a second time (and can't
+# drift from it).
+$candidateByCell = @{}
 
 foreach ($cellKey in $cells.Keys) {
-    $sorted = $cells[$cellKey] |
-        Sort-Object { Get-RunDate $_ } -Descending
-
-    # Like-for-like baseline: a run only compares against PRIOR runs that drove
-    # the SAME load — same VU count, spawn rate, and duration. This keeps a ramp
-    # run (climbing 0->target, spawn 1) out of the steady baseline, AND stops a
-    # 15-VU backoffice run from comparing against 50-VU history (same profile
-    # name, different load = meaningless delta). A new load just yields
-    # "insufficient history" until same-load baselines accrue — the correct
-    # verdict, not a false regression. (Profile/load isn't a stored key; this
-    # matches the actual published load params, which every metric row carries.)
-    $candidate     = $sorted[0]
-    $candLoad      = "$($candidate.user_count)|$($candidate.spawn_rate)|$($candidate.duration_seconds)"
-    $sameLoad      = @($sorted | Where-Object { "$($_.user_count)|$($_.spawn_rate)|$($_.duration_seconds)" -eq $candLoad })
-    $priorRuns     = @($sameLoad | Select-Object -Skip 1 -First $BaselineWindow)
-    $priorRunCount = $priorRuns.Count
+    $sorted = @($cells[$cellKey] |
+        Sort-Object { Get-RunDate $_ } -Descending)
 
     # Limit 3 so sampler names that legally contain '__' (e.g. a future
     # task like 'Backoffice__SavePublish') don't get truncated into a wrong
@@ -156,6 +162,50 @@ foreach ($cellKey in $cells.Keys) {
     $version = $parts[0]
     $tier    = $parts[1]
     $samp    = $parts[2]
+
+    # Pin the candidate to the run being gated when -RunId is supplied, instead
+    # of trusting "newest row wins". Index-based (not just the row) so the
+    # baseline below can be "strictly older than the candidate" even when the
+    # candidate isn't the newest row in the cell.
+    $candIndex = 0
+    if ($RunId) {
+        $candIndex = -1
+        for ($i = 0; $i -lt $sorted.Count; $i++) {
+            if ([string]$sorted[$i].run_id -eq $RunId) { $candIndex = $i; break }
+        }
+        if ($candIndex -lt 0) {
+            # This run published no row for this cell (publish step failed, the
+            # .jmx was skipped, or the sampler didn't appear). Grading the newest
+            # OTHER row here would report a verdict for a run nobody asked about,
+            # so report the gap instead.
+            # Group by the .jmx stem (backoffice samplers publish as
+            # "<jmx> / <label>") so the report can tell "whole plan absent"
+            # from "some of a plan's cells absent" — see below.
+            $plan = if ($samp -match '^(.+?) / ') { $Matches[1] } else { '(frontend)' }
+            $missing += [pscustomobject]@{ Version = $version; Tier = $tier; Sampler = $samp; Plan = $plan }
+            continue
+        }
+    }
+    $candidate = $sorted[$candIndex]
+    $candidateByCell[$cellKey] = $candidate
+
+    # Like-for-like baseline: a run only compares against PRIOR runs that drove
+    # the SAME load — same VU count, spawn rate, and duration. This keeps a ramp
+    # run (climbing 0->target, spawn 1) out of the steady baseline, AND stops a
+    # 15-VU backoffice run from comparing against 50-VU history (same profile
+    # name, different load = meaningless delta). A new load just yields
+    # "insufficient history" until same-load baselines accrue — the correct
+    # verdict, not a false regression. (Profile/load isn't a stored key; this
+    # matches the actual published load params, which every metric row carries.)
+    #
+    # "Prior" is by position in the descending sort, so a pinned candidate that
+    # isn't the newest row still compares only against runs older than itself.
+    $candLoad      = "$($candidate.user_count)|$($candidate.spawn_rate)|$($candidate.duration_seconds)"
+    $older         = @($sorted | Select-Object -Skip ($candIndex + 1))
+    $priorRuns     = @($older |
+        Where-Object { "$($_.user_count)|$($_.spawn_rate)|$($_.duration_seconds)" -eq $candLoad } |
+        Select-Object -First $BaselineWindow)
+    $priorRunCount = $priorRuns.Count
 
     if ($priorRunCount -lt $MinBaselineRuns) {
         $insufficient += [pscustomobject]@{
@@ -217,7 +267,15 @@ $out = New-Object System.Text.StringBuilder
 [void]$out.AppendLine()
 [void]$out.AppendLine("**Thresholds:** p95 +${P95Threshold}%, p99 +${P99Threshold}%, error_rate +${ErrorAbsoluteThreshold}pp absolute. Baseline window: last $BaselineWindow runs (min $MinBaselineRuns required).")
 [void]$out.AppendLine()
-[void]$out.AppendLine("**Result:** $($regressions.Count) regressions, $($improvements.Count) improvements, $($stable.Count) stable, $($insufficient.Count) cells skipped (insufficient baseline).")
+# State the graded run explicitly. Without this the report is ambiguous about
+# WHICH run it judged, which is the whole point of pinning -RunId.
+if ($RunId) {
+    [void]$out.AppendLine("**Candidate run:** ``$RunId`` (cells with no row for this run are listed under 'Candidate missing').")
+} else {
+    [void]$out.AppendLine("**Candidate run:** newest row per cell (no -RunId pinned - ad-hoc mode).")
+}
+[void]$out.AppendLine()
+[void]$out.AppendLine("**Result:** $($regressions.Count) regressions, $($improvements.Count) improvements, $($stable.Count) stable, $($insufficient.Count) cells skipped (insufficient baseline), $($missing.Count) cells with no candidate row.")
 [void]$out.AppendLine()
 
 function Add-CellTable {
@@ -254,6 +312,63 @@ if ($insufficient.Count -gt 0) {
     [void]$out.AppendLine()
 }
 
+# Cells that exist in history but carry no row for the pinned run. Usually a
+# skipped .jmx or a failed publish step — worth seeing, because the alternative
+# (before -RunId existed) was a confident verdict on somebody else's run.
+#
+# Two very different causes, separated so the warning stays worth reading:
+#   - a WHOLE plan absent = that .jmx wasn't run (trimmed from backofficePlans
+#     at queue time, or no .jmx for this major). Expected - the README actively
+#     recommends trimming - so warning about it every run would just train
+#     people to ignore this section.
+#   - SOME of a plan's cells absent = the plan ran but didn't publish every
+#     sampler. That's the publish anomaly -RunId exists to surface, so it warns.
+$missingPartialPlans = @()
+if ($missing.Count -gt 0) {
+    # Cells in history per plan, to compare against the missing count.
+    $cellsPerPlan = @{}
+    foreach ($k in $cells.Keys) {
+        $s = ($k -split '__', 3)[2]
+        $p = if ($s -match '^(.+?) / ') { $Matches[1] } else { '(frontend)' }
+        if (-not $cellsPerPlan.ContainsKey($p)) { $cellsPerPlan[$p] = 0 }
+        $cellsPerPlan[$p]++
+    }
+
+    # "Whole plan absent = expected" only holds for a NAMED backoffice plan,
+    # because those are individually selectable via backofficePlans. Two cases
+    # it must not swallow:
+    #   - frontend has exactly one implicit plan, so "all absent" there means
+    #     the publish produced nothing at all, not that something was trimmed;
+    #   - if EVERY cell in history is absent, the run published nothing whatever
+    #     the workload, which is the loudest possible signal.
+    $totalCells    = $cells.Keys.Count
+    $publishedNone = ($missing.Count -ge $totalCells)
+
+    [void]$out.AppendLine("## Candidate missing (no row for run ``$RunId``)")
+    [void]$out.AppendLine()
+    if ($publishedNone) {
+        [void]$out.AppendLine("**This run published no rows at all** for any of the $totalCells cell(s) in history. That is a publish/load-test failure, not a trimmed plan - check the loadTest stage before reading anything else here.")
+        [void]$out.AppendLine()
+    }
+    foreach ($grp in ($missing | Group-Object Plan | Sort-Object Name)) {
+        $total      = $cellsPerPlan[$grp.Name]
+        $wholePlan  = ($grp.Count -ge $total)
+        # A named backoffice plan can legitimately be skipped; '(frontend)' cannot.
+        $skippable  = $wholePlan -and -not $publishedNone -and $grp.Name -ne '(frontend)'
+        if ($skippable) {
+            [void]$out.AppendLine("- **$($grp.Name)**: all $total cell(s) absent - this plan almost certainly didn't run (trimmed from ``backofficePlans``, or no .jmx for this major). Expected.")
+        } else {
+            $missingPartialPlans += $grp.Name
+            $why = if ($wholePlan) { "all $total cell(s) absent" } else { "$($grp.Count) of $total cell(s) absent" }
+            [void]$out.AppendLine("- **$($grp.Name)**: $why - this run didn't publish them. Check the publish step.")
+            foreach ($c in ($grp.Group | Sort-Object Sampler, Version, Tier)) {
+                [void]$out.AppendLine("  - $($c.Version) / $($c.Tier) / $($c.Sampler)")
+            }
+        }
+    }
+    [void]$out.AppendLine()
+}
+
 $report = $out.ToString()
 
 if ($OutputPath) {
@@ -272,6 +387,19 @@ if ($regressions.Count -gt 0) {
     Write-Host ""
     Write-Host "PASS - no regressions ($($stable.Count) stable, $($improvements.Count) improvements, $($insufficient.Count) cells skipped for insufficient baseline)."
     $exitOnRegression = $false
+}
+
+# A pinned run that published nothing for cells with existing history is a
+# publish-side problem, not a perf verdict — warn rather than fail, but don't let
+# it pass silently (that silence is what made the un-pinned gate misleading).
+# Only the PARTIAL case warns. A whole plan being absent is the normal result of
+# trimming backofficePlans, and warning on it every run would make this warning
+# worthless for the case that actually matters.
+if ($RunId -and $missingPartialPlans.Count -gt 0) {
+    Write-Host "##vso[task.logissue type=warning]Run '$RunId' published only some of the expected samplers for: $($missingPartialPlans -join ', '). The plan(s) ran but the publish step didn't land every cell - see 'Candidate missing' in the report."
+}
+elseif ($RunId -and $missing.Count -gt 0) {
+    Write-Host "$($missing.Count) cell(s) with history had no row for run '$RunId', all accounted for by plans that didn't run in this queue. See 'Candidate missing' in the report."
 }
 
 # Post regression-check status to Log Analytics. One row per (run_id × scenario
@@ -293,10 +421,12 @@ if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStrea
     foreach ($r in $insufficient) { $insufSet["$($r.Version)__$($r.Tier)__$($r.Sampler)"] = $true }
 
     $statusByGroup = @{}   # key: run_id|scenario|version|tier
-    foreach ($cellKey in $cells.Keys) {
-        $sorted    = $cells[$cellKey] |
-            Sort-Object { Get-RunDate $_ } -Descending
-        $candidate = $sorted[0]
+    # Iterate the candidates the grading loop actually chose. Re-deriving them
+    # here (a second Sort-Object per cell) both doubled the sort cost on long
+    # histories and could disagree with the graded candidate once -RunId pinning
+    # exists — cells with no candidate row are absent from this map by design.
+    foreach ($cellKey in $candidateByCell.Keys) {
+        $candidate = $candidateByCell[$cellKey]
         $parts     = $cellKey -split '__', 3
         $version   = $parts[0]
         $tier      = $parts[1]

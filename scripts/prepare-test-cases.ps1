@@ -205,6 +205,21 @@ foreach ($case in $cases) {
     # in resolve-run-config.ps1 and install-umbraco-cms-on-appservice.ps1 must
     # know each major; resolve-run-config catches new majors with an explicit
     # error. Here we just enforce the lower bound + parse.
+    # Charset-validate the version string, not just its major segment. It's
+    # free text from the queue UI and flows into three places that assume it's
+    # tame: an Azure resource name (versions/main.tf checks length, and now
+    # charset, but a clear error here beats a 400 mid-apply), the hand-escaped
+    # JSON handed to `terraform -var="..."`, and a string executed via
+    # `pwsh -Command` in the deploy local-exec. SemVer's own grammar is a
+    # superset of what's safe here, so restrict to what Azure names accept:
+    # digits, dots, hyphens, ASCII letters. This rejects build-metadata '+'
+    # (which Azure names disallow anyway) and every shell metacharacter.
+    if ([string]$case.umbraco -notmatch '^[0-9A-Za-z][0-9A-Za-z.\-]*$') {
+        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' must contain only letters, digits, dots and hyphens (it becomes part of Azure resource names and is passed to the deploy script)"
+    }
+    if (([string]$case.umbraco).Length -gt 30) {
+        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is $(([string]$case.umbraco).Length) chars (max 30) - it participates in the 60-char App Service name budget"
+    }
     $umbracoMajorRaw = ([string]$case.umbraco).Split('.')[0]
     $umbracoMajor    = 0
     if (-not [int]::TryParse($umbracoMajorRaw, [ref]$umbracoMajor)) {

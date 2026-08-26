@@ -151,7 +151,9 @@ $sqlComponent = @"
 # from -backoffice- to -bo- so even the longest .jmx stem
 # ('saveandpublishcontent', 21 chars) plus scenario fits within 50 chars.
 $scenarioSafe = (($Scenario.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
-$jmxSafe = if ($JmxName) { ($JmxName.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-' } else { '' }
+# .Trim('-') to match $scenarioSafe above: without it a stem like 'Save_Content_'
+# yields a trailing hyphen that then propagates into testId and every derived name.
+$jmxSafe = if ($JmxName) { (($JmxName.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-') } else { '' }
 $workloadSuffix = if ($Workload -eq 'backoffice') { "-bo-$jmxSafe" } else { '' }
 $testId = "umbraco-lt-$scenarioSafe$workloadSuffix"
 if ($testId.Length -gt 50) {
@@ -179,7 +181,18 @@ if ($displayName.Length -gt 50) {
 # overwrite iteration N-1's outputs in the same agent workspace).
 $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
-if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
+if ($safeKey.Length -gt 50) {
+    # Truncation is collision-prone in principle: safeKey names the config file,
+    # the .properties file AND the AzDO artifact
+    # (loadtest-results-$safeTestCaseId), so two names sharing a 50-char prefix
+    # would have one iteration reuse another's config and merge their artifacts.
+    # Unreachable with the current .jmx set (longest key ≈ 44 chars), so it stays
+    # a plain truncation rather than carrying hashing machinery for a
+    # hypothetical - but it warns now instead of doing it silently, so the day it
+    # does fire there's a thread to pull.
+    $safeKey = $safeKey.Substring(0, 50)
+    Write-Host "##vso[task.logissue type=warning]safeTestCaseId exceeded 50 chars and was truncated to '$safeKey'. If two .jmx plans truncate to the same value they will overwrite each other's config and artifacts - shorten the .jmx stem, scenario or version."
+}
 
 # Effective ramp-up + whether this is a ramp run. Keyed on the profile name — the
 # only ramp signal scenario.yaml can't override (it can override users/spawn/

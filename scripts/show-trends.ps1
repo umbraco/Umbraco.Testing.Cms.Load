@@ -47,7 +47,11 @@ function Get-PopulationStdDev([double[]] $values) {
 function Format-Cell($runs) {
     if (-not $runs -or $runs.Count -eq 0) { return '-' }
 
-    $errPct = [math]::Round((($runs | Measure-Object -Property error_rate -Average).Average) * 100, 2)
+    # Median, not mean, to match the p95/p99 statistic in the same cell (and the
+    # header's "median ±stddev" label). A mean let one bad run skew the error
+    # figure in a way the latency figures beside it are explicitly protected
+    # from, which made the cell internally inconsistent.
+    $errPct = [math]::Round((Get-Median (@($runs | ForEach-Object { [double]$_.error_rate }))) * 100, 2)
 
     if ($runs.Count -eq 1) {
         $p95 = [int][math]::Round([double]$runs[0].p95_ms, 0)
@@ -107,7 +111,7 @@ $out = New-Object System.Text.StringBuilder
 [void]$out.AppendLine("# Trends - scenario: $Scenario$(if ($Major) { " (major $Major)" })")
 [void]$out.AppendLine()
 [void]$out.AppendLine("Source: $StorageAccountName/$ContainerName/$prefix")
-[void]$out.AppendLine("Cells are 'p95 / p99 (err%)' in ms for single-run cells; 'median ±stddev / median ±stddev (err%) n=K' when 2+ runs exist.")
+[void]$out.AppendLine("Cells are 'p95 / p99 (err%)' in ms for single-run cells; 'median ±stddev / median ±stddev (err%) n=K' when 2+ runs exist. err% is the median across runs, matching the latency statistic beside it.")
 [void]$out.AppendLine("A small ±stddev across n>=3 runs is the green light to use those numbers as a regression baseline (see check-regression.ps1).")
 [void]$out.AppendLine()
 

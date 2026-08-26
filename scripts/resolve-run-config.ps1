@@ -136,6 +136,19 @@ if ($Workload -eq 'frontend') {
     if (-not (Test-Path -LiteralPath $clientConfig)) {
         Write-PipelineError "Workload=client selected but scenario '$Scenario' has no client/ project (looked for $clientConfig). Add a Playwright project under loadtests/scenarios/$Scenario/client/ or pick a different workload."
     }
+
+    # Major gate, mirroring the DeliveryApi v17+ rejection in
+    # prepare-test-cases.ps1. The client project's global-setup.ts builds the
+    # whole content model through @umbraco-cms/acceptance-test-helpers, whose
+    # version is pinned in client/package.json and is coupled to a management-API
+    # shape. v13 has no management API in that shape at all, so without this the
+    # run fails ~15 minutes deep inside globalSetup instead of at minute 0.
+    # Extend $clientSupportedMajors (and bump the helpers package) together when
+    # a new major is verified.
+    $clientSupportedMajors = @(17, 18)
+    if ($clientSupportedMajors -notcontains $umbracoMajor) {
+        Write-PipelineError "Workload=client is only supported on Umbraco $($clientSupportedMajors -join '/') (got major $umbracoMajor). The Playwright content-model build depends on @umbraco-cms/acceptance-test-helpers, which targets the v17+ management API. Use workload=frontend or backoffice for older majors."
+    }
 }
 
 # Mirror of $seederPackageVersions in

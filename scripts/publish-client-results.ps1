@@ -104,8 +104,19 @@ function Build-ClientRows {
 
 # Logs Ingestion mirror — same shape as publish-load-test-results.ps1's sender.
 function Send-ClientRowsToLogAnalytics {
-    param([Parameter(Mandatory)] [object[]]$Rows)
+    # AllowEmptyCollection: Build-ClientRows legitimately returns zero rows when
+    # every NDJSON line failed to parse (Playwright killed mid-write - the case
+    # its per-line try/catch is there to survive). Without this attribute
+    # PowerShell's strict Mandatory-collection binding rejects the empty array
+    # BEFORE the body's early-return can fire, so the graceful "warn and
+    # continue" path became an opaque binding error instead. Same fix as
+    # Send-SeriesToLogAnalytics in publish-load-test-results.ps1.
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Rows)
     if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsClientStreamName)) { return }
+    if ($Rows.Count -eq 0) {
+        Write-Warning "No client rows to post to Log Analytics."
+        return
+    }
     Write-Host "Posting $($Rows.Count) client row(s) to Log Analytics ($LogAnalyticsClientStreamName)"
     try {
         $token = az account get-access-token --resource https://monitor.azure.com --query accessToken -o tsv

@@ -200,7 +200,7 @@ The profile only encodes load intensity — the same profile can drive any combi
 | `azureRegion` | Azure region | West Europe | West Europe, North Europe, East US, West US 2 |
 | `resourcePrefix` | Resource name prefix (max 16 chars) | umbraco-loadtest | — |
 | `skipWarmup` | Skip warmup (test cold-start / cache warm-up behaviour) | false | true, false |
-| `validationTimeoutMinutes` | How long resources stay alive after tests | 60 | 15, 30, 60, 120, 240 |
+| `validationTimeoutMinutes` | How long resources stay alive after tests. Resume deletes the RG; Reject keeps it; timeout deletes | 60 | 15, 30, 60, 120, 240 |
 | `poolDtuOverride` | Force every case onto a specific per-DB DTU cap (decouples DB sizing from tier) | Auto | Auto, 10, 20, 50, 100, 200 |
 | `appSkuOverride` | Force every case onto a specific App Service Plan SKU (decouples app sizing from tier) | Auto | Auto, P0v3, P1v3, P2v3, P3v3 |
 | `seederPresetOverride` | Force every case onto a specific TestDataSeeder preset (decouples content size from load profile) | Auto | Auto, Small, Medium, Large, Massive |
@@ -211,7 +211,9 @@ The profile only encodes load intensity — the same profile can drive any combi
 
 **Seeder preset override.** Decouples content size from the load profile. `Auto` keeps the existing coupling (smoke→Small; standard, stress, ramp→Medium — Large currently hangs the seeder, see below); explicit values unlock off-diagonal combinations like Massive content + smoke load or Small content + stress load, and are the only way to reach the Massive preset. Approximate seeder times: Small ~10 min, Medium ~3 min (re-verified 2026-08-22 at 178.62s post-logging-fix, was ~30 min before the Serilog quieting — Small/Large/Massive not yet re-verified and may also be faster than shown), Large ~60 min, Massive ~120 min.
 
-The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds).
+**Fail on regression.** `failOnRegression` (default `false`) arms the regression gate for this run. Off = report-only: the stage still produces the full report and the Log Analytics status rows, it just never fails the pipeline. See [Regression gating](#regression-gating) for when to turn it on.
+
+The validator (`scripts/prepare-test-cases.ps1`) catches typos, missing scenario folders, and duplicate `(umbraco, tier, scenario)` triples *before* any Azure resource is provisioned. It also enforces sensible ranges on the load profile values the profile resolver hands it (`userAmount` 1–1000, `spawnRate` 1–100, `testDuration` 30–7200 seconds), and charset-validates the free-text Umbraco version (letters, digits, dots, hyphens; max 30 chars) — that string becomes part of Azure resource names and is passed to the deploy script, so anything else is rejected at minute 0 rather than surfacing as a generic Azure 400 mid-apply.
 
 ## Tiers
 
@@ -452,7 +454,7 @@ Each `.jmx` gets its own ALT testId (`umbraco-lt-{scenario}-bo-{jmxStem}`), its 
 
 **Seeder member discovery.** Before the backoffice loop, the pipeline queries `GET /umbraco/api/seederstatus/inventory?includeMemberPassword=true` and extracts the actual seeded member count + password. These are written to the per-iteration `.properties` file as `totalOfMember` and `member_password` so MemberLogin.jmx's Groovy preprocessor picks an existing seeded member rather than guessing. Discovery falls back to defaults (`TestMember_`, count=30, `Test1234!`) if the endpoint is unreachable, so the loop still runs — just with degraded MemberLogin hit-rate. The discovered prefix is emitted as a pipeline variable (`seededMemberPrefix`) for log visibility but isn't consumed by the .properties file (the .jmx Groovy hardcodes the prefix; documented limitation below).
 
-**Run cost / timing.** Each `.jmx` iteration ≈ test duration + ~3 minutes ALT overhead (engine provisioning + result download). At `standard` profile (5-min tests) × 6 .jmx files, the backoffice loop is ~50 minutes per tier; 4 tiers in parallel still completes in ~50 minutes wall-clock. At `smoke` (1-min tests), ~25 min per tier.
+**Run cost / timing.** Each `.jmx` iteration ≈ test duration + ~3 minutes ALT overhead (engine provisioning + result download). At `standard` profile (5-min tests) × 6 .jmx files, the backoffice loop is ~50 minutes per tier. **Tiers do not run in parallel** — `load-test-job.yml` is a *steps* template and every selected tier is inserted into the single `runLoadTests` job, so they execute sequentially on one agent (by design: only one App Service is hot at a time, so each measurement gets the full plan capacity — see "Cases on the same tier…" above). Budget roughly `tiers × per-tier time`: four tiers at `standard` is ~3.5 hours, which is why the job's `timeoutInMinutes` is 720. At `smoke` (1-min tests), ~25 min per tier.
 
 #### Known backoffice limitations
 
@@ -477,6 +479,8 @@ These are documented for the next person — fixes are in scope for follow-up wo
 **Browser-perceived backoffice performance** — measures how long the Umbraco backoffice SPA feels to a real user (login, navigation, editor paint, first keystroke), not just server-side throughput. The workload runs Playwright on the pipeline agent against the provisioned App Service; results land alongside the Locust and JMeter data in the same Log Analytics workspace and history storage container.
 
 **Pipeline:** `azure-pipeline-client.yml` (separate from the main `azure-pipeline.yml`). It reuses the same Terraform provisioning and long-lived history/monitoring infrastructure, then runs Playwright directly on the pipeline agent.
+
+**Umbraco v17+ only.** `global-setup.ts` builds the content model through `@umbraco-cms/acceptance-test-helpers`, pinned in `client/package.json` and coupled to the v17+ management API — v13 has no management API in that shape at all. `resolve-run-config.ps1` rejects `workload: client` on other majors at validation (mirroring the `DeliveryApi` v17+ gate) rather than letting it fail ~15 minutes deep inside globalSetup. v18 runs against the v17-pinned helpers, matching the seeder's v17→v18 reuse; if a content-model build ever fails on a new major, that pin is the first thing to check. Extend `$clientSupportedMajors` and bump the package together when a new major is verified.
 
 **Project location:** `loadtests/scenarios/{scenario}/client/` — e.g. `loadtests/scenarios/Default/client/`.
 
@@ -572,9 +576,9 @@ The ALT run finished but data quality is questionable.
 - **"Cell `<sampler>` insufficient baseline (N < 3 runs)"**: not a failure — exits 0. Means this cell needs more runs before the gate has teeth. See "Establishing a baseline".
 - **"Cell `<sampler>` regressed: p95 ratio 1.12 > 1.10"**: candidate p95 exceeded 110% of baseline-median. Check whether it's a real perf regression, infrastructure variance, or a baseline-decay event (after Umbraco major bump or SKU change, the old baseline doesn't apply).
 
-### `cleanup` was rejected / timed out
+### `cleanup` deleted the RG on Resume / timeout
 
-By design — `validationTimeoutMinutes` is the window operators have to inspect the ephemeral environment. After it elapses (or you reject explicitly), Terraform destroys the RG.
+By design — `validationTimeoutMinutes` is the window operators have to inspect the ephemeral environment. Pressing **Resume** tears the RG down and the run reports success; letting the gate time out does the same (`onTimeout: resume`). Press **Reject** to keep the RG alive instead.
 
 If you need the environment longer: re-queue with a higher `validationTimeoutMinutes` (max 240). To make a deployment permanent: queue with `validationTimeoutMinutes=240`, then before it expires, copy whatever you need to a different RG. There's no "promote to permanent" path — by design, every load-test environment is intended to be ephemeral.
 
@@ -697,7 +701,9 @@ Baselines decay — after a major Umbraco release, a tier-SKU shift, or a meanin
 
 ### Regression gating
 
-`scripts/check-regression.ps1` reads the same NDJSON history, takes the latest run for each (version × tier × sampler) cell as the candidate, and compares it to the median of the previous N runs (default: last 5, minimum 3). Cells that exceed any threshold are flagged as regressions; the script exits non-zero so it can run as a pipeline gate.
+`scripts/check-regression.ps1` reads the same NDJSON history, picks a candidate run for each (version × tier × sampler) cell, and compares it to the median of the previous N runs (default: last 5, minimum 3). Cells that exceed any threshold are flagged as regressions; the script exits non-zero so it can run as a pipeline gate.
+
+**Pin the candidate with `-RunId` when gating.** Without it the candidate is simply the newest row in the cell, which is *not* necessarily the run you meant: the publish step runs with `continueOnError`, so a run whose publish failed leaves the previous run newest and the gate silently grades run N-1 against N-2 and reports on it. With `-RunId`, the candidate must carry that `run_id`; cells where this run published nothing are listed under "Candidate missing" and raise a warning instead of being graded against someone else's data. The pipeline passes `-RunId $(Build.BuildId)` automatically. Omit it for ad-hoc local analysis ("how does the latest run look?").
 
 ```powershell
 ./scripts/check-regression.ps1 `
@@ -724,7 +730,11 @@ Cells with fewer than `-MinBaselineRuns` prior runs are reported as "insufficien
 
 Pass `-NoFailOnRegression` to render the report without failing (useful for "show me what would break if I turned this on").
 
-The script is wired into the pipeline as the `regressionCheck` job after `runLoadTests`. It's permissive by default (cells with < `MinBaselineRuns` prior runs report "insufficient baseline" and exit 0), so it's safe to leave on from day one — the gate activates per-cell as baselines accrue.
+The script is wired into the pipeline as the `regressionCheck` job after `runLoadTests`. **It is report-only unless you tick the `failOnRegression` queue parameter** (default off) — the stage passes `-NoFailOnRegression` for you when the box is unticked, and prints which mode it used. The reason it ships off: baseline keys were reset by the `scenario_name` discriminator fix, so windows still mix in pre-fix runs and would flag bookkeeping noise as regressions. Tick the box once each cell has ≥3 clean post-fix runs.
+
+Arming it is safe whenever you're ready: cells with < `MinBaselineRuns` prior runs report "insufficient baseline" and never trigger a fail, so the gate activates per-cell as baselines accrue rather than all at once.
+
+The same applies to the client pipeline's `clientRegression` stage and its own `failOnRegression` parameter.
 
 ### Infrastructure: ephemeral vs long-lived
 
@@ -758,11 +768,13 @@ provision            checkResourceGroup → setup (init + validate + plan) → a
 loadTest             runLoadTests: each case warms up, runs Locust on ALT, publishes results
                      to history storage, the build artifact, and Log Analytics.
 
-regression           Compare candidate run against baseline-median; fail the pipeline when a
-                     cell exceeds threshold AND has ≥3 prior runs.
+regression           Compare THIS run (pinned by run_id) against baseline-median. Report-only
+                     by default; tick the `failOnRegression` queue parameter to make it fail
+                     the pipeline when a cell exceeds threshold AND has ≥3 prior runs.
 
 cleanup              checkResourceGroupForCleanup → manualValidation (configurable window) →
-                     deleteResourceGroup if rejected/cancelled/expired. Always runs.
+                     deleteResourceGroup on resume/expired/cancelled. Reject keeps the RG.
+                     Always runs.
 ```
 
 ## Data Seeder Presets
@@ -786,7 +798,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 4. Adjust the orthogonal knobs (region, prefix, cold start, skip load tests, validation window) only if you need to.
 5. Wait for validation → ensure-history-infra → ensure-monitoring-infra → provisioning → load tests → regression check to complete.
 6. Review results in Azure Load Testing portal, pipeline artifacts, and history storage NDJSON. The `regression-report` artifact has the post-run regression check output.
-7. Approve or reject resource cleanup within the validation window (default 60 min).
+7. Resume the cleanup gate when you're done reviewing (deletes the RG, run reports success), or Reject to keep the environment alive. Letting the window elapse (default 60 min) deletes it.
 
 ### Smoke-testing changes
 
@@ -1036,21 +1048,28 @@ These need Azure Monitor diagnostic settings on the App Service or the App Servi
 
 Things that have caught people out at least once. Skim before queueing your first non-default run.
 
-### Approved-kept RGs are not auto-cleaned
+### Rejected-kept RGs are not auto-cleaned
 
-The cleanup behaviour:
+The cleanup gate is **Resume = delete, Reject = keep**. Resume is the normal path, so a finished run goes green:
 
-- **Reject the manual validation** (or let it time out, default 60 min) → the ephemeral RG is deleted automatically.
-- **Cancel the pipeline run** → still deletes, because `cleanup` runs `condition: always()`.
-- **Approve (Resume) the manual validation to keep resources for inspection** → the RG is **not** deleted, ever, by the pipeline. You have to `az group delete -n ${prefix}-rg --yes` yourself when you're done.
+- **Resume the manual validation** (or let it time out, default 60 min — `onTimeout: resume`) → the ephemeral RG is deleted automatically and the pipeline reports success.
+- **Cancel the pipeline run** → still deletes, because `cleanup` runs `condition: always()` and the delete job accepts a `Canceled` gate result.
+- **Reject the manual validation to keep resources for inspection** → the RG is **not** deleted, ever, by the pipeline. You have to `az group delete -n ${prefix}-rg --yes` yourself when you're done. The run reports failed, which is the intended signal that something was deliberately left behind.
 
-So when you click Resume, write yourself a reminder. There's no scheduled reaper, no auto-expiry beyond the validation window, and a forgotten approved-kept RG persists until you (or the next pipeline run, which will fail with "resource group already exists" and surface the orphan) catches it.
+So when you click Reject, write yourself a reminder. There's no scheduled reaper, no auto-expiry beyond the validation window, and a forgotten rejected-kept RG persists until you (or the next pipeline run, which will fail with "resource group already exists" and surface the orphan) catches it.
+
+One residual failure mode: if the `manualValidation` job itself fails for an infrastructure reason (rather than an operator pressing Reject), the delete job treats it as a keep and the RG survives. That's why the job's `timeoutInMinutes` is a fixed 300-minute backstop rather than the parameter value — a job timeout would resolve `Failed` (keep) and defeat the task's `onTimeout: resume` (delete).
 
 ### Security: hardcoded backoffice creds on a public-internet App Service
 
-The Terraform unattended-install config bakes a known admin login (`loadtest@example.invalid` / `LoadTest123!`) into every App Service so any team member can poke around in the backoffice. The App Services are public-internet by default (no IP allowlist) and the hostname is predictable from the test case ID. The risk window is the lifetime of the ephemeral RG — keep `validationTimeoutMinutes` to the minimum you actually need, and prefer rejecting cleanup explicitly when you're done.
+The Terraform unattended-install config bakes a known admin login (`loadtest@example.invalid` / `LoadTest123!`) into every App Service so any team member can poke around in the backoffice. The App Services are public-internet by default (no IP allowlist) and the hostname is predictable from the test case ID. The risk window is the lifetime of the ephemeral RG — keep `validationTimeoutMinutes` to the minimum you actually need, and prefer resuming the cleanup gate explicitly when you're done rather than leaving the window open.
 
-This is fine for ephemeral load-test environments with no real data; it would not be fine for anything else. If you fork this for a workload that handles real data, replace the hardcoded creds with a per-run random password and add an IP allowlist (or vnet integration).
+Two further exposures of the same credential, worth knowing about:
+
+- **The generated JMeter `.properties` file carries it.** `generate-loadtest-config.ps1` writes `backoffice_password` into `jmeter-<safeTestCaseId>.properties`, which is uploaded to the shared Azure Load Testing resource as a test file. Anyone with reader on that ALT resource (a long-lived, team-shared resource — not the ephemeral RG) can download it. It is not published as a build artifact.
+- **SQL is reachable from all of Azure.** `azurerm_mssql_firewall_rule.allow_azure_services` uses the `0.0.0.0–0.0.0.0` "allow Azure services" rule, so any Azure resource in any tenant can reach the server — protected only by the per-run random 24-char admin password (which is at least not hardcoded).
+
+This is fine for ephemeral load-test environments with no real data; it would not be fine for anything else. If you fork this for a workload that handles real data, replace the hardcoded creds with a per-run random password, scope the SQL firewall to the ALT engine egress ranges, and add an IP allowlist (or vnet integration) on the App Service.
 
 ### Overlay precedence: a scenario can clobber base settings
 
@@ -1090,6 +1109,11 @@ Practical guidance: use Massive when you specifically need the data volume. For 
 ## Local checks before queueing
 
 ```bash
+# The repo's own tests. Both also run in the pipeline's validateTestCases stage,
+# but running them here is seconds instead of a queue.
+pwsh -File scripts/_selfcheck.ps1                      # pure helpers: percentiles, CSV parsing, JMeter parser
+pwsh -c "Invoke-Pester ./scripts/tests"                # needs Pester 5: Install-Module Pester -MinimumVersion 5.0.0
+
 cd Terraform && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
 Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
 git ls-files 'loadtests/**/locustfile.py' 'loadtests/_helpers.py' | ForEach-Object { python -m py_compile $_ }
@@ -1098,6 +1122,8 @@ git ls-files '*.json' | ForEach-Object { Get-Content -LiteralPath $_ -Raw | Conv
 ```
 
 Running these locally catches the common typos (trailing commas in the Workbook JSON, unescaped `$` in PowerShell, indentation in scenario yaml) without burning a pipeline run.
+
+`_selfcheck.ps1` and the Pester suites cover the code whose failure mode is *silently wrong numbers* rather than a crash — percentile/median maths, RFC-4180 CSV splitting, the JMeter Transaction-Controller filter and sample-window extraction, the `cellKey` split invariant, and `Test-HistoryRowIncluded` (the history row filter that decides which runs form a regression baseline). Extend them whenever you touch `_helpers.ps1` or `_history-helpers.ps1`.
 
 ## Azure resource tagging
 

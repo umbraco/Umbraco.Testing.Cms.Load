@@ -33,6 +33,58 @@ stages:
       - job: prepareTestCases
         displayName: Validate + resolve test cases
         steps:
+          # Run the repo's own tests before spending a minute of Azure time.
+          # These existed but nothing invoked them — not this pipeline, and not
+          # the README's "local checks before queueing" list — so a regression in
+          # the pure helpers (percentiles, CSV parsing, the history row filter)
+          # could ship unnoticed and silently publish wrong numbers.
+          #
+          # Runs first because it needs no Azure credentials and takes seconds:
+          # a broken helper should fail here, not after provisioning.
+          - task: PowerShell@2
+            displayName: 'Run helper self-check + unit tests'
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+
+                # Pure-function self-check (percentiles, medians, CSV quoting,
+                # the JMeter parser). Exits non-zero on any failed expectation.
+                & "$(System.DefaultWorkingDirectory)/scripts/_selfcheck.ps1"
+                if ($LASTEXITCODE -ne 0) { throw "scripts/_selfcheck.ps1 reported failures." }
+
+                # Pester suites. The repo's tests are Pester 5 syntax; agents
+                # ship Pester 3 in the box, so ensure a v5 is present. An INSTALL
+                # failure (offline agent, blocked gallery) degrades to a warning
+                # so it can't block a run on its own — but a TEST failure fails
+                # the stage, which is the whole point.
+                $pester = Get-Module -ListAvailable Pester |
+                    Where-Object { $_.Version.Major -ge 5 } |
+                    Sort-Object Version -Descending |
+                    Select-Object -First 1
+                if (-not $pester) {
+                    try {
+                        Install-Module Pester -MinimumVersion 5.0.0 -MaximumVersion 5.99.99 `
+                            -Scope CurrentUser -Force -SkipPublisherCheck -AllowClobber
+                        $pester = Get-Module -ListAvailable Pester |
+                            Where-Object { $_.Version.Major -ge 5 } |
+                            Sort-Object Version -Descending |
+                            Select-Object -First 1
+                    } catch {
+                        Write-Host "##vso[task.logissue type=warning]Couldn't install Pester 5 ($($_.Exception.Message)); skipping the Pester suites. The self-check above still ran."
+                    }
+                }
+                if ($pester) {
+                    Import-Module Pester -MinimumVersion 5.0.0 -Force
+                    Write-Host "Using Pester $($pester.Version)"
+                    $cfg = New-PesterConfiguration
+                    $cfg.Run.Path     = "$(System.DefaultWorkingDirectory)/scripts/tests"
+                    $cfg.Run.Throw    = $true      # non-zero on failure
+                    $cfg.Output.Verbosity = 'Detailed'
+                    Invoke-Pester -Configuration $cfg
+                }
+
           - task: PowerShell@2
             name: out
             displayName: Resolve profile + validate scenario

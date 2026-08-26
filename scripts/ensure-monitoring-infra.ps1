@@ -309,8 +309,45 @@ $desiredFlows = $ownStreamNames | ForEach-Object {
 }
 
 # Existing DCR (if any) — drives both the merge and the skip decision.
+#
+# The PUT below is a full replace, so it MUST NOT run while we're merely unable
+# to see the current stream set: $existingDcr would stay $null, the merge would
+# find no foreign streams, and the PUT would write a DCR holding only this
+# script's three — exactly the clobber the merge logic exists to prevent.
+#
+# So "does it exist" is answered structurally (a list filtered by name) rather
+# than by string-matching an error message. That keeps the two failure modes
+# distinct without making the FIRST-RUN path depend on az's error wording:
+#   list ok + 0 matches -> genuinely absent, fall through and create
+#   list ok + 1 match   -> must GET it; any GET failure is now unambiguous
+#   list fails          -> unknown state, refuse to PUT
 $existingDcr = $null
-try { $existingDcr = az rest --method get --url "https://management.azure.com$dcrPath" 2>$null | ConvertFrom-Json } catch { }
+
+$dcrCount = az monitor data-collection rule list `
+    --resource-group $HistoryResourceGroup `
+    --query "length([?name=='$DcrName'])" -o tsv
+
+if ($dcrCount -eq '0') {
+    Write-Host "   no existing DCR (first run) - will create"
+}
+else {
+    # It exists, so a failed read means "unknown state", full stop. Let the
+    # native-command preference throw rather than interpreting text.
+    $dcrGetRaw = az rest --method get --url "https://management.azure.com$dcrPath"
+    try {
+        $existingDcr = $dcrGetRaw | ConvertFrom-Json
+    }
+    catch {
+        $msg = "Read the Data Collection Rule '$DcrName' but its body did not parse as JSON, so the existing stream set is unknown and a full-replace PUT would risk dropping streams owned by the other pipeline."
+        Write-Host "##vso[task.logissue type=error]$msg"
+        throw "$msg Detail: $($_.Exception.Message)"
+    }
+    if (-not $existingDcr.properties) {
+        $msg = "Data Collection Rule '$DcrName' exists but returned no 'properties', so its stream set is unknown and a full-replace PUT is unsafe."
+        Write-Host "##vso[task.logissue type=error]$msg"
+        throw $msg
+    }
+}
 
 # Foreign streams/flows (owned by the other pipeline) are carried over untouched.
 $mergedStreams = @{}
@@ -370,7 +407,7 @@ $upToDate = [bool]$existingDcr -and
     (Test-StreamUpToDate $existingDcr $clientStreamName $clientColumns) -and (Test-FlowPresent $existingDcr $clientStreamName)
 
 if ($upToDate) {
-    Write-Host "   all streams present with matching schema — skipping PUT (no churn)"
+    Write-Host "   all streams present with matching schema - skipping PUT (no churn)"
 }
 else {
     $dcrBody = @{
@@ -439,7 +476,7 @@ else {
         Write-Host "  The principal running this script lacks"
         Write-Host "  Microsoft.Authorization/roleAssignments/write at the DCR scope."
         Write-Host ""
-        Write-Host "  One-time fix — pick CLI or portal, then re-queue the pipeline."
+        Write-Host "  One-time fix - pick CLI or portal, then re-queue the pipeline."
         Write-Host ""
         Write-Host "  CLI (as a User Access Administrator on the RG):"
         Write-Host ""

@@ -36,20 +36,31 @@ stages:
       - job: manualValidation
         dependsOn: checkResourceGroupForCleanup
         condition: eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.doesExist'], 'true')
-        displayName: Manual validation - keep resources?
+        displayName: 'Manual validation - Resume = DELETE, Reject = KEEP alive'
         pool: server
-        timeoutInMinutes: ${{ parameters.validationTimeoutMinutes }}
+        # Fixed backstop well above the 240-min parameter max. The gate's real
+        # window is the task timeout below; if the job timed out first it would
+        # resolve Failed (= KEEP) instead of the task's onTimeout resume
+        # (= DELETE), leaking a billing RG on an unattended run.
+        timeoutInMinutes: 300
         steps:
           - task: ManualValidation@0
-            displayName: Approve to keep resources
+            displayName: 'Resume = DELETE the RG (success) | Reject = KEEP it alive'
             timeoutInMinutes: ${{ parameters.validationTimeoutMinutes }}
             inputs:
               instructions: |
-                Press "Resume" to KEEP the resource group $(azureResourceGroup).
-                Press "Reject" (or wait ${{ parameters.validationTimeoutMinutes }} minutes) to DELETE all resources.
+                Press "Resume" once you're done reviewing to DELETE resource group $(azureResourceGroup) (pipeline reports success).
+                Press "Reject" to explicitly KEEP the resource group alive for further testing.
+                Timeout after ${{ parameters.validationTimeoutMinutes }} minutes behaves like Resume — DELETE (cost-safe default for an unattended run).
                 ${{ parameters.extraValidationInstructions }}
+              # Timeout resolves as Resume (Succeeded), not Reject (Failed) — a
+              # forgotten gate defaults to deleting rather than leaving a seeded
+              # RG (App Service Plan + SQL) billing indefinitely.
+              onTimeout: 'resume'
 
-      # User pressed Reject, the validation timed out, or the chain skipped: delete the RG.
+      # Fires on Resume, timeout-as-resume, cancel, or a skipped chain, so the
+      # normal teardown path reports the run as succeeded. Explicit Reject
+      # (Failed) is the only outcome that keeps the RG alive.
       - job: deleteResourceGroup
         displayName: Delete resource group
         dependsOn: manualValidation
@@ -57,7 +68,8 @@ stages:
         # the run is cancelled mid-cleanup (e.g. user cancels during the manual
         # keep/delete prompt). Without it, a cancel skips this job and orphans
         # the ephemeral RG, which then bills until someone deletes it by hand.
-        condition: and(always(), in(dependencies.manualValidation.result, 'Failed', 'Canceled', 'Skipped'))
+        # 'Skipped' covers the RG-does-not-exist path — the task below no-ops.
+        condition: and(always(), in(dependencies.manualValidation.result, 'Succeeded', 'Canceled', 'Skipped'))
         # On cancel/timeout AzDO gives a job only the default 5 min to finish and
         # would force-kill a synchronous RG delete mid-flight (orphaning a half-
         # deleted, still-billing RG). 30 min is ample for a seeded RG, so the

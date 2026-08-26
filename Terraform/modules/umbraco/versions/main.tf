@@ -50,6 +50,15 @@ resource "azurerm_windows_web_app" "app_service" {
       condition     = length(local.app_service_name) <= 60
       error_message = "Computed App Service name '${local.app_service_name}' is ${length(local.app_service_name)} chars (Azure cap is 60). Shorten the prefix, Umbraco version, or scenario name."
     }
+    # Charset too, not just length. test_case_id embeds the free-text Umbraco
+    # version, and any character outside [a-z0-9-] surviving case_suffix's
+    # [._] replacement would reach Azure as an invalid name and come back as a
+    # generic 400 deep in apply. prepare-test-cases.ps1 rejects these at
+    # validation; this is the backstop for a hand-written tfvars run.
+    precondition {
+      condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", local.app_service_name))
+      error_message = "Computed App Service name '${local.app_service_name}' contains characters Azure rejects. Allowed: lowercase letters, digits and hyphens (not leading/trailing). Check the Umbraco version and scenario name."
+    }
   }
 
   # Force HTTPS; disable basic-auth deploy paths; disable session affinity so load
@@ -69,8 +78,17 @@ resource "azurerm_windows_web_app" "app_service" {
   # Overlay wins on key collision.
   app_settings = merge(
     {
-      "Umbraco.Core.LocalTempStorage"          = "EnvironmentTemp"
-      "Umbraco.Examine.LuceneDirectoryFactory" = "Examine.LuceneEngine.Directories.SyncTempEnvDirectoryFactory, Examine"
+      # REMOVED: "Umbraco.Core.LocalTempStorage" and
+      # "Umbraco.Examine.LuceneDirectoryFactory". Both are v7/v8-era appSettings
+      # keys and are no-ops on every major this pipeline supports (v13-v18) — on
+      # v9+ the equivalents are Umbraco:CMS:Hosting:LocalTempStorageLocation and
+      # Examine's own config/DI registration. Keeping them made it look like
+      # temp-storage and Lucene placement were configured when nothing read them.
+      #
+      # Deliberately NOT replaced with the v9+ equivalents here: moving Lucene
+      # indexes to env temp is a real behaviour change to the system under test
+      # and would invalidate existing baselines. Adopt it as its own change, with
+      # a baseline reset, if that placement is actually wanted.
 
       "Umbraco__CMS__Unattended__InstallUnattended"   = "true"
       "Umbraco__CMS__Unattended__UnattendedUserName"  = "Load Test Admin"
@@ -170,7 +188,12 @@ resource "null_resource" "deploy_umbraco" {
     # (path.root is the Terraform working dir = $(System.DefaultWorkingDirectory)/Terraform,
     # so '../' resolves to the pipeline workspace root). The load-test job reads
     # this file via the same path to surface seeder duration in the published metrics.
-    command     = "./modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\" -SeederResultPath \"${path.root}/../.seeder-results/${var.test_case_id}.json\""
+    # Script path is module-relative (${path.module}/../scripts/...), not
+    # invocation-relative. The previous "./modules/umbraco/scripts/..." only
+    # resolved because local-exec inherits Terraform's INVOCATION directory
+    # rather than the child module's — correct today, silently broken the moment
+    # this module is sourced from anywhere else.
+    command     = "${path.module}/../scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\" -SeederResultPath \"${path.root}/../.seeder-results/${var.test_case_id}.json\""
     interpreter = ["pwsh", "-Command"]
   }
 

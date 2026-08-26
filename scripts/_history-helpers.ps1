@@ -43,6 +43,50 @@ function Get-Median([double[]] $values) {
     return ($sorted[[int]($n / 2 - 1)] + $sorted[[int]($n / 2)]) / 2
 }
 
+# Decides whether one history row belongs in the analysed population. Extracted
+# from Get-HistoryCells so it can be unit-tested without touching storage: these
+# four rules silently determine which runs constitute a regression baseline for
+# every downstream tool, and a mistake here produces confidently wrong verdicts
+# with no error anywhere — exactly the "silently wrong numbers" failure mode
+# scripts/_selfcheck.ps1 exists to catch. Returns $true to keep the row.
+function Test-HistoryRowIncluded {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [AllowNull()] $Row,
+        [string]$Sampler
+    )
+
+    if ($null -eq $Row) { return $false }
+    # Metadata-only rows (no scenario_name) carry no metrics.
+    if (-not $Row.scenario_name) { return $false }
+    # Match the Workbook's filters so every Get-HistoryCells consumer
+    # (regression gate, compare-runs, show-trends) works over the same
+    # population the dashboard shows: warm, ok rows. Without this the
+    # regression baseline mixes cold-start (JIT-inflated) and failed runs
+    # into the median and disagrees with the dashboard.
+    if ($Row.parse_status -and $Row.parse_status -ne 'ok') { return $false }
+    if ($Row.cold_start -eq $true) { return $false }
+    # Pre-TC-discrimination historical rows (old majors, before backoffice
+    # publish was fixed to keep only Transaction Controller labels) carry a
+    # raw per-request sampler name instead of a 'NN. Step' TC label - e.g.
+    # 'GET /umbraco/management/api/v1/language' or a GUID-suffixed path
+    # like '.../document-type/0099b49e-...'. A GUID-only check missed the
+    # non-GUID raw paths (confirmed live: 81 of 105 flagged regressions on
+    # 2026-08-22 were exactly this, all on old majors, zero on the current
+    # one) - the real, general signature is "raw backoffice management-API
+    # path used as a sampler identity", which today's TC-only publish path
+    # can never produce. Exclude rather than purge the underlying blob
+    # data; this also backstops any future TC-discrimination regression.
+    if ($Row.scenario_name -match '^(GET|POST|PUT|DELETE|PATCH) /umbraco/management/api/') { return $false }
+    # Backoffice rows are published as "$JmeterTestName / $label" (e.g.
+    # 'SaveContent / 01. Save content'), so a bare-label -Sampler value
+    # (the style used across every -Sampler example in this repo) must
+    # also match the label half, not just the full scenario_name.
+    if ($Sampler -and $Row.scenario_name -ne $Sampler -and -not $Row.scenario_name.EndsWith(" / $Sampler")) { return $false }
+
+    return $true
+}
+
 # Loads every summary.ndjson under the scenario prefix and returns a hashtable
 # keyed by '{umbraco_version}__{infra_tier}__{scenario_name}' -> list of NDJSON
 # rows for that cell. Optional -Sampler filters rows to a single Locust task.
@@ -96,31 +140,9 @@ function Get-HistoryCells {
         foreach ($line in $lines) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try { $row = $line | ConvertFrom-Json } catch { continue }
-            if (-not $row.scenario_name) { continue }
-            # Match the Workbook's filters so every Get-HistoryCells consumer
-            # (regression gate, compare-runs, show-trends) works over the same
-            # population the dashboard shows: warm, ok rows. Without this the
-            # regression baseline mixes cold-start (JIT-inflated) and failed runs
-            # into the median and disagrees with the dashboard.
-            if ($row.parse_status -and $row.parse_status -ne 'ok') { continue }
-            if ($row.cold_start -eq $true) { continue }
-            # Pre-TC-discrimination historical rows (old majors, before backoffice
-            # publish was fixed to keep only Transaction Controller labels) carry a
-            # raw per-request sampler name instead of a 'NN. Step' TC label - e.g.
-            # 'GET /umbraco/management/api/v1/language' or a GUID-suffixed path
-            # like '.../document-type/0099b49e-...'. A GUID-only check missed the
-            # non-GUID raw paths (confirmed live: 81 of 105 flagged regressions on
-            # 2026-08-22 were exactly this, all on old majors, zero on the current
-            # one) - the real, general signature is "raw backoffice management-API
-            # path used as a sampler identity", which today's TC-only publish path
-            # can never produce. Exclude rather than purge the underlying blob
-            # data; this also backstops any future TC-discrimination regression.
-            if ($row.scenario_name -match '^(GET|POST|PUT|DELETE|PATCH) /umbraco/management/api/') { continue }
-            # Backoffice rows are published as "$JmeterTestName / $label" (e.g.
-            # 'SaveContent / 01. Save content'), so a bare-label -Sampler value
-            # (the style used across every -Sampler example in this repo) must
-            # also match the label half, not just the full scenario_name.
-            if ($Sampler -and $row.scenario_name -ne $Sampler -and -not $row.scenario_name.EndsWith(" / $Sampler")) { continue }
+            # All inclusion rules live in Test-HistoryRowIncluded (above) so they
+            # can be unit-tested without storage access.
+            if (-not (Test-HistoryRowIncluded -Row $row -Sampler $Sampler)) { continue }
 
             $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.scenario_name)"
             if (-not $cells.ContainsKey($cellKey)) {

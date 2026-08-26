@@ -11,10 +11,8 @@
 #      every case emitting its terraform output (a partial apply could break
 #      the chain and leave a sibling hot during measurement).
 #
-# Best-effort: a failure on one app continues to the next. $ErrorActionPreference
-# stays "Stop" only for cmdlet errors (json parse, etc.); native `az webapp stop`
-# non-zero exits don't trigger Stop in pwsh < 7.3, which is the desired behaviour
-# here. Idempotent on already-stopped apps.
+# Best-effort: a failure on one app continues to the next. Idempotent on
+# already-stopped apps.
 
 [CmdletBinding()]
 param (
@@ -23,6 +21,15 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+
+# Explicitly OFF, not merely left at its default. This script's best-effort loop
+# depends on a failing `az webapp stop` returning a non-zero $LASTEXITCODE
+# instead of throwing — every sibling script in this folder sets this to $true,
+# so relying on the implicit default made the behaviour one consistency edit (or
+# one changed pwsh default) away from silently becoming fail-fast, aborting the
+# sweep on the first app that won't stop. $ErrorActionPreference stays "Stop" so
+# cmdlet errors (JSON parse, etc.) still fail loudly.
+$PSNativeCommandUseErrorActionPreference = $false
 
 . "$PSScriptRoot/_helpers.ps1"
 

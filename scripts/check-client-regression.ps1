@@ -9,6 +9,10 @@
 
 [CmdletBinding()]
 param(
+    # Filters rows by their `scenario` field. Required in practice for the
+    # pipeline: the client blob prefix carries no scenario segment, so this is
+    # the only thing keeping two scenarios' client measurements out of one cell.
+    # Leave empty only for a deliberate cross-scenario sweep.
     [string]$Scenario,
     [int]$Major,
     [string]$HistoryResourceGroup,
@@ -87,6 +91,19 @@ foreach ($blob in $blobNames) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try { $row = $line | ConvertFrom-Json } catch { continue }
         if (-not $row.metric) { continue }
+        # Row-type marker written by this script's own LA post - not a measurement.
+        if ($row.metric -eq 'regression_check') { continue }
+        # Scenario filter. The client blob layout is client/{major}/{version}/
+        # {tier}/... with NO scenario segment (unlike the load-test layout's
+        # {scenario}/{major}/...), so scenario can only be separated on the row
+        # field. Without this, -Scenario was accepted and ignored, and cells
+        # would silently mix scenarios the moment a second one ships a client/
+        # project. Rows predating the scenario field fall through when the
+        # requested scenario is the default.
+        if ($Scenario) {
+            $rowScenario = if ($row.scenario) { [string]$row.scenario } else { 'Default' }
+            if ($rowScenario -ne $Scenario) { continue }
+        }
         $cellKey = "$($row.umbraco_version)__$($row.infra_tier)__$($row.metric)"
         if (-not $cells.ContainsKey($cellKey)) { $cells[$cellKey] = [System.Collections.Generic.List[object]]::new() }
         $cells[$cellKey].Add($row)
@@ -95,8 +112,9 @@ foreach ($blob in $blobNames) {
 
 $report = New-Object System.Text.StringBuilder
 [void]$report.AppendLine("# Client measurement regression report`n")
+[void]$report.AppendLine("Source: ``$prefix``$(if ($Scenario) { " filtered to scenario '$Scenario'" } else { " (all scenarios)" })`n")
 $regressedAny = $false
-if ($cells.Count -eq 0) { [void]$report.AppendLine("No client runs found under $prefix.") }
+if ($cells.Count -eq 0) { [void]$report.AppendLine("No client runs found under $prefix$(if ($Scenario) { " for scenario '$Scenario'" }).") }
 
 # Per-cell verdict + candidate row, keyed by cellKey — used below to build the
 # Log Analytics rows (one per run, aggregated across that run's metric cells).

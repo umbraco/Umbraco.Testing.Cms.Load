@@ -102,6 +102,18 @@ parameters:
     type: boolean
     default: false
 
+  # Arms the regression gate. Default false keeps today's report-only behaviour,
+  # but as a queue-time knob rather than a hardcoded -NoFailOnRegression buried
+  # in the stage: the flag being invisible in the YAML meant the README could
+  # describe an armed gate while every run was report-only, and arming it needed
+  # a code change. A cell with < MinBaselineRuns prior runs never fails either
+  # way, so flipping this on is safe as soon as baselines exist — and the run
+  # summary now records which mode a given run used.
+  - name: failOnRegression
+    displayName: Fail the pipeline on regression (off = report-only; safe to enable once cells have 3+ clean runs)
+    type: boolean
+    default: false
+
   - name: validationTimeoutMinutes
     displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
     type: number
@@ -338,25 +350,40 @@ stages:
               inlineScript: |
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
                 $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
-                # -NoFailOnRegression: report-only, never hard-fails the stage.
-                # Deliberate soft-launch: baseline keys were reset by the
-                # scenario_name discriminator fix, so the baseline window still
-                # mixes in pre-fix runs and would flag bookkeeping noise as
-                # regressions rather than real ones. Drop this flag to switch
-                # the gate to hard-fail once each cell has >=3 clean post-fix
-                # runs (matches check-regression's MinBaselineRuns) - a manual
-                # follow-up step, not part of this change.
-                & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" `
-                    -Scenario '${{ parameters.scenario }}' `
-                    -Major $major `
-                    -HistoryResourceGroup '$(historyResourceGroup)' `
-                    -StorageAccountName '$(historyStorageAccount)' `
-                    -ContainerName '$(historyContainer)' `
-                    -OutputPath "$(System.DefaultWorkingDirectory)/regression-report.md" `
-                    -LogAnalyticsDceUri '$(monitoringDceUri)' `
-                    -LogAnalyticsDcrImmutableId '$(monitoringDcrImmutableId)' `
-                    -LogAnalyticsStreamName '$(monitoringStreamName)' `
-                    -NoFailOnRegression
+
+                # Report-only unless the queue-time failOnRegression box is
+                # ticked. Historical note on why it defaults off: baseline keys
+                # were reset by the scenario_name discriminator fix, so windows
+                # still mix in pre-fix runs and would flag bookkeeping noise as
+                # regressions. Tick the box once each cell has >=3 clean post-fix
+                # runs (matches check-regression's MinBaselineRuns).
+                $splat = @{
+                    Scenario                   = '${{ parameters.scenario }}'
+                    Major                      = $major
+                    # Pin the candidate to THIS run. Without it the gate grades
+                    # "newest row in history", which is a different run whenever
+                    # this run's publish step failed (it runs continueOnError) or
+                    # another pipeline published the same cell in between.
+                    RunId                      = '$(Build.BuildId)'
+                    HistoryResourceGroup       = '$(historyResourceGroup)'
+                    StorageAccountName         = '$(historyStorageAccount)'
+                    ContainerName              = '$(historyContainer)'
+                    OutputPath                 = "$(System.DefaultWorkingDirectory)/regression-report.md"
+                    LogAnalyticsDceUri         = '$(monitoringDceUri)'
+                    LogAnalyticsDcrImmutableId = '$(monitoringDcrImmutableId)'
+                    LogAnalyticsStreamName     = '$(monitoringStreamName)'
+                }
+                $failOnRegression = [System.Convert]::ToBoolean('${{ parameters.failOnRegression }}')
+                if (-not $failOnRegression) { $splat.NoFailOnRegression = $true }
+                # Build the message in a plain variable rather than a $(...)
+                # subexpression inside the string: AzDO rewrites $(name) macros in
+                # this YAML before PowerShell ever sees it, and a nested-paren
+                # subexpression is needless exposure to that parser (same reason
+                # the templates elsewhere pass values via env: instead).
+                $gateMode = if ($failOnRegression) { 'ENFORCING (fails the pipeline)' } else { 'report-only' }
+                Write-Host "Regression gate mode: $gateMode"
+
+                & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" @splat
           - task: PublishBuildArtifacts@1
             displayName: Publish regression report
             condition: succeededOrFailed()
