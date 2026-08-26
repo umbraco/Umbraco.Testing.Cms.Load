@@ -306,6 +306,27 @@ steps:
   # Compile-time gated so backoffice runs don't carry an inert frontend block
   # through the pipeline log.
   - ${{ if eq(parameters.workload, 'frontend') }}:
+    # Wipe any results from a PRIOR TIER's frontend run in this same job before
+    # ALT writes new ones. AzureLoadTest@1 always downloads to the same fixed
+    # $(System.DefaultWorkingDirectory)/loadTest regardless of tier, and
+    # publish-load-test-results.ps1 skips re-extracting results.zip when its
+    # -extracted dir already exists - the same silent-corruption hazard the
+    # backoffice loop's per-.jmx cleanup step guards against (this job runs up
+    # to 4 tier iterations of this template sequentially - see azure-pipeline.yml's
+    # loadTest stage), just triggered by multi-tier selection instead of a
+    # multi-.jmx loop.
+    - task: PowerShell@2
+      displayName: 'Clean prior loadTest dir [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $dir = "$(System.DefaultWorkingDirectory)/loadTest"
+          if (Test-Path -LiteralPath $dir) {
+              Remove-Item -LiteralPath $dir -Recurse -Force
+              Write-Host "Removed prior loadTest dir: $dir"
+          }
+
     # Load test config is per-case so runs stay distinguishable in the portal.
     # Generation lives in scripts/generate-loadtest-config.ps1 so it's locally
     # testable and the template stays scannable.
