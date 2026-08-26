@@ -508,8 +508,14 @@ if ($rows.Count -eq 0) {
     $rows = @([pscustomobject]$metadata)
 }
 
-# Parse with InvariantCulture so the date stays consistent on any agent locale.
-$pipelineStarted = [DateTime]::Parse($RunStartedAt, [System.Globalization.CultureInfo]::InvariantCulture)
+# AdjustToUniversal, not just InvariantCulture: $RunStartedAt is already a
+# 'Z'-suffixed UTC string from ConvertTo-IsoUtc above, but plain Parse's
+# default DateTimeStyles.None converts an explicit-offset/Z string to the
+# agent's LOCAL system time (Kind=Local) rather than preserving it as UTC -
+# confirmed live: on a non-UTC agent this silently shifts $datePart to the
+# wrong calendar day near midnight UTC. Only harmless today because hosted
+# ubuntu-latest agents default to UTC system time; don't rely on that.
+$pipelineStarted = [DateTime]::Parse($RunStartedAt, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
 $datePart        = $pipelineStarted.ToString("yyyy-MM-dd", [System.Globalization.CultureInfo]::InvariantCulture)
 
 # Major = first dot-segment (e.g. '17' for '17.0.0' and '17.0.0-rc.1').
