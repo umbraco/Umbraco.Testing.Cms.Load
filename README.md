@@ -839,7 +839,7 @@ Every per-case NDJSON row carries the metrics below (one row per Locust task, pl
 **Client-side (from Locust / `engine1_results.csv` → NDJSON):**
 - `request_count`, `failure_count`, `error_rate` — failure rate is the first thing to check; a fast-but-erroring run is not a successful run.
 - `avg_ms`, `p50_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `min_ms`, `max_ms` — `p95` and `p99` are the tier-discriminating metrics. `max` is single-sample noise.
-- `requests_per_sec` — throughput per task and aggregate.
+- `requests_per_sec` — throughput per task and aggregate. Denominator is the **observed sample window** (`max(timeStamp) - min(timeStamp)` across the kept rows), not the configured test duration: the two diverge whenever ALT autoStops early or the run fast-fails, and using the configured value understated throughput by exactly the fraction of the window that never ran — worst on the saturated runs where throughput is the number you care about. Falls back to the configured duration when the CSV has no usable timestamps. **`requests_per_sec` on rows published before this change is not comparable for truncated runs**; full-length runs are unaffected (observed span ≈ configured duration).
 
 **Server-side (Azure Load Testing portal, server metrics tab):**
 - App Service: CPU %, memory %, network in/out, disk queue.

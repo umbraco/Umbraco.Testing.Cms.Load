@@ -117,6 +117,13 @@ function Parse-JmeterCsv {
     $byLabel = @{}
     $allElapsed = if ($BuildAggregate) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
     $totalErrors = 0
+    # Observed sample window (JMeter timeStamp is epoch milliseconds). Callers
+    # use this to derive throughput from the span the samples actually cover
+    # rather than the CONFIGURED duration — they diverge whenever ALT autoStops
+    # early or the run fast-fails, and they diverge most on the saturated runs
+    # where throughput matters. $null when no row carried a parseable timestamp.
+    $minTs = [long]::MaxValue
+    $maxTs = [long]::MinValue
 
     # JMeter Transaction Controllers with parent="true" emit a parent-transaction
     # row in the CSV in addition to the HTTP-sampler row for each request.
@@ -147,18 +154,19 @@ function Parse-JmeterCsv {
         # column order is configurable. Fall back to the conventional indices
         # (elapsed=1, label=2, success=7) if a header field is missing.
         $headerLine = $reader.ReadLine()
-        $idxElapsed = 1; $idxLabel = 2; $idxSuccess = 7
+        $idxTimestamp = 0; $idxElapsed = 1; $idxLabel = 2; $idxSuccess = 7
         if ($headerLine) {
             $header = Split-CsvLine $headerLine
             for ($h = 0; $h -lt $header.Count; $h++) {
                 switch ($header[$h]) {
-                    'elapsed' { $idxElapsed = $h }
-                    'label'   { $idxLabel   = $h }
-                    'success' { $idxSuccess = $h }
+                    'timeStamp' { $idxTimestamp = $h }
+                    'elapsed'   { $idxElapsed   = $h }
+                    'label'     { $idxLabel     = $h }
+                    'success'   { $idxSuccess   = $h }
                 }
             }
         }
-        $minCols = [Math]::Max($idxSuccess, [Math]::Max($idxElapsed, $idxLabel)) + 1
+        $minCols = [Math]::Max($idxSuccess, [Math]::Max($idxElapsed, [Math]::Max($idxLabel, $idxTimestamp))) + 1
         while ($null -ne ($line = $reader.ReadLine())) {
             $cols = Split-CsvLine $line
             if ($cols.Count -lt $minCols) { continue }
@@ -183,6 +191,14 @@ function Parse-JmeterCsv {
             $bucket.Samples.Add($elapsed)
             if (-not $success) { $bucket.Errors++ }
 
+            # Track the window across every KEPT row (post-filter), so the span
+            # matches the samples the metrics are computed from.
+            $ts = [long]0
+            if ([long]::TryParse($cols[$idxTimestamp], [ref]$ts)) {
+                if ($ts -lt $minTs) { $minTs = $ts }
+                if ($ts -gt $maxTs) { $maxTs = $ts }
+            }
+
             if ($BuildAggregate) {
                 $allElapsed.Add($elapsed)
                 if (-not $success) { $totalErrors++ }
@@ -191,8 +207,10 @@ function Parse-JmeterCsv {
     } finally { $reader.Dispose() }
 
     return @{
-        ByLabel     = $byLabel
-        AllElapsed  = $allElapsed
-        TotalErrors = $totalErrors
+        ByLabel      = $byLabel
+        AllElapsed   = $allElapsed
+        TotalErrors  = $totalErrors
+        MinTimestamp = if ($minTs -eq [long]::MaxValue) { $null } else { $minTs }
+        MaxTimestamp = if ($maxTs -eq [long]::MinValue) { $null } else { $maxTs }
     }
 }

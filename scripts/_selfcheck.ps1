@@ -97,6 +97,16 @@ try {
     Assert-Equal 1  $tc.ByLabel.Keys.Count                       "TC mode: only the TC label kept"
     Assert-Equal $true ($tc.ByLabel.ContainsKey('01. Open Homepage')) "TC mode: TC label kept"
     Assert-Equal 0  $tc.ByLabel['01. Open Homepage'].Errors      "TC row had success=true"
+
+    # Observed sample window. publish-load-test-results.ps1 divides request
+    # counts by this span instead of the CONFIGURED duration, so a wrong value
+    # here silently mis-states requests_per_sec on every row.
+    # Window is over KEPT rows only: default mode keeps timeStamps 1 and 2
+    # (the TC row at 3 is filtered out), TC mode keeps only 3.
+    Assert-Equal 1 $r.MinTimestamp  "default mode: min timeStamp over kept rows"
+    Assert-Equal 2 $r.MaxTimestamp  "default mode: max timeStamp over kept rows"
+    Assert-Equal 3 $tc.MinTimestamp "TC mode: window follows the filtered rows"
+    Assert-Equal 3 $tc.MaxTimestamp "TC mode: single kept row = zero-width window"
 }
 finally {
     Remove-Item -LiteralPath $tmp.FullName -Force -ErrorAction SilentlyContinue
@@ -114,6 +124,26 @@ Write-Host "ConvertTo-IsoUtc (normalize to ISO-8601 UTC; passthrough on bad inpu
 Assert-Equal '2026-06-15T13:45:30.0000000Z' (ConvertTo-IsoUtc '2026-06-15T13:45:30.0000000Z') "already-ISO input is idempotent"
 Assert-Equal ''          (ConvertTo-IsoUtc '')        "empty -> passthrough (no throw)"
 Assert-Equal 'not-a-date' (ConvertTo-IsoUtc 'not-a-date') "malformed -> passthrough (no throw)"
+
+Write-Host "Parse-JmeterCsv sample window with unparseable timestamps"
+# Publishers must fall back to the configured duration rather than divide by a
+# garbage span, so the no-usable-timestamp case has to surface as $null.
+$csvNoTs = @(
+    'timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage'
+    ',100,Homepage,200,OK,t1,text,true,'
+    'not-a-number,150,Homepage,200,OK,t1,text,true,'
+) -join "`n"
+$tmpNoTs = New-TemporaryFile
+try {
+    Set-Content -LiteralPath $tmpNoTs.FullName -Value $csvNoTs -Encoding utf8
+    $rNoTs = Parse-JmeterCsv -Path $tmpNoTs.FullName
+    Assert-Equal 2 $rNoTs.ByLabel['Homepage'].Samples.Count      "rows still parse without timestamps"
+    Assert-Equal $true ($null -eq $rNoTs.MinTimestamp)           "no parseable timeStamp -> MinTimestamp null"
+    Assert-Equal $true ($null -eq $rNoTs.MaxTimestamp)           "no parseable timeStamp -> MaxTimestamp null"
+}
+finally {
+    Remove-Item -LiteralPath $tmpNoTs.FullName -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host ""
 if ($script:failures -gt 0) {
