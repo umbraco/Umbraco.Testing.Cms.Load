@@ -464,6 +464,16 @@ steps:
           Write-Host "##vso[task.setvariable variable=loadTestStartTime]$start"
           Write-Host "Load test window starts at: $start"
 
+          . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
+          # AzureLoadTest@1 caps loadTestRunName at 50 chars and loadTestRunDescription
+          # at 100 - a long prerelease/nightly Umbraco version tag can blow either
+          # budget (confirmed live: "Invalid test run name" on a 31-char version),
+          # so bound both here instead of failing the task at submission time.
+          $runName = Get-BoundedLabel "${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(poolDtuMax)DTU #$(Build.BuildId)" 50
+          $runDesc = Get-BoundedLabel "${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }} | $(appServiceSku)/$(poolDtuMax)DTU/$(resolvedSeederPreset) | $(userAmount)u/$(testDuration)s" 100
+          Write-Host "##vso[task.setvariable variable=loadTestRunName]$runName"
+          Write-Host "##vso[task.setvariable variable=loadTestRunDescription]$runDesc"
+
     # continueOnError: an SLO breach here is meaningful data, not a reason to skip the rest.
     # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.
     - task: AzureLoadTest@1
@@ -479,13 +489,9 @@ steps:
         # The per-DB DTU cap is in the name explicitly — when poolDtuOverride is set, the run
         # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
         # or you can't tell override runs apart from default-pairing runs in the portal Compare view.
-        loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(poolDtuMax)DTU #$(Build.BuildId)'
-        # Azure Load Testing caps the description at 100 chars. Worst-case
-        # combo (longest version + Enterprise + DeliveryApi + Massive + stress
-        # numbers) lands around 70 with this template; well under the limit.
-        # Drops the .NET version (derivable from the Umbraco major and visible
-        # in LoadTestSummary_CL) and shortens 'users for Ns' to 'Nu/Ns'.
-        loadTestRunDescription: '${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }} | $(appServiceSku)/$(poolDtuMax)DTU/$(resolvedSeederPreset) | $(userAmount)u/$(testDuration)s'
+        # Computed (and length-bounded) by the step above.
+        loadTestRunName: '$(loadTestRunName)'
+        loadTestRunDescription: '$(loadTestRunDescription)'
 
     - task: PowerShell@2
       displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
@@ -629,6 +635,14 @@ steps:
             Write-Host "##vso[task.setvariable variable=loadTestStartTime]$start"
             Write-Host "Load test window starts at: $start"
 
+            . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
+            # Same 50/100-char AzureLoadTest@1 caps as the frontend path - see the
+            # equivalent step above for why this is bounded here.
+            $runName = Get-BoundedLabel "${{ parameters.umbracoVersion }} ${{ parameters.tier }} ${{ jmxName }} #$(Build.BuildId)" 50
+            $runDesc = Get-BoundedLabel "${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }}/${{ jmxName }} | $(appServiceSku)/$(poolDtuMax)DTU | $(userAmount)u/$(testDuration)s" 100
+            Write-Host "##vso[task.setvariable variable=loadTestRunName]$runName"
+            Write-Host "##vso[task.setvariable variable=loadTestRunDescription]$runDesc"
+
       - task: AzureLoadTest@1
         displayName: 'Load Test [${{ jmxName }}]'
         condition: and(succeeded(), ne(variables['loadTestConfigPath'], ''))
@@ -638,8 +652,8 @@ steps:
           loadTestConfigFile: '$(loadTestConfigPath)'
           resourceGroup: '$(historyResourceGroup)'
           loadTestResource: '$(historyLoadTestName)'
-          loadTestRunName: '${{ parameters.umbracoVersion }} ${{ parameters.tier }} ${{ jmxName }} #$(Build.BuildId)'
-          loadTestRunDescription: '${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }}/${{ jmxName }} | $(appServiceSku)/$(poolDtuMax)DTU | $(userAmount)u/$(testDuration)s'
+          loadTestRunName: '$(loadTestRunName)'
+          loadTestRunDescription: '$(loadTestRunDescription)'
 
       - task: PowerShell@2
         displayName: 'Capture end [${{ jmxName }}]'

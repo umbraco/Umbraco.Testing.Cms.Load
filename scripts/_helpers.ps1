@@ -30,6 +30,21 @@ function Write-PipelineError([string] $Message) {
     exit 1
 }
 
+# Truncates to MaxLength, replacing the cut tail with a short hash so two
+# values that only differ after the truncation point (e.g. two nightly builds
+# sharing a long common version prefix) don't collapse into the same label.
+# Used for fields with a hard external cap - e.g. AzureLoadTest@1's
+# loadTestRunName (50 chars) - where the value embeds a long, variable-length
+# Umbraco version tag that can't be bounded at the source.
+function Get-BoundedLabel([string] $Value, [int] $MaxLength) {
+    if ($Value.Length -le $MaxLength) { return $Value }
+    $md5  = [System.Security.Cryptography.MD5]::Create()
+    $hash = [System.BitConverter]::ToString($md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Value))).Replace('-', '').Substring(0, 6).ToLowerInvariant()
+    $keep = $MaxLength - $hash.Length - 1
+    if ($keep -lt 1) { return $hash.Substring(0, $MaxLength) }
+    return "$($Value.Substring(0, $keep))~$hash"
+}
+
 function Get-UmbracoMajor([string] $Version) {
     $raw = ($Version -split '\.')[0]
     $major = 0
