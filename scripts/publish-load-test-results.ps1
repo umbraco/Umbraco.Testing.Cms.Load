@@ -180,7 +180,20 @@ function Get-MetricSummary {
                 # datapoints is the silent failure mode (e.g. VM hadn't started
                 # emitting yet, wrong time window). Without this the column
                 # just shows blank in the dashboard with no clue why.
-                $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] - column will be null."
+                #
+                # errorCode/errormessage are per-metric fields in AzMon's response
+                # (distinct from an empty-but-successful result) - capturing them,
+                # plus whether any raw timeseries/data entries exist at all, turns
+                # a recurring "0 datapoints" into a diagnosable signal instead of a
+                # repeated guess: errorCode != Success is an API-level problem, a
+                # non-empty timeseries with 0 usable points is an aggregation-name
+                # mismatch, and truly empty timeseries is the only case that still
+                # looks like propagation lag.
+                $rawTimeseriesCount = @($metric.timeseries).Count
+                $rawDataPointCount  = @($metric.timeseries | ForEach-Object { $_.data } | Where-Object { $_ }).Count
+                $errorCode = if ($metric.errorCode) { [string]$metric.errorCode } else { "n/a" }
+                $errorDetail = if ($metric.errormessage) { " errormessage=`"$($metric.errormessage)`"" } else { "" }
+                $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] - column will be null. errorCode=$errorCode$errorDetail timeseries=$rawTimeseriesCount rawDataPoints=$rawDataPointCount (aggregation=$Aggregation)."
                 Write-Warning $msg
                 Write-Host "##vso[task.logissue type=warning]$msg"
                 continue
