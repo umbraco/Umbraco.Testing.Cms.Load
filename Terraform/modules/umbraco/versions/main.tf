@@ -2,8 +2,15 @@ locals {
   # "17.0.0__Standard__Default" -> "17-0-0-standard-default"
   case_suffix = replace(lower(var.test_case_id), "/[._]+/", "-")
 
+  # App Service names cap at 60 chars; a long prerelease/nightly Umbraco tag
+  # (e.g. "17.7.0--rc.preview.151.gda20979") can make case_suffix alone blow
+  # that budget for any reasonable prefix. Hash it to a fixed-length slug
+  # that's independent of version length - the full test_case_id survives in
+  # case_tags below and in the DB name, which has a much higher length cap.
+  app_case_suffix = substr(md5(local.case_suffix), 0, 12)
+
   # Predicted hostname; reading default_hostname here would self-cycle.
-  app_service_name             = "${var.resource_name_prefix}-appservice-${local.case_suffix}"
+  app_service_name             = "${var.resource_name_prefix}-appservice-${local.app_case_suffix}"
   app_service_hostname_predict = "${local.app_service_name}.azurewebsites.net"
 
   case_tags = merge(var.common_tags, {
@@ -43,19 +50,20 @@ resource "azurerm_windows_web_app" "app_service" {
   tags                = local.case_tags
 
   # Catch the 60-char Azure App Service name cap with a clear message instead
-  # of a generic Azure 400 deep in apply. Long Umbraco prerelease tags + long
-  # prefixes can blow this budget; shorten one of (prefix, version, scenario).
+  # of a generic Azure 400 deep in apply. The version/scenario no longer feed
+  # this budget (app_case_suffix is a fixed-length hash) - only a very long
+  # resource_name_prefix can still blow it.
   lifecycle {
     precondition {
       condition     = length(local.app_service_name) <= 60
-      error_message = "Computed App Service name '${local.app_service_name}' is ${length(local.app_service_name)} chars (Azure cap is 60). Shorten the prefix, Umbraco version, or scenario name."
+      error_message = "Computed App Service name '${local.app_service_name}' is ${length(local.app_service_name)} chars (Azure cap is 60). Shorten resource_name_prefix."
     }
     # Charset as well as length - an invalid char otherwise surfaces as a generic
     # Azure 400 mid-apply. prepare-test-cases.ps1 rejects these at validation;
     # this is the backstop for a hand-written tfvars run.
     precondition {
       condition     = can(regex("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", local.app_service_name))
-      error_message = "Computed App Service name '${local.app_service_name}' contains characters Azure rejects. Allowed: lowercase letters, digits and hyphens (not leading/trailing). Check the Umbraco version and scenario name."
+      error_message = "Computed App Service name '${local.app_service_name}' contains characters Azure rejects. Allowed: lowercase letters, digits and hyphens (not leading/trailing). Check resource_name_prefix."
     }
   }
 

@@ -211,8 +211,12 @@ foreach ($case in $cases) {
     if ([string]$case.umbraco -notmatch '^[0-9A-Za-z][0-9A-Za-z.\-]*$') {
         Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' must contain only letters, digits, dots and hyphens (it becomes part of Azure resource names and is passed to the deploy script)"
     }
-    if (([string]$case.umbraco).Length -gt 30) {
-        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is $(([string]$case.umbraco).Length) chars (max 30) - it participates in the 60-char App Service name budget"
+    # App Service naming hashes the version (see Terraform/modules/umbraco/versions/main.tf's
+    # app_case_suffix), so it no longer participates in that 60-char budget. This is
+    # just a sanity cap against garbage input - the DB name (128-char limit) and the
+    # -var/pwsh argument passing still carry the literal string either way.
+    if (([string]$case.umbraco).Length -gt 100) {
+        Fail "case ${caseIndex}: umbraco version '$($case.umbraco)' is $(([string]$case.umbraco).Length) chars (max 100)"
     }
     $umbracoMajorRaw = ([string]$case.umbraco).Split('.')[0]
     $umbracoMajor    = 0
