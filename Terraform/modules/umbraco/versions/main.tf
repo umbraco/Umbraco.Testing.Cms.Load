@@ -13,6 +13,12 @@ locals {
   app_service_name             = "${var.resource_name_prefix}-appservice-${local.app_case_suffix}"
   app_service_hostname_predict = "${local.app_service_name}.azurewebsites.net"
 
+  # Unlike app_service_name, this stays literal (not hashed) - Azure SQL's
+  # 128-char cap has enough headroom for a long version tag that hashing
+  # isn't worth the readability loss. Still needs its own guard though: see
+  # the precondition below.
+  db_name = "${var.resource_name_prefix}-db-${local.case_suffix}"
+
   case_tags = merge(var.common_tags, {
     test_case_id    = var.test_case_id
     umbraco_version = var.umbraco_version
@@ -33,12 +39,22 @@ locals {
 # pool per plan; per-DB DTU cap is enforced by the pool's per_database_settings.
 # Setting sku_name = "ElasticPool" is the documented way to attach to a pool.
 resource "azurerm_mssql_database" "database" {
-  name            = "${var.resource_name_prefix}-db-${local.case_suffix}"
+  name            = local.db_name
   server_id       = var.sql_server_id
   collation       = "SQL_Latin1_General_CP1_CI_AS"
   sku_name        = "ElasticPool"
   elastic_pool_id = var.elastic_pool_id
   tags            = local.case_tags
+
+  # Catch Azure SQL's 128-char database name cap here instead of a generic
+  # Azure 400 mid-apply. Unlike app_service_name, db_name is still literal, so
+  # a very long version + Enterprise tier + a long scenario name can add up.
+  lifecycle {
+    precondition {
+      condition     = length(local.db_name) <= 128
+      error_message = "Computed database name '${local.db_name}' is ${length(local.db_name)} chars (Azure SQL cap is 128). Shorten the Umbraco version, scenario name, or resource_name_prefix."
+    }
+  }
 }
 
 # App Service
