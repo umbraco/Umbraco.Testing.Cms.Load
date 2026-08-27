@@ -462,13 +462,16 @@ if ($engineFiles.Count -gt 0) {
     # and the configured value then understates the rate. Floored at 1s; falls
     # back to $DurationSeconds when no timestamp parsed. timeStamp is the sample
     # START, so the last sample's own latency is deliberately not added.
+    # > 0 (not >= 1s) is the real "did we get data" test - the old 1s floor
+    # discarded genuinely valid short spans (e.g. a fast smoke run).
     $observedSpanSec = 0.0
-    if ($spanMaxTs -ge $spanMinTs -and $spanMinTs -ne [long]::MaxValue) {
+    $haveSpan = ($spanMaxTs -ge $spanMinTs -and $spanMinTs -ne [long]::MaxValue)
+    if ($haveSpan) {
         $observedSpanSec = [math]::Round(($spanMaxTs - $spanMinTs) / 1000.0, 3)
     }
-    $testDurationSec = if ($observedSpanSec -ge 1) { $observedSpanSec } else { [double]$DurationSeconds }
-    if ($observedSpanSec -ge 1) {
-        Write-Host "Throughput window: observed sample span $([int]$observedSpanSec)s (configured duration ${DurationSeconds}s)."
+    $testDurationSec = if ($haveSpan -and $observedSpanSec -gt 0) { $observedSpanSec } else { [double]$DurationSeconds }
+    if ($haveSpan -and $observedSpanSec -gt 0) {
+        Write-Host "Throughput window: observed sample span $observedSpanSec s (configured duration ${DurationSeconds}s)."
     } else {
         Write-Warning "No usable sample timestamps - falling back to the configured duration (${DurationSeconds}s) for requests_per_sec."
     }

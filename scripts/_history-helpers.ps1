@@ -33,6 +33,13 @@ function Get-RunDate {
     }
 }
 
+# Plan name from a bare sampler label ("Login / 01. step" -> "Login").
+# Frontend samplers carry no " / " step suffix, hence the fallback.
+function Get-PlanName([string] $Sampler) {
+    if ($Sampler -match '^(.+?) / ') { return $Matches[1] }
+    return '(frontend)'
+}
+
 # Median of a numeric array — used by both the trend renderer and the regression
 # gate. For even N, returns the mean of the two middle values.
 function Get-Median([double[]] $values) {

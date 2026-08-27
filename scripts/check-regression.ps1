@@ -163,7 +163,7 @@ foreach ($cellKey in $cells.Keys) {
         # stem, used below to tell a skipped plan from a partial publish.
         $missing += [pscustomobject]@{
             Version = $version; Tier = $tier; Sampler = $samp
-            Plan    = if ($samp -match '^(.+?) / ') { $Matches[1] } else { '(frontend)' }
+            Plan    = Get-PlanName $samp
         }
         continue
     }
@@ -297,10 +297,18 @@ if ($insufficient.Count -gt 0) {
 # implicit plan, and "every cell absent" means nothing published at all.
 $missingPartialPlans = @()
 if ($missing.Count -gt 0) {
+    # Scope $cellsPerPlan to (version, tier) combos this run actually covers -
+    # else a single-tier run counts every other tier's cells as "missing" too.
+    $runVersionTiers = @{}
+    foreach ($cellKey in $candidateByCell.Keys) {
+        $p = $cellKey -split '__', 3
+        $runVersionTiers["$($p[0])__$($p[1])"] = $true
+    }
     $cellsPerPlan = @{}
     foreach ($k in $cells.Keys) {
-        $s = ($k -split '__', 3)[2]
-        $p = if ($s -match '^(.+?) / ') { $Matches[1] } else { '(frontend)' }
+        $parts = $k -split '__', 3
+        if ($runVersionTiers.Count -gt 0 -and -not $runVersionTiers.ContainsKey("$($parts[0])__$($parts[1])")) { continue }
+        $p = Get-PlanName $parts[2]
         $cellsPerPlan[$p] = 1 + [int]$cellsPerPlan[$p]
     }
     $publishedNone = ($missing.Count -ge $cells.Keys.Count)

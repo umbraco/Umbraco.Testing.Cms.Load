@@ -79,6 +79,7 @@ function Get-DedupKey($row) {
     $jmx = if ($row.PSObject.Properties.Name -contains 'jmeter_test_name') { [string]$row.jmeter_test_name } else { '' }
     return "$([string]$row.run_id)|$jmx"
 }
+$isClientTable = $TableName -eq "ClientMeasurement_CL"
 if (-not $Force) {
     Write-Host "-> Querying existing run_ids in $TableName"
     $workspaceCustomerId = az monitor log-analytics workspace show -n $WorkspaceName -g $HistoryResourceGroup --query customerId -o tsv
@@ -86,7 +87,7 @@ if (-not $Force) {
         Write-PipelineError "Couldn't resolve workspace customerId. Run ensure-monitoring-infra.ps1 first or pass -Force to skip the dedup query."
     }
     # Referencing a column the table lacks is a KQL error, not an empty result.
-    $dedupQuery = if ($TableName -eq "ClientMeasurement_CL") {
+    $dedupQuery = if ($isClientTable) {
         "$TableName | where isnotempty(run_id) | distinct run_id"
     } else {
         "$TableName | where isnotempty(run_id) | distinct run_id, jmeter_test_name"
@@ -121,7 +122,6 @@ $allBlobs = @(az storage blob list `
 
 # client/ blobs have a different schema (destined for ClientMeasurement_CL) -
 # scope by prefix so they don't get posted into the wrong table.
-$isClientTable = $TableName -eq "ClientMeasurement_CL"
 $blobs = @($allBlobs | Where-Object { ($_.name -like "client/*") -eq $isClientTable })
 Write-Host "   $($blobs.Count) blob(s) found (of $($allBlobs.Count) total summary.ndjson blobs in the container)"
 

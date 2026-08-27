@@ -48,6 +48,8 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
+. "$PSScriptRoot/_helpers.ps1"
+
 $tags = @("project=umbraco-loadtest", "managed_by=ensure-script")
 
 # Schema shared between the custom table and the DCR's stream declaration. Keep
@@ -331,14 +333,10 @@ else {
         $existingDcr = $dcrGetRaw | ConvertFrom-Json
     }
     catch {
-        $msg = "Read the Data Collection Rule '$DcrName' but its body did not parse as JSON, so the existing stream set is unknown and a full-replace PUT would risk dropping streams owned by the other pipeline."
-        Write-Host "##vso[task.logissue type=error]$msg"
-        throw "$msg Detail: $($_.Exception.Message)"
+        Write-PipelineError "Read the Data Collection Rule '$DcrName' but its body did not parse as JSON, so the existing stream set is unknown and a full-replace PUT would risk dropping streams owned by the other pipeline. Detail: $($_.Exception.Message)"
     }
     if (-not $existingDcr.properties) {
-        $msg = "Data Collection Rule '$DcrName' exists but returned no 'properties', so its stream set is unknown and a full-replace PUT is unsafe."
-        Write-Host "##vso[task.logissue type=error]$msg"
-        throw $msg
+        Write-PipelineError "Data Collection Rule '$DcrName' exists but returned no 'properties', so its stream set is unknown and a full-replace PUT is unsafe."
     }
 }
 

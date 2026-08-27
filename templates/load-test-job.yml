@@ -293,8 +293,13 @@ steps:
           # A 404 primes routing but not the controller, i.e. the list has
           # drifted for this major. Only self-check available without a live
           # instance, so surface it rather than burying it in the log.
-          $notFound = New-Object System.Collections.Generic.List[string]
-          foreach ($path in $gets) {
+          # Run concurrently - each path hits an independent route, so 18
+          # sequential round-trips only cost time, not correctness.
+          $notFound = [System.Collections.Concurrent.ConcurrentBag[string]]::new()
+          $gets | ForEach-Object -ThrottleLimit 8 -Parallel {
+              $path = $_
+              $base = $using:base
+              $notFound = $using:notFound
               try {
                   $r = Invoke-WebRequest -Uri "$base$path" -UseBasicParsing -DisableKeepAlive `
                        -TimeoutSec 30 -SkipHttpErrorCheck
