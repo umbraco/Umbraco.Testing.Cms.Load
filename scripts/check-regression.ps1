@@ -291,10 +291,10 @@ if ($insufficient.Count -gt 0) {
     [void]$out.AppendLine()
 }
 
-# A whole absent plan means that .jmx wasn't run (backofficePlans trimmed) -
-# expected, so it must not warn or the section gets ignored. A partial absence
-# is the publish anomaly -RunId exists to catch. Exceptions: frontend has one
-# implicit plan, and "every cell absent" means nothing published at all.
+# A whole absent plan means it wasn't queued this run - backofficePlans trimmed
+# it, or workload picked the other side (frontend XOR backoffice, never both,
+# per azure-pipeline.yml) - expected, so it must not warn. A partial absence is
+# the publish anomaly -RunId exists to catch.
 $missingPartialPlans = @()
 if ($missing.Count -gt 0) {
     # Scope $cellsPerPlan to (version, tier) combos this run actually covers -
@@ -324,7 +324,7 @@ if ($missing.Count -gt 0) {
     foreach ($grp in ($missing | Group-Object Plan | Sort-Object Name)) {
         $total     = $cellsPerPlan[$grp.Name]
         $wholePlan = ($grp.Count -ge $total)
-        if ($wholePlan -and -not $publishedNone -and $grp.Name -ne '(frontend)') {
+        if ($wholePlan -and -not $publishedNone) {
             [void]$out.AppendLine("- **$($grp.Name)**: all $total cell(s) absent - this plan didn't run (trimmed from ``backofficePlans``, or no .jmx for this major). Expected.")
             continue
         }
