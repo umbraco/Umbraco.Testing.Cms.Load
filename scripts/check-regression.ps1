@@ -178,12 +178,21 @@ foreach ($cellKey in $cells.Keys) {
     # "insufficient history" until same-load baselines accrue — the correct
     # verdict, not a false regression. (Profile/load isn't a stored key; this
     # matches the actual published load params, which every metric row carries.)
+    #
+    # methodology_version is part of the same key for the same reason: a change
+    # to HOW p95/p99/error_rate/throughput are computed (e.g. excluding the VU
+    # ramp-up window) shifts every number without any change to the code under
+    # test. Rows published before this column existed read as "" (absent), which
+    # naturally forms its own bucket distinct from any explicit version - old
+    # runs still baseline fine against each other, just never against a new-
+    # methodology candidate.
+    #
     # "Prior" = later in the descending sort, so a pinned candidate compares only
     # against runs older than itself.
-    $candLoad      = "$($candidate.user_count)|$($candidate.spawn_rate)|$($candidate.duration_seconds)"
+    $candLoad      = "$($candidate.user_count)|$($candidate.spawn_rate)|$($candidate.duration_seconds)|$($candidate.methodology_version)"
     $older         = @($sorted | Select-Object -Skip ($candIndex + 1))
     $priorRuns     = @($older |
-        Where-Object { "$($_.user_count)|$($_.spawn_rate)|$($_.duration_seconds)" -eq $candLoad } |
+        Where-Object { "$($_.user_count)|$($_.spawn_rate)|$($_.duration_seconds)|$($_.methodology_version)" -eq $candLoad } |
         Select-Object -First $BaselineWindow)
     $priorRunCount = $priorRuns.Count
 

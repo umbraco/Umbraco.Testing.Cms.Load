@@ -87,6 +87,14 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_helpers.ps1"
 
+# Bump whenever a change alters HOW published numbers are computed (not the
+# product code under test) - e.g. this value's introduction coincides with
+# excluding the VU ramp-up window from percentile/error/throughput stats.
+# check-regression.ps1 only baselines a candidate against prior runs with a
+# matching value, so a methodology change reads as "insufficient history" for
+# a few runs instead of a misleading regression/improvement verdict.
+$MethodologyVersion = 1
+
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize
 # once so run_started_at and the per-row TimeGenerated both ingest. (The blob date
@@ -95,7 +103,8 @@ $RunStartedAt = ConvertTo-IsoUtc $RunStartedAt
 
 # Carried into every row so cross-run queries don't need joins.
 $metadata = [ordered]@{
-    run_id           = $BuildId
+    run_id               = $BuildId
+    methodology_version  = $MethodologyVersion
     test_case_id     = $TestCaseId
     commit           = $Commit
     branch           = $Branch

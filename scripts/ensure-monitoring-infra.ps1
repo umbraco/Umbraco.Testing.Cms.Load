@@ -89,6 +89,14 @@ $columns = @(
     @{ name = "jmeter_test_name";                       type = "string"   }
     @{ name = "request_type";                           type = "string"   }
     @{ name = "parse_status";                           type = "string"   }
+    # Bumped whenever a change alters HOW the published numbers are computed
+    # (not the product code under test) - e.g. excluding the VU ramp-up window
+    # from percentile/error/throughput stats. check-regression.ps1 only draws
+    # baseline candidates from prior runs with a matching version, so a
+    # methodology change reads as "insufficient history" for a few runs
+    # instead of a misleading regression/improvement verdict. Absent on rows
+    # published before this column existed - never matches an explicit version.
+    @{ name = "methodology_version";                    type = "int"      }
     @{ name = "user_count";                             type = "int"      }
     @{ name = "spawn_rate";                             type = "int"      }
     @{ name = "duration_seconds";                       type = "int"      }
