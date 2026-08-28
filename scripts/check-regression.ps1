@@ -249,6 +249,22 @@ foreach ($cellKey in $cells.Keys) {
     else                    { $stable       += $cellReport }
 }
 
+# (version, tier) combos this run actually covers. Cells from any OTHER combo
+# were never this run's to publish - a Starter-only run isn't "missing" every
+# Standard cell in history - so they're dropped from $missing before it feeds
+# the result count, $publishedNone, or the per-plan classification below.
+# Scoping only the denominator (as $cellsPerPlan did) left an inflated numerator
+# that pushed real partial-publish failures over the whole-plan threshold and
+# reported them as expected.
+$runVersionTiers = @{}
+foreach ($cellKey in $candidateByCell.Keys) {
+    $p = $cellKey -split '__', 3
+    $runVersionTiers["$($p[0])__$($p[1])"] = $true
+}
+if ($runVersionTiers.Count -gt 0) {
+    $missing = @($missing | Where-Object { $runVersionTiers.ContainsKey("$($_.Version)__$($_.Tier)") })
+}
+
 # --- Render markdown report ---
 
 $out = New-Object System.Text.StringBuilder
@@ -306,28 +322,24 @@ if ($insufficient.Count -gt 0) {
 # the publish anomaly -RunId exists to catch.
 $missingPartialPlans = @()
 if ($missing.Count -gt 0) {
-    # Scope $cellsPerPlan to (version, tier) combos this run actually covers -
-    # else a single-tier run counts every other tier's cells as "missing" too.
-    $runVersionTiers = @{}
-    foreach ($cellKey in $candidateByCell.Keys) {
-        $p = $cellKey -split '__', 3
-        $runVersionTiers["$($p[0])__$($p[1])"] = $true
-    }
-    $cellsPerPlan = @{}
+    # Same (version, tier) scope as $missing above, so numerator and denominator
+    # describe the same population.
+    $cellsPerPlan   = @{}
+    $scopedCellCount = 0
     foreach ($k in $cells.Keys) {
         $parts = $k -split '__', 3
         if ($runVersionTiers.Count -gt 0 -and -not $runVersionTiers.ContainsKey("$($parts[0])__$($parts[1])")) { continue }
-        $p = Get-PlanName $parts[2]
-        $cellsPerPlan[$p] = 1 + [int]$cellsPerPlan[$p]
+        $cellsPerPlan[(Get-PlanName $parts[2])] = 1 + [int]$cellsPerPlan[(Get-PlanName $parts[2])]
+        $scopedCellCount++
     }
-    $publishedNone = ($missing.Count -ge $cells.Keys.Count)
+    $publishedNone = ($missing.Count -ge $scopedCellCount)
 
     [void]$out.AppendLine("## Candidate missing (no row for run ``$RunId``)")
     [void]$out.AppendLine()
     if ($publishedNone) {
         # Not necessarily a failure: Get-HistoryCells drops cold_start rows, so a
         # skipWarmup run has every row filtered out even though it published fine.
-        [void]$out.AppendLine("**No rows from this run matched** any of the $($cells.Keys.Count) cell(s) in history. Either the run published nothing (check the loadTest stage), or its rows were filtered out - a ``skipWarmup`` run is excluded from comparison because every row is flagged ``cold_start``.")
+        [void]$out.AppendLine("**No rows from this run matched** any of the $scopedCellCount cell(s) in history for the version/tier it covers. Either the run published nothing (check the loadTest stage), or its rows were filtered out - a ``skipWarmup`` run is excluded from comparison because every row is flagged ``cold_start``.")
         [void]$out.AppendLine()
     }
     foreach ($grp in ($missing | Group-Object Plan | Sort-Object Name)) {

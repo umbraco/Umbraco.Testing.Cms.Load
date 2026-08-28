@@ -42,7 +42,10 @@ function Get-BoundedLabel([string] $Value, [int] $MaxLength) {
     $hash = [System.BitConverter]::ToString($md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Value))).Replace('-', '').Substring(0, 6).ToLowerInvariant()
     $keep = $MaxLength - $hash.Length - 1
     if ($keep -lt 1) { return $hash.Substring(0, $MaxLength) }
-    return "$($Value.Substring(0, $keep))~$hash"
+    # '-' rather than a more distinctive separator: the bounded value goes to
+    # AzureLoadTest@1's run name/description, whose accepted charset isn't
+    # documented, and a hyphen is already present in every one of these labels.
+    return "$($Value.Substring(0, $keep))-$hash"
 }
 
 function Get-UmbracoMajor([string] $Version) {

@@ -93,7 +93,10 @@ $PSNativeCommandUseErrorActionPreference = $true
 # check-regression.ps1 only baselines a candidate against prior runs with a
 # matching value, so a methodology change reads as "insufficient history" for
 # a few runs instead of a misleading regression/improvement verdict.
-$MethodologyVersion = 1
+#   1 - VU ramp-up window excluded from percentile/error/throughput stats.
+#   2 - frontend ramp derived from users/spawn (Locust's real ramp) instead of
+#       rampTime, which is JMeter-only and up to 50x longer.
+$MethodologyVersion = 2
 
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize
@@ -478,6 +481,20 @@ if ($engineFiles.Count -gt 0) {
     # climb is the point) and left disabled (0) if no engine file has a single
     # usable timestamp - same tolerant posture as Get-WindowSeconds: no
     # reference point means "can't judge the window", not "block publish".
+    # rampTime is a JMeter thread-group setting (resolve-run-config.ps1 sets it to
+    # the thread count and says so). Locust doesn't use it - it spawns at
+    # LOCUST_SPAWN_RATE, so the frontend ramp is users/spawn, an order of
+    # magnitude shorter: 6s for stress, not the 300s rampTime carries. Using
+    # rampTime for frontend discarded up to half a run's steady-state samples,
+    # which widens p99 spread - the opposite of what this exclusion is for.
+    $effectiveRampSec = if ($JmeterTestName) {
+        $RampTimeSeconds
+    } elseif ($SpawnRate -gt 0) {
+        [int][math]::Ceiling($UserCount / [double]$SpawnRate)
+    } else {
+        $RampTimeSeconds
+    }
+
     $rampCutoffMs = 0
     if ($LoadProfile -ne 'ramp') {
         $discoveryMinTs = [long]::MaxValue
@@ -490,12 +507,13 @@ if ($engineFiles.Count -gt 0) {
             if ($null -ne $probe.MinTimestamp -and $probe.MinTimestamp -lt $discoveryMinTs) { $discoveryMinTs = $probe.MinTimestamp }
         }
         if ($discoveryMinTs -ne [long]::MaxValue) {
-            $rampCutoffMs = $discoveryMinTs + ([long]$RampTimeSeconds * 1000)
+            $rampCutoffMs = $discoveryMinTs + ([long]$effectiveRampSec * 1000)
         }
     }
 
     if ($rampCutoffMs -gt 0) {
-        Write-Host "Excluding the first ${RampTimeSeconds}s (VU ramp-up, anchored to the engines' first request) from latency/error/throughput stats."
+        $rampBasis = if ($JmeterTestName) { "JMeter ramp_time" } else { "$UserCount VUs / $SpawnRate per s" }
+        Write-Host "Excluding the first ${effectiveRampSec}s (VU ramp-up: $rampBasis, anchored to the engines' first request) from latency/error/throughput stats."
     } elseif ($LoadProfile -eq 'ramp') {
         Write-Host "LoadProfile=ramp - not excluding any ramp-up window (the climb is what this profile measures)."
     } else {
