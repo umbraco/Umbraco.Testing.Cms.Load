@@ -445,43 +445,57 @@ foreach ($zip in $resultsZips) {
     }
 }
 
-# Ramp-up cutoff (epoch ms), passed to Parse-JmeterCsv so ramp-window samples
-# are excluded from every stat. Skipped for the 'ramp' profile (the climb is
-# the point) and left disabled (0) if the start time can't be parsed - same
-# tolerant posture as Get-WindowSeconds: a bad timestamp means "can't judge the
-# window", not "block publish".
-$rampCutoffMs = 0
-if ($LoadProfile -ne 'ramp') {
-    try {
-        $loadTestStart = [DateTime]::Parse($LoadTestStartTime, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
-        $rampCutoffMs = [DateTimeOffset]::new($loadTestStart, [TimeSpan]::Zero).ToUnixTimeMilliseconds() + ([long]$RampTimeSeconds * 1000)
-    } catch {
-        Write-Verbose "Couldn't parse LoadTestStartTime for ramp-window exclusion ($($_.Exception.Message)) - including all samples."
-    }
-}
-
 $engineFiles = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "engine*_results.csv" -File -ErrorAction SilentlyContinue)
 if ($engineFiles.Count -gt 0) {
     Write-Host "Parsing $($engineFiles.Count) engine result file(s) (JMeter format):"
     $engineFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
     $metadata.parse_status = "ok"
 
-    if ($rampCutoffMs -gt 0) {
-        Write-Host "Excluding the first ${RampTimeSeconds}s (VU ramp-up) from latency/error/throughput stats."
-    } elseif ($LoadProfile -eq 'ramp') {
-        Write-Host "LoadProfile=ramp - not excluding any ramp-up window (the climb is what this profile measures)."
-    }
-
-    # Parse each engine CSV via the shared parser (Parse-JmeterCsv in _helpers.ps1);
-    # merge the per-label buckets across engines. Single-engine runs trivially
-    # become one parse call; multi-engine runs concatenate samples per label.
-    #
     # Backoffice (JMeter) runs always set $JmeterTestName (the .jmx stem),
     # while frontend (Locust) runs leave it empty. Use that as the signal to
     # flip Parse-JmeterCsv into TC-only mode so the workbook shows the
     # "01. <step>" transaction-controller rows instead of the dozens of
     # underlying GET/POST sampler rows per .jmx.
     $onlyTC = -not [string]::IsNullOrWhiteSpace($JmeterTestName)
+
+    # Ramp-up cutoff (epoch ms), passed to Parse-JmeterCsv so ramp-window samples
+    # are excluded from every stat. Anchored to the engines' OWN first request
+    # timestamp (discovered via an unfiltered first pass below), not the
+    # pipeline's LoadTestStartTime - AzureLoadTest@1 still has to provision
+    # engines and dispatch the test plan after that's captured, and that
+    # dispatch lag (tens of seconds, plausibly the same order as the ramp
+    # window itself) would otherwise misalign the cutoff against when the
+    # engine's own ramp actually started. Skipped for the 'ramp' profile (the
+    # climb is the point) and left disabled (0) if no engine file has a single
+    # usable timestamp - same tolerant posture as Get-WindowSeconds: no
+    # reference point means "can't judge the window", not "block publish".
+    $rampCutoffMs = 0
+    if ($LoadProfile -ne 'ramp') {
+        $discoveryMinTs = [long]::MaxValue
+        foreach ($file in $engineFiles) {
+            try {
+                $probe = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC
+            } catch {
+                continue  # Surfaced properly by the real parse pass below.
+            }
+            if ($null -ne $probe.MinTimestamp -and $probe.MinTimestamp -lt $discoveryMinTs) { $discoveryMinTs = $probe.MinTimestamp }
+        }
+        if ($discoveryMinTs -ne [long]::MaxValue) {
+            $rampCutoffMs = $discoveryMinTs + ([long]$RampTimeSeconds * 1000)
+        }
+    }
+
+    if ($rampCutoffMs -gt 0) {
+        Write-Host "Excluding the first ${RampTimeSeconds}s (VU ramp-up, anchored to the engines' first request) from latency/error/throughput stats."
+    } elseif ($LoadProfile -eq 'ramp') {
+        Write-Host "LoadProfile=ramp - not excluding any ramp-up window (the climb is what this profile measures)."
+    } else {
+        Write-Warning "No usable sample timestamps in any engine file - can't anchor the ramp-up cutoff, including all samples."
+    }
+
+    # Parse each engine CSV via the shared parser (Parse-JmeterCsv in _helpers.ps1);
+    # merge the per-label buckets across engines. Single-engine runs trivially
+    # become one parse call; multi-engine runs concatenate samples per label.
     $byLabel = @{}
     # Sample window across every engine file, for the throughput denominator.
     $spanMinTs = [long]::MaxValue
