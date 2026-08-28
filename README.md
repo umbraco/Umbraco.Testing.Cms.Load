@@ -796,7 +796,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 1. Run the pipeline manually from Azure DevOps.
 2. Pick the **load profile** (`smoke` / `standard` / `stress`), **Umbraco version** (free text — prereleases ok), and **scenario** (defaults to `Default`).
 3. Tick the **tiers** to run against (`runStarter` / `runStandard` / `runPro` / `runEnterprise` — at least one). Defaults to Starter only.
-4. Adjust the orthogonal knobs (region, prefix, cold start, skip load tests, validation window) only if you need to.
+4. Adjust the orthogonal knobs (region, prefix, cold start, fail-on-regression, validation window) only if you need to.
 5. Wait for validation → ensure-history-infra → ensure-monitoring-infra → provisioning → load tests → regression check to complete.
 6. Review results in Azure Load Testing portal, pipeline artifacts, and history storage NDJSON. The `regression-report` artifact has the post-run regression check output.
 7. Resume the cleanup gate when you're done reviewing (deletes the RG, run reports success), or Reject to keep the environment alive. Letting the window elapse (default 60 min) deletes it.

@@ -113,16 +113,18 @@ function Get-HistoryCells {
             if ($row.cold_start -eq $true) { continue }
             # Pre-TC-discrimination historical rows (old majors, before backoffice
             # publish was fixed to keep only Transaction Controller labels) carry a
-            # raw per-request sampler name instead of a 'NN. Step' TC label - e.g.
-            # 'GET /umbraco/management/api/v1/language' or a GUID-suffixed path
-            # like '.../document-type/0099b49e-...'. A GUID-only check missed the
-            # non-GUID raw paths (confirmed live: 81 of 105 flagged regressions on
-            # 2026-08-22 were exactly this, all on old majors, zero on the current
-            # one) - the real, general signature is "raw backoffice management-API
-            # path used as a sampler identity", which today's TC-only publish path
-            # can never produce. Exclude rather than purge the underlying blob
-            # data; this also backstops any future TC-discrimination regression.
-            if ($row.scenario_name -match '^(GET|POST|PUT|DELETE|PATCH) /umbraco/management/api/') { continue }
+            # raw per-request sampler name instead of a 'NN. Step' TC label.
+            #
+            # Structural, not path-shaped: a post-fix backoffice row ALWAYS reads
+            # "<jmeter_test_name> / <label>", so anything else is pre-fix. The
+            # previous rule matched only management-API paths and missed 1,237
+            # rows across 706 samplers - 'GET /', 'GET /umbraco',
+            # 'POST /umbraco/api/memberlogin/login' (p95 to 17s), relative tree
+            # paths, and un-prefixed TC labels. Verified against 15,196 live rows:
+            # this separates 14,372 pre-fix from 824 post-fix with no overlap and
+            # no false positives, and it self-maintains if prefixing ever
+            # regresses. Frontend rows have no jmeter_test_name, so they're exempt.
+            if ($row.jmeter_test_name -and -not $row.scenario_name.StartsWith("$($row.jmeter_test_name) / ")) { continue }
             # Backoffice rows are published as "$JmeterTestName / $label" (e.g.
             # 'SaveContent / 01. Save content'), so a bare-label -Sampler value
             # (the style used across every -Sampler example in this repo) must
