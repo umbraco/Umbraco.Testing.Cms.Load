@@ -277,14 +277,7 @@ Scenario names participate in Azure resource names (App Service is capped at 60 
 - **≤ 15 characters** (e.g. `RedisCache` ✓, `BackofficeOnly` ✓, `ContentDeliveryApi` ✗)
 - **alphanumeric + hyphens only** (no underscores, dots, spaces). Folder names are matched case-strictly on every agent (the validator enumerates the actual folders and rejects mismatches with a "did you mean 'X'?" hint).
 
-The `resource_name_prefix` Terraform variable is similarly capped at **16 chars** (validated). Default is `umbraco-loadtest`. The 60-char App Service budget breaks down as:
-
-```
-${prefix}-appservice-${umbraco}-${tier}-${scenario}
-   ≤16        12           ≤7      ≤8       ≤15        + connectors = 60 max
-```
-
-Long prerelease tags eat into the budget — see [Pitfalls › Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap).
+The `resource_name_prefix` Terraform variable is similarly capped at **16 chars** (validated). Default is `umbraco-loadtest`. The App Service name itself is `${prefix}-appservice-${hash}`, where `${hash}` is a fixed-length (12-char) hash of the full `test_case_id` (version + tier + scenario) — not the literal version/tier/scenario strings. This decouples the 60-char Azure cap from Umbraco version length entirely; a long nightly/prerelease tag (`18.2.0--rc.preview.84.g7df92f1`) is exactly as safe as `17.0.0`. The full `test_case_id` still lands in resource tags and the SQL database name (which stays literal — Azure SQL's 128-char cap has enough headroom that hashing isn't worth the readability loss there). See [Pitfalls › Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap).
 
 ### Sampler naming
 
@@ -403,7 +396,7 @@ Every test follows a **ramp-up → steady-state → ramp-down** shape so the mea
 - **Steady-state** — all VUs run their weighted task mix for the profile's `duration` (the metric window).
 - **Ramp-down** — Azure Load Testing terminates VUs when the duration expires.
 
-When comparing runs, only the steady-state samples are meaningful — ramp-up/down samples skew tail latency and should be filtered out in any deeper analysis.
+When comparing runs, only the steady-state samples are meaningful — ramp-up samples skew tail latency easier than steady-state actually is. `publish-load-test-results.ps1` now does this automatically: it excludes samples before `(the engines' own first-request timestamp) + rampTime` from every published stat (p95/p99/avg/error_rate/requests_per_sec), for every profile except `ramp` itself (where the climb is the point). The cutoff is anchored to the engines' own clock, not the pipeline's — `AzureLoadTest@1`'s provisioning/dispatch lag after the pipeline captures its start time would otherwise misalign it. Ramp-down isn't filtered — Azure Load Testing hard-stops VUs at duration expiry rather than tapering off, so there's no equivalent lower-concurrency window to exclude, though in-flight requests aborted at that exact moment are a known, unconfirmed source of tail noise worth revisiting if it turns out to matter.
 
 The **`ramp` profile** is the deliberate exception: instead of a quick ramp-to-steady, it ramps load continuously from 0 to the target across the *entire* run to locate the saturation knee. For a ramp run the steady-state assumption above doesn't hold — its whole-run aggregate is a blur of light + saturated load, so read it from the per-minute charts (Runs tab) rather than the Trends/Tiers numbers, and use the **Profile** picker to keep ramp runs out of your steady comparisons.
 
@@ -561,7 +554,7 @@ Queue-time validator (`scripts/prepare-test-cases.ps1` + `scripts/resolve-run-co
 Terraform fan-out broke. Look at the `Apply (testCase X)` job's logs.
 
 - **`A resource with the ID … already exists`**: a previous run's ephemeral RG wasn't cleaned up. Either delete it manually in the portal or pick a different `resourcePrefix`.
-- **App Service name too long**: provisioning fails ~10 minutes in with an Azure error about the 60-char cap. Shorten the prefix (≤16 chars), the scenario name (≤15), or the Umbraco prerelease tag. See [Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap) in Pitfalls.
+- **App Service name too long**: shouldn't happen regardless of Umbraco version length anymore — the name is a hash of `test_case_id`, not the literal version/tier/scenario. If it still fires, `resource_name_prefix` itself is the one thing left that can overrun the 60-char cap; shorten it (≤16 chars). See [Name length](#name-length-long-umbraco-prereleases-break-the-60-char-app-service-cap) in Pitfalls. A long version string can still overrun the *SQL database* name's 128-char cap instead — its own precondition names that possibility explicitly.
 - **`dotnet build` failed**: the scenario's code overlay (Program.cs, Composers, etc.) has a compile error. Check the install-script log under `local-exec`.
 - **Seeder timeout**: install script polls `/umbraco/api/seederstatus/status` and gives up after the per-preset cap (10/30/60/120 min for Small/Medium/Large/Massive). Pick a smaller preset or raise the cap in the install script.
 - **`az webapp stop` returned 503**: transient — the install script retries 3× with 5/10/20s backoff and fails the apply only after all retries exhaust. Re-queue.
@@ -570,7 +563,7 @@ Terraform fan-out broke. Look at the `Apply (testCase X)` job's logs.
 
 The ALT run finished but data quality is questionable.
 
-- **`displayName must be a string of length between 2 to 50`**: scenario + .jmx name combined overflows 50 chars. `generate-loadtest-config.ps1` enforces this with a defensive check that errors out earlier — if it still slips through, shorten the scenario name.
+- **`Invalid test run name` / `must be between 2 to 50 characters`**: **fixed** — `loadTestRunName` used to embed the literal Umbraco version, and a long nightly/prerelease tag (`18.2.0--rc.preview.84.g7df92f1`) alone can exceed the 50-char cap. It's now computed before the `AzureLoadTest@1` task via `Get-BoundedLabel` (`_helpers.ps1`), which truncates and appends a short hash if needed. If you still hit this, check that the pipeline template's "Capture load test start time" / "Capture start" step (which computes it) actually ran before the task.
 - **`Test window unusable (Ns)` warning in publish**: ALT fast-failed (engine provisioning, auth, validation) so the wall-clock window is < 30s and metric query is skipped. Look for the AzureLoadTest@1 step's error a few lines up.
 - **`Could not query seeder inventory … using fallback defaults`**: the "Discover seeder member state" step couldn't reach the App Service. MemberLogin.jmx will run with `totalOfMember=30` and `password=Test1234!` regardless of what the seeder actually created — degraded hit-rate. Usually means the App Service isn't fully started; investigate the Start App Service step.
 - **`Posting N row(s) to Log Analytics` followed by silence in the Workbook**: new custom tables take 5–10 minutes to surface after first ingest. Wait, then re-query. If still empty after 30 min, check Service Principal has Monitoring Metrics Publisher on the DCR.
@@ -741,6 +734,8 @@ The script is wired into the pipeline as the `regressionCheck` job after `runLoa
 Arming it is safe whenever you're ready: cells with < `MinBaselineRuns` prior runs report "insufficient baseline" and never trigger a fail, so the gate activates per-cell as baselines accrue rather than all at once.
 
 The same applies to the client pipeline's `clientRegression` stage and its own `failOnRegression` parameter.
+
+**A `methodology_version` column guards against comparing across a change in how the numbers are computed** (as opposed to a change in the code under test) — e.g. excluding the VU ramp-up window from published stats shifts every value without any real regression. `check-regression.ps1` folds it into the same load-matching key as `user_count`/`spawn_rate`/`duration_seconds`, so a version bump makes prior runs invisible to the baseline rather than silently comparing old-methodology history against new-methodology candidates. Expect every cell to report "insufficient baseline" for a few runs right after a methodology change ships — that's expected and self-resolves within `BaselineWindow` runs, not a sign of lost history.
 
 ### Infrastructure: ephemeral vs long-lived
 
@@ -1085,7 +1080,9 @@ A scenario's `AdditionalSetup/appsettings.json` is **merged into the base App Se
 
 ### Name length: long Umbraco prereleases break the 60-char App Service cap
 
-Azure App Service names are capped at 60 chars. The computed name is `${prefix}-appservice-${umbraco}-${tier}-${scenario}` (≤16 + 12 + ≤length(version) + ≤length(tier) + ≤15 + connectors). Long Umbraco prerelease tags (`17.0.0-rc.1.beta.2`) eat into the budget. Terraform fails the run early via a `lifecycle.precondition` with a clear error message, but you'd rather not get there — prefer release versions (`X.Y.Z`) and shorten scenario names if running prereleases on a long-named tier.
+**Fixed** — the App Service name is now a hash of `test_case_id`, not the literal version/tier/scenario string (see [Naming constraints](#naming-constraints)), so this no longer happens regardless of version length. This section is kept for history: a long nightly/prerelease tag (`18.2.0--rc.preview.84.g7df92f1`, 31 chars) used to blow the 60-char budget on any reasonable `resource_name_prefix` + tier + scenario combination, failing ~10 minutes into provisioning. If you hit an App Service naming error today, it's much more likely `resource_name_prefix` itself is unreasonably long (Terraform's `lifecycle.precondition` still catches this with a clear message) — the SQL database name is the one place a long version string can still matter, since it stays literal for portal readability; its own precondition catches a 128-char overrun the same way.
+
+`AzureLoadTest@1`'s `loadTestRunName` (50-char cap) and `loadTestRunDescription` (100-char cap) had the same class of bug, independently — also fixed, by bounding both to a hash-suffixed truncation (`Get-BoundedLabel` in `_helpers.ps1`) computed before the task runs, rather than embedding the literal version.
 
 ### Capacity: Massive preset is slow
 
