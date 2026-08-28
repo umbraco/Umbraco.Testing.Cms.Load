@@ -1,0 +1,139 @@
+parameters:
+  - name: validationTimeoutMinutes
+    type: number
+  - name: dependsOn
+    type: object
+  - name: extraValidationInstructions
+    type: string
+    default: ''
+
+stages:
+  # Cleanup must run on every outcome — including pipeline cancel. `always()`
+  # covers cancel; `succeededOrFailed()` would skip cleanup when the user
+  # cancels mid-run, orphaning the ephemeral RG until someone manually deletes
+  # it. Depends on provision so the chain still fires if the test/regression
+  # stages were skipped or failed; depends on them too so cleanup doesn't
+  # race with them.
+  - stage: cleanup
+    displayName: Cleanup
+    dependsOn: ${{ parameters.dependsOn }}
+    condition: always()
+    jobs:
+      - job: checkResourceGroupForCleanup
+        displayName: Check resource group for cleanup
+        steps:
+          - task: AzureCLI@2
+            name: checkResourceGroup
+            displayName: Check if resource group exists (and belongs to this run)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              # Also confirm the RG is OURS, via the build_id tag Terraform sets
+              # from local.common_tags. A prefix collision (a previous run kept
+              # its RG, someone re-queues the same prefix) otherwise reaches this
+              # stage and offers a keep/delete gate for an RG this run never
+              # created - and since Resume now DELETES, pressing it out of habit
+              # would destroy someone else's kept environment.
+              #
+              # Anything we can't positively identify as ours is left alone: an
+              # untagged or differently-tagged RG is somebody's, and leaking a
+              # billing RG is recoverable where deleting the wrong one is not.
+              inlineScript: |
+                $exists = az group exists -n $(azureResourceGroup)
+                Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$exists"
+
+                $isOurs = 'false'
+                if ($exists -eq 'true') {
+                    $tag = az group show -n $(azureResourceGroup) --query "tags.build_id" -o tsv
+                    if ($tag -eq '$(Build.BuildId)') {
+                        $isOurs = 'true'
+                        Write-Host "Resource group $(azureResourceGroup) belongs to this run (build_id=$tag)."
+                    }
+                    else {
+                        $shown = if ([string]::IsNullOrWhiteSpace($tag)) { '<none>' } else { $tag }
+                        Write-Host "##vso[task.logissue type=warning]Resource group $(azureResourceGroup) exists but its build_id tag is '$shown', not this run's $(Build.BuildId). Leaving it alone - most likely a previous run kept it and this queue collided on the prefix. Delete it yourself with: az group delete -n $(azureResourceGroup) --yes"
+                    }
+                }
+                Write-Host "##vso[task.setvariable variable=isOurs;isOutput=true]$isOurs"
+
+      - job: manualValidation
+        dependsOn: checkResourceGroupForCleanup
+        condition: eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.isOurs'], 'true')
+        displayName: 'Manual validation - Resume = DELETE, Reject = KEEP alive'
+        pool: server
+        # Backstop above the 240-min parameter max; the task timeout below is the
+        # real window. A job timeout would resolve Failed (= KEEP) and defeat the
+        # task's onTimeout resume (= DELETE).
+        timeoutInMinutes: 300
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Resume = DELETE the RG (success) | Reject = KEEP it alive'
+            timeoutInMinutes: ${{ parameters.validationTimeoutMinutes }}
+            inputs:
+              instructions: |
+                Press "Resume" once you're done reviewing to DELETE resource group $(azureResourceGroup) (pipeline reports success).
+                Press "Reject" to explicitly KEEP the resource group alive for further testing.
+                Timeout after ${{ parameters.validationTimeoutMinutes }} minutes behaves like Resume — DELETE (cost-safe default for an unattended run).
+                ${{ parameters.extraValidationInstructions }}
+              # Timeout resolves as Resume, so a forgotten gate deletes rather
+              # than leaving a seeded RG billing indefinitely.
+              onTimeout: 'resume'
+
+      # Fires on Resume, timeout, cancel or a skipped chain, so the normal
+      # teardown path goes green. Explicit Reject (Failed) is the only keep.
+      - job: deleteResourceGroup
+        displayName: Delete resource group
+        dependsOn:
+          - checkResourceGroupForCleanup
+          - manualValidation
+        # always() wraps the result check so the delete is still evaluated when
+        # the run is cancelled mid-cleanup (e.g. user cancels during the manual
+        # keep/delete prompt). Without it, a cancel skips this job and orphans
+        # the ephemeral RG, which then bills until someone deletes it by hand.
+        # 'Skipped' covers the RG-does-not-exist path — the task below no-ops.
+        #
+        # isOurs is load-bearing, not decoration: manualValidation is also
+        # Skipped when the RG belongs to another run, and without this the delete
+        # would treat that Skipped exactly like "nothing to confirm" and remove
+        # someone else's environment.
+        condition: >-
+          and(always(),
+              eq(dependencies.checkResourceGroupForCleanup.outputs['checkResourceGroup.isOurs'], 'true'),
+              in(dependencies.manualValidation.result, 'Succeeded', 'Canceled', 'Skipped'))
+        # On cancel/timeout AzDO gives a job only the default 5 min to finish and
+        # would force-kill a synchronous RG delete mid-flight (orphaning a half-
+        # deleted, still-billing RG). 30 min is ample for a seeded RG, so the
+        # delete below stays synchronous — which surfaces server-side failures
+        # in-task and lets retryCountOnTaskFailure re-attempt them.
+        cancelTimeoutInMinutes: 30
+        steps:
+          - task: AzureCLI@2
+            displayName: Delete resource group
+            retryCountOnTaskFailure: 5
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $exists = az group exists -n $(azureResourceGroup)
+                if ($exists -ne 'true') {
+                  Write-Host "Resource group $(azureResourceGroup) does not exist, skipping deletion."
+                  return
+                }
+                # Re-check ownership here as well as in the job condition. This is
+                # the irreversible step, and the condition depends on an output
+                # variable crossing a job boundary; if that ever resolves empty
+                # the condition fails open, and re-reading the tag costs one call.
+                $tag = az group show -n $(azureResourceGroup) --query "tags.build_id" -o tsv
+                if ($tag -ne '$(Build.BuildId)') {
+                  $shown = if ([string]::IsNullOrWhiteSpace($tag)) { '<none>' } else { $tag }
+                  Write-Host "##vso[task.logissue type=warning]Refusing to delete $(azureResourceGroup): its build_id tag is '$shown', not this run's $(Build.BuildId)."
+                  return
+                }
+                Write-Host "Deleting resource group $(azureResourceGroup) (build_id=$tag)..."
+                # Synchronous (no --no-wait): a server-side failure (resource lock,
+                # undeletable child, policy deny) surfaces here and is retried via
+                # retryCountOnTaskFailure. cancelTimeoutInMinutes (job-level) gives
+                # this time to finish even when the run is cancelling.
+                az group delete -n $(azureResourceGroup) --yes

@@ -1,0 +1,728 @@
+# Per-case load test step group: read terraform outputs -> start -> warm-up -> load test -> publish.
+#
+# Only the per-tier values are template parameters. Everything else (service
+# connection, history-RG/SA/container/loadtest names) is pipeline-variable scope
+# and referenced as $() directly inside the steps.
+
+parameters:
+  - name: testCaseId
+    type: string
+  - name: tier
+    type: string
+  - name: scenario
+    type: string
+  - name: umbracoVersion
+    type: string
+  - name: workload
+    type: string
+    default: 'frontend'
+  - name: skipWarmup
+    type: boolean
+    default: false
+  # Template-time list of .jmx file stems that the backoffice path iterates
+  # over. Each entry becomes its own (generate-config → ALT → publish) sequence
+  # within this job; iterations whose .jmx isn't present for the resolved
+  # Umbraco major (e.g. PublishContent on v13) skip via the
+  # ne(loadTestConfigPath, '') condition that generate-config sets to empty.
+  # Adding a new backoffice .jmx file: drop it under
+  # loadtests/scenarios/<scenario>/jmeter/v{major}/ and append its stem here.
+  - name: jmxNames
+    type: object
+    default:
+      - ViewHomePage
+      - MemberLogin
+      - SaveContent
+      - SaveAndPublishContent
+      - SaveDocumentType
+      - PublishContent
+  # Logs Ingestion API target (Log Analytics custom table). When DceUri +
+  # DcrImmutableId + StreamName are non-empty, publish-load-test-results.ps1
+  # mirrors each summary row to the LoadTestSummary_CL custom table so the
+  # Workbook can read it. When SeriesStreamName is also non-empty, per-minute
+  # Azure Monitor datapoints are mirrored to LoadTestSeries_CL for the
+  # workbook's per-run drill-down panel. Empty defaults keep the template
+  # backward-compatible if invoked outside the main pipeline.
+  - name: logAnalyticsDceUri
+    type: string
+    default: ''
+  - name: logAnalyticsDcrImmutableId
+    type: string
+    default: ''
+  - name: logAnalyticsStreamName
+    type: string
+    default: ''
+  - name: logAnalyticsSeriesStreamName
+    type: string
+    default: ''
+
+steps:
+  - task: PowerShell@2
+    displayName: 'Read terraform outputs [${{ parameters.testCaseId }}]'
+    env:
+      # Env vars sidestep $(var) quote escaping.
+      RESOLVED_TEST_CASES: $(resolvedTestCases)
+      TEST_CASE_OUTPUTS: $(testCaseOutputs)
+      SEEDER_RESULTS: $(seederResults)
+    inputs:
+      targetType: 'inline'
+      script: |
+        $resolved = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
+        $outputs  = $env:TEST_CASE_OUTPUTS   | ConvertFrom-Json
+
+        $testCaseId = '${{ parameters.testCaseId }}'
+        $myCase    = $resolved.$testCaseId
+        $tfOut   = $outputs.$testCaseId
+
+        if (-not $myCase)  { Write-Host "##vso[task.logissue type=error]No resolved entry for case $testCaseId"; exit 1 }
+        if (-not $tfOut) { Write-Host "##vso[task.logissue type=error]No terraform output entry for case $testCaseId"; exit 1 }
+        if (-not $tfOut.hostname) { Write-Host "##vso[task.logissue type=error]Terraform output for case $testCaseId has no hostname"; exit 1 }
+
+        Write-Host "##vso[task.setvariable variable=hostName]$($tfOut.hostname)"
+        Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
+        Write-Host "##vso[task.setvariable variable=appServicePlanId]$($tfOut.app_service_plan_id)"
+        Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
+        Write-Host "##vso[task.setvariable variable=poolDtuMax]$($tfOut.pool_dtu_max)"
+        Write-Host "##vso[task.setvariable variable=sqlDatabaseName]$($tfOut.sql_database_name)"
+        Write-Host "##vso[task.setvariable variable=sqlDatabaseId]$($tfOut.sql_database_id)"
+        Write-Host "##vso[task.setvariable variable=userAmount]$($myCase.userAmount)"
+        Write-Host "##vso[task.setvariable variable=spawnRate]$($myCase.spawnRate)"
+        Write-Host "##vso[task.setvariable variable=testDuration]$($myCase.testDuration)"
+        Write-Host "##vso[task.setvariable variable=rampTime]$($myCase.rampTime)"
+        Write-Host "##vso[task.setvariable variable=loadProfile]$($myCase.loadProfile)"
+
+        # Seeder result is captured per-case by install-umbraco-cms-on-appservice.ps1
+        # during the provision stage's Terraform local-exec, aggregated into the
+        # `seederResults` pipeline output variable by the outputVars step, and
+        # surfaces here as $env:SEEDER_RESULTS. Filesystem isn't shared across
+        # stages, so this variable hop is how the value crosses the agent boundary.
+        $seederDurationSeconds = ''
+        $seeder = $null
+        if (-not [string]::IsNullOrWhiteSpace($env:SEEDER_RESULTS)) {
+            try {
+                $seederMap = $env:SEEDER_RESULTS | ConvertFrom-Json
+                $seeder = $seederMap.$testCaseId
+            } catch {
+                Write-Host "##vso[task.logissue type=warning]Couldn't parse SEEDER_RESULTS: $($_.Exception.Message)"
+            }
+        }
+        if ($null -ne $seeder) {
+            # Treat 0 (and any sub-second value that rounds to 0) the same as
+            # null — Small/Medium/Large/Massive presets all take minutes, so a
+            # 0 reading means the seeder reported ElapsedMs incorrectly. Letting
+            # 0s through would drag the dashboard median to 0 and hide the real
+            # value. Warn so the underlying cause gets diagnosed.
+            if ($null -ne $seeder.duration_seconds -and [double]$seeder.duration_seconds -gt 0) {
+                $seederDurationSeconds = [string]$seeder.duration_seconds
+            } elseif ($null -ne $seeder.duration_seconds) {
+                Write-Host "##vso[task.logissue type=warning]Seeder result for $testCaseId has duration_seconds=$($seeder.duration_seconds) - dropping as suspect (status=$($seeder.status))"
+            }
+            Write-Host "Seeder result for $testCaseId | status=$($seeder.status) raw=$($seeder.duration_seconds) used=$seederDurationSeconds"
+        } else {
+            Write-Host "No seeder result for $testCaseId in SEEDER_RESULTS - publishing without duration."
+        }
+        Write-Host "##vso[task.setvariable variable=seederDurationSeconds]$seederDurationSeconds"
+
+        Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s"
+
+  # Stop every other case's App Service before starting this one. Defensive
+  # sweep instead of a chain-of-pairs: same-tier siblings share an App Service
+  # Plan, so a stale-running sibling would contaminate this case's CPU/RAM
+  # measurement. Idempotent on already-stopped apps.
+  - task: AzureCLI@2
+    displayName: 'Stop other App Services [${{ parameters.testCaseId }}]'
+    condition: succeeded()
+    env:
+      TEST_CASE_OUTPUTS: $(testCaseOutputs)
+    inputs:
+      azureSubscription: '$(serviceConnection)'
+      scriptType: 'pscore'
+      scriptLocation: 'scriptPath'
+      scriptPath: '$(System.DefaultWorkingDirectory)/scripts/stop-all-app-services.ps1'
+      arguments: >
+        -ResourceGroupName "$(azureResourceGroup)"
+        -ExceptAppService "$(appServiceName)"
+
+  - task: AzureCLI@2
+    displayName: 'Start App Service [${{ parameters.testCaseId }}]'
+    condition: succeeded()
+    inputs:
+      azureSubscription: '$(serviceConnection)'
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        az webapp start -n $(appServiceName) -g $(azureResourceGroup)
+
+  # Skipped when skipWarmup=true — so the test hits a freshly started App Service.
+  # Two phases:
+  #   Phase 1: poll / until 200 (App Service + Umbraco bootstrap is up).
+  #   Phase 2: prime every endpoint the load test will hit. Mirrors the URL
+  #            buckets the locustfile reads from /umbraco/api/seederstatus/inventory,
+  #            so JIT/route/view caches are warm for every sampler — not just /.
+  #            Without this, only Homepage runs against a warm app and the other
+  #            samplers absorb cold-start latency into their early measurement
+  #            window, inflating run-to-run spread.
+  - ${{ if not(parameters.skipWarmup) }}:
+    - task: PowerShell@2
+      displayName: 'Warm up [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $hostname = "$(hostName)"
+          $base = "https://$hostname"
+          $deadline = (Get-Date).AddMinutes(5)
+          $ready = $false
+          Write-Host "Phase 1: polling $base for 200 (max 5 minutes)..."
+          while ((Get-Date) -lt $deadline) {
+              try {
+                  $resp = Invoke-WebRequest -Uri $base -UseBasicParsing -DisableKeepAlive -TimeoutSec 15
+                  if ($resp.StatusCode -eq 200) {
+                      Write-Host "App responded 200 - bootstrap complete."
+                      $ready = $true
+                      break
+                  }
+                  Write-Host "  status=$($resp.StatusCode), retrying..."
+              }
+              catch {
+                  Write-Host "  not ready yet ($($_.Exception.Message.Split([Environment]::NewLine)[0]))"
+              }
+              Start-Sleep -Seconds 5
+          }
+          if (-not $ready) {
+              # Fail so the load-test step is skipped; running against an unready app gives misleading metrics.
+              Write-Host "##vso[task.logissue type=error]App did not respond 200 within 5 minutes - skipping load test for this case"
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Phase 2: priming all sampler endpoints..."
+          $inventoryUrl = "$base/umbraco/api/seederstatus/inventory"
+          try {
+              $inventory = Invoke-RestMethod -Uri $inventoryUrl -TimeoutSec 30
+          }
+          catch {
+              # Non-fatal: the load test will still run, just without the per-endpoint
+              # priming — spread on non-Homepage samplers may be wider on this run.
+              Write-Host "##vso[task.logissue type=warning]Inventory probe failed ($($_.Exception.Message)); load test will run against a partially-warmed app."
+              return
+          }
+
+          # Prime EVERY URL in every bucket. The load test picks via
+          # random.choice() across the full bucket, so any URL not warmed here
+          # hits first-touch latency during measurement — that's the dominant
+          # source of run-to-run noise on p95/p99. Output-cached responses on
+          # warmed URLs return in ~5ms; uncached first-touch is 200-600ms.
+          # Cost: ~30-60s extra warmup; benefit: measurement starts from a
+          # fully-warm cache state.
+          $targets = New-Object System.Collections.Generic.List[string]
+          foreach ($u in @($inventory.rootSectionUrls))                                                         { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Category' } | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Page' }     | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleContentUrls | Where-Object { $_.docType -eq 'Detail' }   | ForEach-Object url)) { if ($u) { $targets.Add($u) } }
+          foreach ($u in @($inventory.sampleMediaUrls))                                                         { if ($u) { $targets.Add($u) } }
+          Write-Host "  priming $($targets.Count) URL(s) across all buckets"
+
+          # Run concurrently - each URL is an independent route, so a sequential
+          # crawl through every section/category/page/detail/media URL just adds
+          # wall-clock time and widens the window where a slower item (media
+          # crops/resizing in particular) risks still being cold when the load
+          # test starts hitting it at random.
+          $targets | ForEach-Object -ThrottleLimit 8 -Parallel {
+              $path = $_
+              $base = $using:base
+              $absolute = if ($path -match '^https?://') { $path } else { "$base$path" }
+              try {
+                  $r = Invoke-WebRequest -Uri $absolute -UseBasicParsing -DisableKeepAlive -TimeoutSec 30
+                  Write-Host "  primed $absolute -> $($r.StatusCode)"
+              }
+              catch {
+                  Write-Host "  warn: $absolute -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+              }
+          }
+
+          # Prime the contact form route. A 4xx is fine — the goal is to register
+          # the route + bind the model + compile the controller, not a real submission.
+          try {
+              $r = Invoke-WebRequest -Uri "$base/umbraco/api/contactform/submit" -Method Post `
+                   -ContentType 'application/json' -Body '{}' `
+                   -UseBasicParsing -DisableKeepAlive -TimeoutSec 30 -SkipHttpErrorCheck
+              Write-Host "  primed contact form -> $($r.StatusCode)"
+          }
+          catch {
+              Write-Host "  warn: contact form -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+          }
+          Write-Host "Warm-up complete."
+
+  # Phase 3, backoffice only: prime the management-API / OAuth surface. Phases
+  # 1-2 warm rendered content, which the write plans don't touch, so the first
+  # .jmx absorbed the JIT cost of the whole backoffice stack.
+  #
+  # Unauthenticated on purpose - a 4xx still forces route resolution, model
+  # binding and controller JIT, without mutating state before measurement.
+  # Shifts backoffice numbers, so earlier backoffice baselines don't carry over.
+  - ${{ if and(eq(parameters.workload, 'backoffice'), not(parameters.skipWarmup)) }}:
+    - task: PowerShell@2
+      displayName: 'Warm up backoffice surface [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $base = "https://$(hostName)"
+          Write-Host "Phase 3: priming the backoffice/management-API surface..."
+
+          # Derived from the plans, not guessed - re-run this when a .jmx changes:
+          #   grep -ho 'name="HTTPSampler.path"[^<]*>[^<]*' \
+          #     loadtests/scenarios/Default/jmeter/v17/*.jmx \
+          #     | sed 's/.*>//' | sort -u | grep '^/umbraco' | grep -v '\${'
+          # Paths needing runtime ids are excluded; they share controllers with
+          # the tree/ and document/ reads below.
+          $gets = @(
+              '/umbraco',
+              '/umbraco/management/api/v1/server/status',
+              '/umbraco/management/api/v1/server/configuration',
+              '/umbraco/management/api/v1/language',
+              '/umbraco/management/api/v1/manifest/manifest/public',
+              '/umbraco/management/api/v1/manifest/manifest/private',
+              '/umbraco/management/api/v1/news-dashboard',
+              '/umbraco/management/api/v1/user/current',
+              '/umbraco/management/api/v1/user/current/configuration',
+              '/umbraco/management/api/v1/document/configuration',
+              '/umbraco/management/api/v1/document/urls',
+              '/umbraco/management/api/v1/recycle-bin/document/root',
+              '/umbraco/management/api/v1/tree/document/root',
+              '/umbraco/management/api/v1/tree/document-type/root',
+              '/umbraco/management/api/v1/tree/data-type/root',
+              '/umbraco/management/api/v1/tree/media-type/root',
+              '/umbraco/management/api/v1/tree/member-type/root',
+              '/umbraco/management/api/v1/tree/template/root',
+              '/umbraco/management/api/v1/security/back-office/authorize'
+          )
+          # A 404 primes routing but not the controller, i.e. the list has
+          # drifted for this major. Only self-check available without a live
+          # instance, so surface it rather than burying it in the log.
+          # Run concurrently - each path hits an independent route, so 18
+          # sequential round-trips only cost time, not correctness.
+          $notFound = [System.Collections.Concurrent.ConcurrentBag[string]]::new()
+          $gets | ForEach-Object -ThrottleLimit 8 -Parallel {
+              $path = $_
+              $base = $using:base
+              $notFound = $using:notFound
+              try {
+                  $r = Invoke-WebRequest -Uri "$base$path" -UseBasicParsing -DisableKeepAlive `
+                       -TimeoutSec 30 -SkipHttpErrorCheck
+                  Write-Host "  primed $path -> $($r.StatusCode)"
+                  if ($r.StatusCode -eq 404) { $notFound.Add($path) }
+              }
+              catch {
+                  Write-Host "  warn: $path -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+              }
+          }
+          if ($notFound.Count -gt 0) {
+              Write-Host "##vso[task.logissue type=warning]Backoffice warm-up: $($notFound.Count) path(s) returned 404 and primed nothing useful - the list in load-test-job.yml has drifted from the .jmx plans for this Umbraco major. Re-derive it (see the grep in the comment above). Paths: $($notFound -join ', ')"
+          }
+
+          # Hot path for every authenticated plan. An empty POST 400s only after
+          # traversing the full OpenIddict pipeline, which is what we want warmed.
+          try {
+              $r = Invoke-WebRequest -Uri "$base/umbraco/management/api/v1/security/back-office/token" `
+                   -Method Post -ContentType 'application/x-www-form-urlencoded' -Body 'grant_type=' `
+                   -UseBasicParsing -DisableKeepAlive -TimeoutSec 30 -SkipHttpErrorCheck
+              Write-Host "  primed token endpoint -> $($r.StatusCode)"
+          }
+          catch {
+              Write-Host "  warn: token endpoint -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+          }
+
+          # Frontend endpoint, but MemberLogin.jmx still needs its controller and
+          # the anti-forgery pipeline touched once.
+          try {
+              $r = Invoke-WebRequest -Uri "$base/umbraco/api/memberlogin/login" -Method Post `
+                   -ContentType 'application/x-www-form-urlencoded' -Body '' `
+                   -UseBasicParsing -DisableKeepAlive -TimeoutSec 30 -SkipHttpErrorCheck
+              Write-Host "  primed member login -> $($r.StatusCode)"
+          }
+          catch {
+              Write-Host "  warn: member login -> $($_.Exception.Message.Split([Environment]::NewLine)[0])"
+          }
+          Write-Host "Backoffice warm-up complete."
+
+  # Query the seeder for actual member count and password via
+  # /umbraco/api/seederstatus/inventory. Without this, MemberLogin.jmx
+  # would use its hardcoded totalOfMember=30 and assume the password matches
+  # the static fallback — both of which drift silently when the seeder
+  # preset (Small/Medium/Large/Massive) changes the member count, or when
+  # someone overrides Configuration:Members:DefaultPassword. The discovered
+  # values flow into generate-loadtest-config.ps1 via pipeline variables and
+  # land in the .properties file as totalOfMember + member_password (the
+  # .jmx Groovy preprocessor builds member_username itself by picking a
+  # random index from 1..totalOfMember and prepending the hardcoded
+  # "TestMember_" prefix). The discovered prefix is emitted as a pipeline
+  # variable for log visibility but not consumed by generate-config —
+  # plumbing it through would be dead until the .jmx Groovy is updated to
+  # read the prefix from a property too. Skipped for frontend workloads.
+  # Failures fall back to safe defaults so the loop can still run.
+  - ${{ if eq(parameters.workload, 'backoffice') }}:
+    - task: PowerShell@2
+      displayName: 'Discover seeder member state [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $hostname = "$(hostName)"
+          $url = "https://$hostname/umbraco/api/seederstatus/inventory?includeMemberPassword=true"
+          $count = 30
+          $prefix = "TestMember_"
+          $password = "Test1234!"
+          try {
+              $inv = Invoke-RestMethod -Uri $url -TimeoutSec 30
+              if ($inv.memberUsernamePattern -match '^(.+?)\{1\.\.(\d+)\}$') {
+                  $discoveredPrefix = $matches[1]
+                  $discoveredCount = [int]$matches[2]
+                  # Guard against count<=0 (seeder configured with
+                  # Members.Count=0 or Members disabled entirely): MemberLogin's
+                  # Groovy preprocessor calls Random().nextInt(total) which
+                  # throws IllegalArgumentException on 0/negative. Keep the
+                  # fallback count so the test attempts members (will fail at
+                  # auth time with a clear error rather than crash mid-iteration).
+                  if ($discoveredCount -gt 0) {
+                      $prefix = $discoveredPrefix
+                      $count = $discoveredCount
+                  } else {
+                      Write-Host "##vso[task.logissue type=warning]Seeder reports memberUsernamePattern='$($inv.memberUsernamePattern)' (count=$discoveredCount); seeder isn't creating members. Keeping fallback count=$count so MemberLogin doesn't crash on Random.nextInt(0)."
+                  }
+              } else {
+                  Write-Host "##vso[task.logissue type=warning]Inventory.memberUsernamePattern '$($inv.memberUsernamePattern)' didn't match expected '<prefix>{1..N}' shape; using defaults."
+              }
+              if ($inv.memberPassword) { $password = $inv.memberPassword }
+              Write-Host "Discovered seeder state: prefix='$prefix' count=$count password=<from inventory>"
+          } catch {
+              Write-Host "##vso[task.logissue type=warning]Could not query seeder inventory ($($_.Exception.Message)); using fallback defaults prefix=$prefix count=$count. MemberLogin may have degraded hit-rate."
+          }
+          Write-Host "##vso[task.setvariable variable=seededMemberCount]$count"
+          Write-Host "##vso[task.setvariable variable=seededMemberPrefix]$prefix"
+          Write-Host "##vso[task.setvariable variable=seededMemberPassword]$password"
+
+  # FRONTEND (Locust) PATH — single test plan, single ALT run, single publish.
+  # Compile-time gated so backoffice runs don't carry an inert frontend block
+  # through the pipeline log.
+  - ${{ if eq(parameters.workload, 'frontend') }}:
+    # Wipe results from a prior tier's frontend run in this same job - same
+    # hazard the backoffice per-.jmx cleanup below guards against.
+    - task: PowerShell@2
+      displayName: 'Clean prior loadTest dir [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $dir = "$(System.DefaultWorkingDirectory)/loadTest"
+          if (Test-Path -LiteralPath $dir) {
+              Remove-Item -LiteralPath $dir -Recurse -Force
+              Write-Host "Removed prior loadTest dir: $dir"
+          }
+
+    # Load test config is per-case so runs stay distinguishable in the portal.
+    # Generation lives in scripts/generate-loadtest-config.ps1 so it's locally
+    # testable and the template stays scannable.
+    - task: AzureCLI@2
+      displayName: 'Generate load test config [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        azureSubscription: '$(serviceConnection)'
+        scriptType: 'pscore'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(System.DefaultWorkingDirectory)/scripts/generate-loadtest-config.ps1'
+        arguments: >
+          -AppServiceName "$(appServiceName)"
+          -ResourceGroupName "$(azureResourceGroup)"
+          -HostName "$(hostName)"
+          -Scenario "${{ parameters.scenario }}"
+          -TestCaseId "${{ parameters.testCaseId }}"
+          -EngineInstances $(resolvedEngineInstances)
+          -UserAmount $(userAmount)
+          -SpawnRate $(spawnRate)
+          -TestDuration $(testDuration)
+          -RampTime $(rampTime)
+          -LoadProfile "$(loadProfile)"
+          -AppServicePlanId "$(appServicePlanId)"
+          -SqlDatabaseId "$(sqlDatabaseId)"
+          -SqlDatabaseName "$(sqlDatabaseName)"
+          -Workload "frontend"
+          -UmbracoVersion "${{ parameters.umbracoVersion }}"
+          -OutputDir "$(System.DefaultWorkingDirectory)"
+
+    # Capture the load-test window in UTC ISO 8601 so the publish step can query
+    # Azure Monitor for server-side metrics (CPU, DTU, memory) over the same time
+    # range. The window is slightly wider than the actual steady-state — it
+    # includes ALT engine provisioning and post-test artifact download — but
+    # those phases are near-zero load on the SUT, so max() across the window
+    # still captures real peaks (which is what we care about for Bottleneck and
+    # Capacity verdicts). Mean values are diluted by the wider window, but
+    # haven't proven misleading in practice. A prior attempt to narrow the
+    # window via AzureLoadTest@1's output variable (test-run ID + az load
+    # test-run show) failed because the task's variable-exposure conventions
+    # didn't match documented behaviour. Kept simple instead.
+    - task: PowerShell@2
+      displayName: 'Capture load test start time [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $start = (Get-Date).ToUniversalTime().ToString("o")
+          Write-Host "##vso[task.setvariable variable=loadTestStartTime]$start"
+          Write-Host "Load test window starts at: $start"
+
+          . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
+          # AzureLoadTest@1 caps loadTestRunName at 50 chars and loadTestRunDescription
+          # at 100 - a long prerelease/nightly Umbraco version tag can blow either
+          # budget (confirmed live: "Invalid test run name" on a 31-char version),
+          # so bound both here instead of failing the task at submission time.
+          $runName = Get-BoundedLabel "${{ parameters.umbracoVersion }} ${{ parameters.tier }} $(poolDtuMax)DTU #$(Build.BuildId)" 50
+          $runDesc = Get-BoundedLabel "${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }} | $(appServiceSku)/$(poolDtuMax)DTU/$(resolvedSeederPreset) | $(userAmount)u/$(testDuration)s" 100
+          Write-Host "##vso[task.setvariable variable=loadTestRunName]$runName"
+          Write-Host "##vso[task.setvariable variable=loadTestRunDescription]$runDesc"
+
+    # continueOnError: an SLO breach here is meaningful data, not a reason to skip the rest.
+    # Gates on succeeded() so warmup/config failures skip the load test; publish runs anyway.
+    - task: AzureLoadTest@1
+      displayName: 'Load Test [${{ parameters.testCaseId }}]'
+      condition: succeeded()
+      continueOnError: true
+      inputs:
+        azureSubscription: '$(serviceConnection)'
+        loadTestConfigFile: '$(loadTestConfigPath)'
+        resourceGroup: '$(historyResourceGroup)'
+        loadTestResource: '$(historyLoadTestName)'
+        # Scenario is implicit (it's the test); run name is what shows in Compare's run picker.
+        # The per-DB DTU cap is in the name explicitly — when poolDtuOverride is set, the run
+        # name has to differentiate (e.g. 'Standard 50 DTU' default vs 'Standard 100 DTU' override)
+        # or you can't tell override runs apart from default-pairing runs in the portal Compare view.
+        # Computed (and length-bounded) by the step above.
+        loadTestRunName: '$(loadTestRunName)'
+        loadTestRunDescription: '$(loadTestRunDescription)'
+
+    - task: PowerShell@2
+      displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
+      condition: succeededOrFailed()
+      inputs:
+        targetType: 'inline'
+        script: |
+          $end = (Get-Date).ToUniversalTime().ToString("o")
+          Write-Host "##vso[task.setvariable variable=loadTestEndTime]$end"
+          Write-Host "Load test window ends at: $end"
+
+    # Pipeline artifact: per-build, expires with build retention. continueOnError so a
+    # blob upload hiccup doesn't lose the rest of the run; history publish below is the
+    # long-lived copy.
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish run artifacts [${{ parameters.testCaseId }}]'
+      condition: succeededOrFailed()
+      continueOnError: true
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/loadTest'
+        ArtifactName: 'loadtest-results-$(safeTestCaseId)'
+        publishLocation: 'Container'
+
+    # Export to long-lived history storage for cross-run comparison.
+    # continueOnError: a storage publish failure shouldn't fail the pipeline (the run
+    # data is already in Azure Load Testing and the build artifact); investigate via the step log.
+    - task: AzureCLI@2
+      displayName: 'Publish to history [${{ parameters.testCaseId }}]'
+      condition: succeededOrFailed()
+      continueOnError: true
+      inputs:
+        azureSubscription: '$(serviceConnection)'
+        scriptType: 'pscore'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-load-test-results.ps1'
+        arguments: >
+          -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
+          -HistoryResourceGroup "$(historyResourceGroup)"
+          -StorageAccountName "$(historyStorageAccount)"
+          -ContainerName "$(historyContainer)"
+          -BuildId "$(Build.BuildId)"
+          -Commit "$(Build.SourceVersion)"
+          -Branch "$(Build.SourceBranchName)"
+          -RunStartedAt "$(System.PipelineStartTime)"
+          -UmbracoVersion "${{ parameters.umbracoVersion }}"
+          -DotNetVersion "$(resolvedDotnetVersion)"
+          -AppServiceSku "$(appServiceSku)"
+          -PoolDtuMax $(poolDtuMax)
+          -SeederPreset "$(resolvedSeederPreset)"
+          -Tier "${{ parameters.tier }}"
+          -Scenario "${{ parameters.scenario }}"
+          -UserCount $(userAmount)
+          -SpawnRate $(spawnRate)
+          -DurationSeconds $(testDuration)
+          -SkipWarmup "${{ parameters.skipWarmup }}"
+          -TestCaseId "${{ parameters.testCaseId }}"
+          -RampTimeSeconds $(rampTime)
+          -LoadProfile "$(loadProfile)"
+          -LoadTestStartTime "$(loadTestStartTime)"
+          -LoadTestEndTime "$(loadTestEndTime)"
+          -AppServiceResourceId "$(appServiceResourceId)"
+          -AppServicePlanResourceId "$(appServicePlanId)"
+          -SqlDatabaseResourceId "$(sqlDatabaseId)"
+          -SeederDurationSeconds "$(seederDurationSeconds)"
+          -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
+          -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
+          -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
+          -LogAnalyticsSeriesStreamName "${{ parameters.logAnalyticsSeriesStreamName }}"
+
+  # BACKOFFICE (JMeter) PATH — one ALT test per .jmx file, run sequentially on
+  # the same provisioned App Service. The App Service stays warm across the
+  # loop iterations (cache state carries over, which mirrors real-world
+  # multi-operation backoffice use). Each .jmx gets its own metric-capture
+  # window, blob path, LA row, and ALT testId so they don't overlay each
+  # other in the portal's Compare view.
+  #
+  # Iterations whose .jmx isn't present for the resolved Umbraco major
+  # (e.g. PublishContent.jmx on v13) are skipped via the
+  # ne(loadTestConfigPath, '') condition that generate-config sets to empty.
+  - ${{ if eq(parameters.workload, 'backoffice') }}:
+    - ${{ each jmxName in parameters.jmxNames }}:
+      # continueOnError so a single .jmx failing config generation (e.g. an
+      # unforeseen testId-length / scenario combo) doesn't cascade-skip every
+      # remaining .jmx via the succeeded() condition. generate-config clears
+      # its emitted variables at the top so error paths leave the condition
+      # gate (ne loadTestConfigPath, '') firmly false, skipping just this iteration.
+      - task: AzureCLI@2
+        displayName: 'Generate config [${{ jmxName }}]'
+        condition: succeeded()
+        continueOnError: true
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          scriptType: 'pscore'
+          scriptLocation: 'scriptPath'
+          scriptPath: '$(System.DefaultWorkingDirectory)/scripts/generate-loadtest-config.ps1'
+          arguments: >
+            -AppServiceName "$(appServiceName)"
+            -ResourceGroupName "$(azureResourceGroup)"
+            -HostName "$(hostName)"
+            -Scenario "${{ parameters.scenario }}"
+            -TestCaseId "${{ parameters.testCaseId }}"
+            -EngineInstances $(resolvedEngineInstances)
+            -UserAmount $(userAmount)
+            -SpawnRate $(spawnRate)
+            -TestDuration $(testDuration)
+            -RampTime $(rampTime)
+            -LoadProfile "$(loadProfile)"
+            -AppServicePlanId "$(appServicePlanId)"
+            -SqlDatabaseId "$(sqlDatabaseId)"
+            -SqlDatabaseName "$(sqlDatabaseName)"
+            -Workload "backoffice"
+            -UmbracoVersion "${{ parameters.umbracoVersion }}"
+            -JmxName "${{ jmxName }}"
+            -SeededMemberCount "$(seededMemberCount)"
+            -SeededMemberPassword "$(seededMemberPassword)"
+            -OutputDir "$(System.DefaultWorkingDirectory)"
+
+      # Wipe any results from a previous .jmx iteration before ALT writes new
+      # ones. AzureLoadTest@1 downloads to $(System.DefaultWorkingDirectory)/loadTest;
+      # publish-load-test-results.ps1 recursively scans for engine*_results.csv
+      # AND skips re-extraction when results-extracted/ already exists, so without
+      # this cleanup iteration N+1 would publish iteration N's CSV with iteration
+      # N+1's metadata (window, jmeter_test_name). Silent data corruption.
+      - task: PowerShell@2
+        displayName: 'Clean prior loadTest dir [${{ jmxName }}]'
+        condition: and(succeeded(), ne(variables['loadTestConfigPath'], ''))
+        inputs:
+          targetType: 'inline'
+          script: |
+            $dir = "$(System.DefaultWorkingDirectory)/loadTest"
+            if (Test-Path -LiteralPath $dir) {
+                Remove-Item -LiteralPath $dir -Recurse -Force
+                Write-Host "Removed prior loadTest dir: $dir"
+            }
+
+      - task: PowerShell@2
+        displayName: 'Capture start [${{ jmxName }}]'
+        condition: and(succeeded(), ne(variables['loadTestConfigPath'], ''))
+        inputs:
+          targetType: 'inline'
+          script: |
+            $start = (Get-Date).ToUniversalTime().ToString("o")
+            Write-Host "##vso[task.setvariable variable=loadTestStartTime]$start"
+            Write-Host "Load test window starts at: $start"
+
+            . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
+            # Same 50/100-char AzureLoadTest@1 caps as the frontend path - see the
+            # equivalent step above for why this is bounded here.
+            $runName = Get-BoundedLabel "${{ parameters.umbracoVersion }} ${{ parameters.tier }} ${{ jmxName }} #$(Build.BuildId)" 50
+            $runDesc = Get-BoundedLabel "${{ parameters.umbracoVersion }} | ${{ parameters.tier }}/${{ parameters.scenario }}/${{ jmxName }} | $(appServiceSku)/$(poolDtuMax)DTU | $(userAmount)u/$(testDuration)s" 100
+            Write-Host "##vso[task.setvariable variable=loadTestRunName]$runName"
+            Write-Host "##vso[task.setvariable variable=loadTestRunDescription]$runDesc"
+
+      - task: AzureLoadTest@1
+        displayName: 'Load Test [${{ jmxName }}]'
+        condition: and(succeeded(), ne(variables['loadTestConfigPath'], ''))
+        continueOnError: true
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          loadTestConfigFile: '$(loadTestConfigPath)'
+          resourceGroup: '$(historyResourceGroup)'
+          loadTestResource: '$(historyLoadTestName)'
+          loadTestRunName: '$(loadTestRunName)'
+          loadTestRunDescription: '$(loadTestRunDescription)'
+
+      - task: PowerShell@2
+        displayName: 'Capture end [${{ jmxName }}]'
+        condition: and(succeededOrFailed(), ne(variables['loadTestConfigPath'], ''))
+        inputs:
+          targetType: 'inline'
+          script: |
+            $end = (Get-Date).ToUniversalTime().ToString("o")
+            Write-Host "##vso[task.setvariable variable=loadTestEndTime]$end"
+            Write-Host "Load test window ends at: $end"
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish artifacts [${{ jmxName }}]'
+        condition: and(succeededOrFailed(), ne(variables['loadTestConfigPath'], ''))
+        continueOnError: true
+        inputs:
+          PathtoPublish: '$(System.DefaultWorkingDirectory)/loadTest'
+          ArtifactName: 'loadtest-results-$(safeTestCaseId)'
+          publishLocation: 'Container'
+
+      - task: AzureCLI@2
+        displayName: 'Publish to history [${{ jmxName }}]'
+        condition: and(succeededOrFailed(), ne(variables['loadTestConfigPath'], ''))
+        continueOnError: true
+        inputs:
+          azureSubscription: '$(serviceConnection)'
+          scriptType: 'pscore'
+          scriptLocation: 'scriptPath'
+          scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-load-test-results.ps1'
+          arguments: >
+            -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
+            -HistoryResourceGroup "$(historyResourceGroup)"
+            -StorageAccountName "$(historyStorageAccount)"
+            -ContainerName "$(historyContainer)"
+            -BuildId "$(Build.BuildId)"
+            -Commit "$(Build.SourceVersion)"
+            -Branch "$(Build.SourceBranchName)"
+            -RunStartedAt "$(System.PipelineStartTime)"
+            -UmbracoVersion "${{ parameters.umbracoVersion }}"
+            -DotNetVersion "$(resolvedDotnetVersion)"
+            -AppServiceSku "$(appServiceSku)"
+            -PoolDtuMax $(poolDtuMax)
+            -SeederPreset "$(resolvedSeederPreset)"
+            -Tier "${{ parameters.tier }}"
+            -Scenario "${{ parameters.scenario }}"
+            -UserCount $(userAmount)
+            -SpawnRate $(spawnRate)
+            -DurationSeconds $(testDuration)
+            -SkipWarmup "${{ parameters.skipWarmup }}"
+            -TestCaseId "${{ parameters.testCaseId }}"
+            -RampTimeSeconds $(rampTime)
+            -LoadProfile "$(loadProfile)"
+            -LoadTestStartTime "$(loadTestStartTime)"
+            -LoadTestEndTime "$(loadTestEndTime)"
+            -AppServiceResourceId "$(appServiceResourceId)"
+            -AppServicePlanResourceId "$(appServicePlanId)"
+            -SqlDatabaseResourceId "$(sqlDatabaseId)"
+            -SeederDurationSeconds "$(seederDurationSeconds)"
+            -JmeterTestName "${{ jmxName }}"
+            -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
+            -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
+            -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
+            -LogAnalyticsSeriesStreamName "${{ parameters.logAnalyticsSeriesStreamName }}"

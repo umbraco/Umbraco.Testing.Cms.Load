@@ -1,27 +1,58 @@
 terraform {
   required_providers {
     azurerm = {
-      source = "hashicorp/azurerm"
-      version = ">=4.20.0"
+      source  = "hashicorp/azurerm"
+      version = "~> 4.20"
+    }
+    # Used for SQL admin login/password generation (modules/umbraco/main.tf).
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.8"
+    }
+    # Used for the deploy/seed side-effect (modules/umbraco/versions/main.tf).
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
     }
   }
 
   required_version = ">= 1.3.9"
+
+  # Local state is fine for the ephemeral RG-per-run model. Uncomment the backend below
+  # for shared state (pre-create the `tfstate` container in the history storage account).
+  # backend "azurerm" {
+  #   resource_group_name  = "umbraco-loadtest-history-rg"
+  #   storage_account_name = "<your-history-storage-account>"
+  #   container_name       = "tfstate"
+  #   key                  = "loadtest.tfstate"
+  # }
 }
 
 provider "azurerm" {
   features {}
 }
 
+# Read tier catalog from loadtests/tiers.json.
+locals {
+  tier_specs = jsondecode(file("${path.module}/../loadtests/tiers.json")).tiers
+}
+
 module "umbraco" {
-  source                  = "./modules/umbraco"
+  source = "./modules/umbraco"
+
   resource_name_prefix    = var.resource_name_prefix
-  resource_group_location = var.resource_group_location
   resource_group_name     = var.resource_group_name
-  umbraco_cms_versions    = var.umbraco_cms_versions
-  # Azure Login Credentials 
-  client_id     = var.client_id
-  client_secret = var.client_secret
-  tenant_id     = var.tenant_id
-  app_service_plan_sku = var.app_service_plan_sku
+  resource_group_location = var.resource_group_location
+
+  tier_specs        = local.tier_specs
+  test_cases        = var.test_cases
+  seeder_preset     = var.seeder_preset
+  pool_dtu_override = var.pool_dtu_override
+  app_sku_override  = var.app_sku_override
+
+  budget_alert_amount        = var.budget_alert_amount
+  budget_alert_threshold_pct = var.budget_alert_threshold_pct
+  budget_alert_emails        = var.budget_alert_emails
+
+  build_id = var.build_id
 }

@@ -1,0 +1,1 @@
+description: "Headless mode: Umbraco Content Delivery API enabled with public access. Dedicated locustfile hits delivery list + item endpoints."

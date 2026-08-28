@@ -1,0 +1,20 @@
+{
+  "tiers": {
+    "Starter": {
+      "app_sku": "P0v3",
+      "dtu_max": 20
+    },
+    "Standard": {
+      "app_sku": "P1v3",
+      "dtu_max": 50
+    },
+    "Pro": {
+      "app_sku": "P2v3",
+      "dtu_max": 100
+    },
+    "Enterprise": {
+      "app_sku": "P3v3",
+      "dtu_max": 200
+    }
+  }
+}

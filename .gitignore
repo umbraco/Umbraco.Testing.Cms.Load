@@ -4,3 +4,16 @@
 *.exe
 *.backup
 *.tfstate
+
+# Re-allow project files that the broad rules above would otherwise ignore.
+!loadtests/tiers.json
+!loadtests/scenarios/**/*.json
+!dashboards/*.workbook.json
+!**/.terraform.lock.hcl
+
+.terraform/
+.idea/
+__pycache__/
+
+# Internal Superpowers working docs (specs / plans / notes) — kept local, not in the repo.
+docs/superpowers/

@@ -1,0 +1,44 @@
+# Hand-craftable test_cases for local `terraform plan`. The pipeline builds
+# this via scripts/prepare-test-cases.ps1.
+
+resource_name_prefix    = "umbraco-loadtest"
+resource_group_name     = "umbraco-loadtest-rg"
+resource_group_location = "West Europe"
+seeder_preset           = "Medium"   # Small / Medium / Large / Massive
+
+# Force every case onto a specific per-DB DTU cap. 0 = use each tier's value
+# from loadtests/tiers.json. Set to 10/20/50/100/200 to isolate the app-side contribution.
+pool_dtu_override = 0
+
+# Force every case onto a specific App Service Plan SKU. "" = use each tier's
+# value from loadtests/tiers.json. Set to P0v3/P1v3/P2v3/P3v3 to isolate
+# the SQL-side contribution.
+app_sku_override = ""
+
+# Tier values must exist in loadtests/tiers.json. app_settings_overlay normally
+# comes from the validator; hand-write a small one for local plans.
+test_cases = {
+  "17.0.0__Standard__Default" = {
+    dotnet_version       = "v10.0"
+    umbraco_version      = "17.0.0"
+    tier                 = "Standard"
+    scenario             = "Default"
+    app_settings_overlay = {}
+  }
+  "17.0.0__Pro__Default" = {
+    dotnet_version       = "v10.0"
+    umbraco_version      = "17.0.0"
+    tier                 = "Pro"
+    scenario             = "Default"
+    app_settings_overlay = {}
+  }
+}
+
+# Azure credentials are read from env vars by the azurerm provider — they are NOT
+# declared as Terraform variables here, so don't try to set them in tfvars. Export
+# in your shell before `terraform plan`:
+#   export ARM_CLIENT_ID="..."
+#   export ARM_CLIENT_SECRET="..."   # client-secret auth
+#   export ARM_TENANT_ID="..."
+#   export ARM_SUBSCRIPTION_ID="..."
+# (Or use Azure CLI auth: `az login` and let the provider pick up the session.)

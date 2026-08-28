@@ -1,425 +1,387 @@
-# File: azure-pipeline.yml
-
 name: load_test_pipeline
 
 trigger: none
+pr: none
 
 pool:
   vmImage: 'ubuntu-latest'
 
 parameters:
-- name: appServicePlanSku
-  displayName: Sku for App Service Plan
-  type: string
-  default: S3
-  values:
-  - S1
-  - S2
-  - S3
-- name: userAmount
-  displayName: Amount of virtual users
-  type: number
-  default: 100
-  values:
-    - 50
-    - 100
-    - 150
-    - 200
-    - 250
-    - 300
-- name: prefix
-  displayName: Prefix for all resources created in terraform
-  type: string
-  default: umbraco-azure-load-test-pipeline
+  - name: umbracoVersion
+    displayName: Umbraco version (e.g. 17.0.0, 17.0.1-rc.1, 17.1.0-beta.2)
+    type: string
+    default: '17.0.0'
+
+  - name: scenario
+    displayName: Scenario (must match a folder under loadtests/scenarios/)
+    type: string
+    default: 'Default'
+    values:
+      - 'Default'
+      - 'DeliveryApi'
+
+  # Workload selects what kind of traffic the load test generates against the
+  # provisioned Umbraco. 'frontend' runs the scenario's locustfile.py (the
+  # default path, unchanged from prior versions). 'backoffice' runs the JMeter
+  # tests under loadtests/scenarios/<scenario>/jmeter/v<major>/. v17 JMeter
+  # files are used for v18 deployments (matches the seeder fallback).
+  # resolve-run-config validates that the chosen (scenario, workload) pair has
+  # the required files — e.g. workload=backoffice on a scenario without a
+  # jmeter/ folder fails fast at queue-time, not 15 minutes into provisioning.
+  - name: workload
+    displayName: Workload (frontend = Locust, backoffice = JMeter)
+    type: string
+    default: 'frontend'
+    values:
+      - 'frontend'
+      - 'backoffice'
+
+  # Backoffice only: which JMeter plans to run this run. Delete entries at queue
+  # time to skip plans — e.g. drop SaveDocumentType (known v18 lock wedge) to keep
+  # a run readable, or keep only the write plans. Ignored for the frontend
+  # workload. A plan with no .jmx for the resolved major is skipped anyway.
+  - name: backofficePlans
+    displayName: 'Backoffice plans (remove to skip; backoffice workload only)'
+    type: object
+    default:
+      - ViewHomePage
+      - MemberLogin
+      - SaveContent
+      - SaveAndPublishContent
+      - SaveDocumentType
+      - PublishContent
+
+  - name: runStarter
+    displayName: Run Starter tier
+    type: boolean
+    default: true
+
+  - name: runStandard
+    displayName: Run Standard tier
+    type: boolean
+    default: false
+
+  - name: runPro
+    displayName: Run Pro tier
+    type: boolean
+    default: false
+
+  - name: runEnterprise
+    displayName: Run Enterprise tier
+    type: boolean
+    default: false
+
+  - name: loadProfile
+    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s, ramp: 0→max / 600s. Backoffice uses lower VU counts (heavier per VU).'
+    type: string
+    default: 'standard'
+    values:
+      - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
+      - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
+      - 'stress'     # Medium, 300 VUs, 600s, 2 engines -- saturate the lower tiers
+      - 'ramp'       # Medium, 0->300 VUs (backoffice 0->60), 600s, 1 engine -- climb to find the saturation knee
+
+  - name: azureRegion
+    displayName: Azure region
+    type: string
+    default: West Europe
+    values:
+      - West Europe
+      - North Europe
+      - East US
+      - West US 2
+
+  # Feeds into RG name + resource names. Concurrent runs with the same prefix collide.
+  - name: resourcePrefix
+    displayName: Resource name prefix (max 16 chars, lowercase alphanumeric + hyphens; must be unique per concurrent run)
+    type: string
+    default: umbraco-loadtest
+
+  - name: skipWarmup
+    displayName: Skip warmup (test cold-start behaviour)
+    type: boolean
+    default: false
+
+  # Arms the regression gate. Off keeps today's report-only behaviour, but as a
+  # visible knob rather than a hardcoded flag. Cells with < MinBaselineRuns never
+  # fail either way, so arming it is safe as soon as baselines exist.
+  - name: failOnRegression
+    displayName: Fail the pipeline on regression (off = report-only; safe to enable once cells have 3+ clean runs)
+    type: boolean
+    default: false
+
+  - name: validationTimeoutMinutes
+    displayName: Manual validation timeout (minutes) - how long resources stay alive after tests
+    type: number
+    default: 60
+    values:
+      - 15
+      - 30
+      - 60
+      - 120
+      - 240
+
+  # Override the per-DB DTU cap for every case so SQL can be sized independently
+  # of the tier's default — useful for "is SQL actually the bottleneck?"
+  # experiments. Defaults (per loadtests/tiers.json): Starter=20, Standard=50,
+  # Pro=100, Enterprise=200. 'Auto' = use each tier's built-in DTU cap.
+  - name: poolDtuOverride
+    displayName: SQL per-DB DTU override (Auto = match tier)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - '10'
+      - '20'
+      - '50'
+      - '100'
+      - '200'
+
+  # Override the App Service Plan SKU for every case so app size is independent
+  # of the tier — counterpart to poolDtuOverride on the app side. Defaults
+  # (per loadtests/tiers.json): Starter=P0v3, Standard=P1v3, Pro=P2v3,
+  # Enterprise=P3v3. 'Auto' = use each tier's built-in SKU.
+  - name: appSkuOverride
+    displayName: App Service SKU override (Auto = match tier)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'P0v3'
+      - 'P1v3'
+      - 'P2v3'
+      - 'P3v3'
+
+  # Override the TestDataSeeder preset so content size is independent of the
+  # load profile. 'Auto' couples preset to profile (smoke=Small; standard, stress,
+  # and ramp=Medium — Large hangs the seeder). Override unlocks the otherwise-
+  # unreachable Massive preset
+  # and enables off-diagonal cells (Small content + stress load, Massive content
+  # + smoke load, etc.). Approximate seeder times: Small ~10 min, Medium ~3 min
+  # (re-verified 2026-08-22 at 178.62s post-logging-fix, was ~30 min before the
+  # Serilog quieting — Small/Large/Massive not yet re-verified), Large ~60 min,
+  # Massive ~120 min.
+  - name: seederPresetOverride
+    displayName: Seeder preset override (Auto = match load profile)
+    type: string
+    default: 'Auto'
+    values:
+      - 'Auto'
+      - 'Small'
+      - 'Medium'
+      - 'Large'
+      - 'Massive'
 
 variables:
-  serviceConnection: 'terraform-umbraco-load-testing-az-serviceconnection'
+  # Variable group `umbraco-loadtest-history` provides all history* variables:
+  # historyResourceGroup, historyLocation, historyLoadTestName,
+  # historyStorageAccount, historyContainer.
+  - group: umbraco-loadtest-history
 
-  # Azure Resource Variables
-  azurergname: '${{ parameters.prefix }}-rg'
-  loadTestResourceName: '${{ parameters.prefix }}-loadtest'
-  # Terraform settings
-  terraformWorkingDirectory: '$(System.DefaultWorkingDirectory)/Terraform'
-  # LoadTestLocation
-  loadTestFileLocation: '$(System.DefaultWorkingDirectory)/LoadTestVersions.yaml'
-  
+  - name: serviceConnection
+    value: 'terraform-umbraco-load-testing-az-connection'
+  - name: azureResourceGroup
+    value: '${{ parameters.resourcePrefix }}-rg'
+  - name: terraformWorkingDirectory
+    value: '$(System.DefaultWorkingDirectory)/Terraform'
+
+  # Long-lived monitoring resources. Defaults are fine for a single team in a
+  # subscription; override in the variable group if multiple teams share one.
+  - name: historyWorkspaceName
+    value: 'umbraco-loadtest-laws'
+  - name: historyDceName
+    value: 'umbraco-loadtest-dce'
+  - name: historyDcrName
+    value: 'umbraco-loadtest-dcr'
+
 stages:
-- stage: terraformDeploy
-  displayName: Terraform Setup and Apply
-  jobs:
-    - job: checkResourceGroup
-      displayName: Checks if resource group with defined name already exists
-      steps:
-      - task: AzureCLI@2
-        name: checkGroup
-        displayName: Checks if the resource group exists before running all the steps
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: 'Write-Host "##vso[task.setvariable variable=resourceGroupExists;isOutput=true]$(az group exists -n $(azurergname))"'
-        
-    - job: getFormattedVersions
-      displayName: Formats versions
-      steps:
-      # If a version is empty it is changed to null, otherwise our powershell script would not be able to read the input
-      - script: echo "##vso[task.setvariable variable=firstDotNetVersion]null" 
-        displayName: update value if firstDotNetVersion is empty 
-        condition: eq(variables['firstDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=firstUmbracoVersion]null" 
-        displayName: update value if firstUmbracoVersion is empty
-        condition: eq(variables['firstUmbracoVersion'],'')
-      - script: echo "##vso[task.setvariable variable=secondDotNetVersion]null" 
-        displayName: update value if secondDotNetVersion is empty
-        condition: eq(variables['secondDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=secondUmbracoVersion]null" 
-        displayName: update value if secondUmbracoVersion is empty
-        condition: eq(variables['secondUmbracoVersion'],'')
-      - script: echo "##vso[task.setvariable variable=thirdDotNetVersion]null" 
-        displayName: update value if thirdDotNetVersion is empty
-        condition: eq(variables['thirdDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=thirdUmbracoVersion]null" 
-        displayName: update value if thirdUmbracoVersion is empty
-        condition: eq(variables['thirdUmbracoVersion'],'')
-      - script: echo "##vso[task.setvariable variable=fourthDotNetVersion]null" 
-        displayName: update value if fourthDotNetVersion is empty
-        condition: eq(variables['fourthDotNetVersion'],'')
-      - script: echo "##vso[task.setvariable variable=fourthUmbracoVersion]null" 
-        displayName: update value if fourthUmbracoVersion is empty
-        condition: eq(variables['fourthUmbracoVersion'],'')
-     
-      - task: PowerShell@2
-        name: versionsOutput
-        inputs:
-          filePath: '$(terraformWorkingDirectory)/script/versionsToJson.ps1'
-          arguments: |
-            -firstDotNetVersion $(firstDotNetVersion) -firstUmbracoVersion $(firstUmbracoVersion) -secondDotNetVersion $(secondDotNetVersion) -secondUmbracoVersion $(secondUmbracoVersion) -thirdDotNetVersion $(thirdDotNetVersion) -thirdUmbracoVersion $(thirdUmbracoVersion) -fourthDotNetVersion $(fourthDotNetVersion) -fourthUmbracoVersion $(fourthUmbracoVersion)
-            echo "##vso[task.setvariable variable=umbracoTFversions;isOutput=true]$env:umbracoTFversions"
+  - template: templates/stages/provision.yml
+    parameters:
+      umbracoVersion: '${{ parameters.umbracoVersion }}'
+      scenario: '${{ parameters.scenario }}'
+      workload: '${{ parameters.workload }}'
+      loadProfile: '${{ parameters.loadProfile }}'
+      resourcePrefix: '${{ parameters.resourcePrefix }}'
+      azureRegion: '${{ parameters.azureRegion }}'
+      runStarter: ${{ parameters.runStarter }}
+      runStandard: ${{ parameters.runStandard }}
+      runPro: ${{ parameters.runPro }}
+      runEnterprise: ${{ parameters.runEnterprise }}
+      poolDtuOverride: '${{ parameters.poolDtuOverride }}'
+      appSkuOverride: '${{ parameters.appSkuOverride }}'
+      seederPresetOverride: '${{ parameters.seederPresetOverride }}'
 
-    - job: setup 
-      dependsOn: 
-      - checkResourceGroup
-      - getFormattedVersions
-      condition: eq(dependencies.checkResourceGroup.outputs['checkGroup.resourceGroupExists'], false)
-      displayName: Terraform Setup
-      variables:
-        umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
-      steps:
-       - task: TerraformInstaller@0
-         displayName: Install Terraform
-         inputs:
-          terraformVersion: 'latest' 
-       - task: PowerShell@2
-         displayName: Terraform Init
-         inputs:
-           targetType: 'inline'
-           script: 'terraform init -backend=false'
-           workingDirectory: '$(terraformWorkingDirectory)'
-       - task: TerraformTaskV4@4
-         displayName: Validate 
-         inputs:
-          provider: 'azurerm'
-          command: 'validate'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          
-       - script: echo '$(umbracoTFversions)'
-       - task: TerraformTaskV4@4
-         displayName: Terraform Plan
-         inputs:
-          provider: 'azurerm'
-          command: 'plan'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var="umbraco_cms_versions=$(umbracoTFversions)"'
+  - stage: loadTest
+    displayName: Run load tests
+    dependsOn:
+      - validateTestCases
+      - ensureMonitoringInfra
+      - provision
+    # Only run if provision completed; if provision failed we skip straight to cleanup.
+    condition: succeeded('provision')
+    variables:
+      # Stage-level fan-out: every job in this stage inherits these.
+      # Resolved values come from validateTestCases; testCaseOutputs from provision.apply.
+      testCaseOutputs:         $[ stageDependencies.provision.apply.outputs['outputVars.testCaseOutputs'] ]
+      seederResults:           $[ stageDependencies.provision.apply.outputs['outputVars.seederResults'] ]
+      resolvedTestCases:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedTestCases'] ]
+      resolvedDotnetVersion:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedDotnetVersion'] ]
+      resolvedSeederPreset:    $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSeederPreset'] ]
+      resolvedEngineInstances: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedEngineInstances'] ]
+      resolvedWorkload:        $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedWorkload'] ]
+      monitoringDceUri:           $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId:   $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringStreamName:       $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
+      monitoringSeriesStreamName: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringSeriesStreamName'] ]
+    jobs:
+      - job: runLoadTests
+        displayName: Run Load Tests
+        # Each case: warm-up (~5 min) + load test (up to 600s) + publish. Up to four
+        # cases per queue (one per selected tier); budget generously.
+        timeoutInMinutes: 720
+        steps:
+          # Tier expansion driven by the runStarter/runStandard/runPro checkboxes.
+          # Profile is independent and only sets load intensity (resolved via the
+          # runtime variables resolvedSeederPreset / resolvedEngineInstances etc.).
+          # Keep testCaseId format in sync with the runtime construction in
+          # prepare-test-cases.ps1.
+          - ${{ if eq(parameters.runStarter, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Starter__${{ parameters.scenario }}'
+                tier: 'Starter'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+          - ${{ if eq(parameters.runStandard, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Standard__${{ parameters.scenario }}'
+                tier: 'Standard'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+          - ${{ if eq(parameters.runPro, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Pro__${{ parameters.scenario }}'
+                tier: 'Pro'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+          - ${{ if eq(parameters.runEnterprise, true) }}:
+            - template: templates/load-test-job.yml
+              parameters:
+                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__${{ parameters.scenario }}'
+                tier: 'Enterprise'
+                scenario: '${{ parameters.scenario }}'
+                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                workload: '${{ parameters.workload }}'
+                jmxNames: ${{ parameters.backofficePlans }}
+                skipWarmup: ${{ parameters.skipWarmup }}
+                logAnalyticsDceUri: $(monitoringDceUri)
+                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                logAnalyticsStreamName: $(monitoringStreamName)
+                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
 
-    - job: apply
-      displayName: Terraform Apply
-      dependsOn: 
-      - getFormattedVersions
-      - setup
-      variables:
-        umbracoTFversions: $[dependencies.getFormattedVersions.outputs['versionsOutput.umbracoTFversions']]
-      steps:
-      # TODO: DO we really need to install terraform again?
-      - task: TerraformInstaller@0
-        displayName: Install Terraform
-        inputs:
-          terraformVersion: 'latest'
-        # We need to initialize again, otherwise the pipeline will fail.
-      - task: PowerShell@2
-        displayName: Terraform Init
-        inputs:
-          targetType: 'inline'
-          script: 'terraform init -backend=false'
-          workingDirectory: '$(terraformWorkingDirectory)'
-      - task: AzureCLI@2
-        name: AzLoginInfo
-        displayName: Gets Azure Login Credentials 
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: bash
-         scriptLocation: inlineScript
-         inlineScript: |
-          echo "##vso[task.setvariable variable=ARM_CLIENT_ID]$servicePrincipalId" 
-          echo "##vso[task.setvariable variable=ARM_CLIENT_SECRET]$servicePrincipalKey"
-          echo "##vso[task.setvariable variable=ARM_TENANT_ID]$tenantId"
-         addSpnToEnvironment: true
-      - task: TerraformTaskV4@4
-        displayName: Terraform Apply
-        inputs:
-          provider: 'azurerm'
-          command: 'apply'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          environmentServiceNameAzureRM: '$(serviceConnection)'
-          commandOptions: '-parallelism=1 -var resource_name_prefix=${{ parameters.prefix }} -var resource_group_name=$(azurergname) -var client_id=$(ARM_CLIENT_ID) -var client_secret=$(ARM_CLIENT_SECRET) -var tenant_id=$(ARM_TENANT_ID) -var app_service_plan_sku=${{ parameters.appServicePlanSku }} -var="umbraco_cms_versions=$(umbracoTFversions)"'
-      - task: TerraformTaskV4@4
-        displayName: Terraform Output
-        inputs:
-          provider: 'azurerm'
-          command: 'output'
-          workingDirectory: '$(terraformWorkingDirectory)'
-          environmentServiceNameAzureRM: '$(serviceConnection)'
-      - task: PowerShell@2
-        name: outputVars
-        displayName: Sets the output as variables
-        inputs:
-          targetType: 'inline'
-          script: |
-            Write-Host "##vso[task.setvariable variable=firstHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[0]')"
-            Write-Host "##vso[task.setvariable variable=secondHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[1]')"
-            Write-Host "##vso[task.setvariable variable=thirdHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[2]')"
-            Write-Host "##vso[task.setvariable variable=fourthHostName;isOutput=true]$(terraform output -json hostnames | jq -r '.[3]')"
+          # Stop all apps so none run idle during the manual validation window.
+          # always() (not succeededOrFailed) so a cancelled run also stops the
+          # apps — otherwise they bill idle until the cleanup stage deletes the RG.
+          - task: AzureCLI@2
+            displayName: 'Stop all App Services'
+            condition: always()
+            env:
+              TEST_CASE_OUTPUTS: $(testCaseOutputs)
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'scriptPath'
+              scriptPath: '$(System.DefaultWorkingDirectory)/scripts/stop-all-app-services.ps1'
+              arguments: >
+                -ResourceGroupName "$(azureResourceGroup)"
 
-            Write-Host "##vso[task.setvariable variable=firstUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[0]')"
-            Write-Host "##vso[task.setvariable variable=secondUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[1]')"
-            Write-Host "##vso[task.setvariable variable=thirdUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[2]')"
-            Write-Host "##vso[task.setvariable variable=fourthUmbracoVersion;isOutput=true]$(terraform output -json cms_versions | jq -r '.[3]')"
+  # Compare the just-published run against the baseline-median in history
+  # storage. Fails the pipeline only when a cell exceeds a threshold AND has
+  # >= 3 prior runs to compare against — early in a scenario's life, every
+  # cell reports "insufficient baseline" and the script exits 0. Once
+  # baselines accrue per (version, tier, sampler), this becomes a real gate.
+  - stage: regression
+    displayName: Regression check
+    dependsOn:
+      - ensureMonitoringInfra
+      - loadTest
+    condition: succeeded('loadTest')
+    variables:
+      monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
+      monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]
+      monitoringStreamName:     $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
+    jobs:
+      - job: regressionCheck
+        displayName: Regression check
+        steps:
+          - task: AzureCLI@2
+            displayName: Compare run against baseline
+            inputs:
+              azureSubscription: '$(serviceConnection)'
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
+                $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
 
-            Write-Host "##vso[task.setvariable variable=firstAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[0]')"
-            Write-Host "##vso[task.setvariable variable=secondAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[1]')"
-            Write-Host "##vso[task.setvariable variable=thirdAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[2]')"
-            Write-Host "##vso[task.setvariable variable=fourthAppServiceName;isOutput=true]$(terraform output -json app_service_name | jq -r '.[3]')"
-          workingDirectory: '$(terraformWorkingDirectory)'
+                # Defaults off because the scenario_name discriminator fix reset
+                # baseline keys, so windows still mix pre-fix runs. Tick the box
+                # once each cell has >=3 clean post-fix runs.
+                $splat = @{
+                    Scenario                   = '${{ parameters.scenario }}'
+                    Major                      = $major
+                    # Pin the candidate to THIS run; unpinned it grades whatever
+                    # row is newest, which differs if this publish failed.
+                    RunId                      = '$(Build.BuildId)'
+                    HistoryResourceGroup       = '$(historyResourceGroup)'
+                    StorageAccountName         = '$(historyStorageAccount)'
+                    ContainerName              = '$(historyContainer)'
+                    OutputPath                 = "$(System.DefaultWorkingDirectory)/regression-report.md"
+                    LogAnalyticsDceUri         = '$(monitoringDceUri)'
+                    LogAnalyticsDcrImmutableId = '$(monitoringDcrImmutableId)'
+                    LogAnalyticsStreamName     = '$(monitoringStreamName)'
+                }
+                $failOnRegression = [System.Convert]::ToBoolean('${{ parameters.failOnRegression }}')
+                if (-not $failOnRegression) { $splat.NoFailOnRegression = $true }
+                # Plain variable, not a $(...) subexpression: AzDO rewrites $()
+                # macros in this YAML before PowerShell sees it.
+                $gateMode = if ($failOnRegression) { 'ENFORCING (fails the pipeline)' } else { 'report-only' }
+                Write-Host "Regression gate mode: $gateMode"
 
+                & "$(System.DefaultWorkingDirectory)/scripts/check-regression.ps1" @splat
+          - task: PublishBuildArtifacts@1
+            displayName: Publish regression report
+            condition: succeededOrFailed()
+            continueOnError: true
+            inputs:
+              PathtoPublish: '$(System.DefaultWorkingDirectory)/regression-report.md'
+              ArtifactName: 'regression-report'
+              publishLocation: 'Container'
 
-    - job: runLoadTest
-      displayName: Runs the load test
-      dependsOn: apply
-      variables: 
-        firstHostName: $[dependencies.apply.outputs['outputVars.firstHostName']]
-        secondHostName: $[dependencies.apply.outputs['outputVars.secondHostName']]
-        thirdHostName: $[dependencies.apply.outputs['outputVars.thirdHostName']]
-        fourthHostName: $[dependencies.apply.outputs['outputVars.fourthHostName']]
-
-        firstUmbracoVersion: $[dependencies.apply.outputs['outputVars.firstUmbracoVersion']]
-        secondUmbracoVersion: $[dependencies.apply.outputs['outputVars.secondUmbracoVersion']]
-        thirdUmbracoVersion: $[dependencies.apply.outputs['outputVars.thirdUmbracoVersion']]
-        fourthUmbracoVersion: $[dependencies.apply.outputs['outputVars.fourthUmbracoVersion']]
-        
-        firstAppServiceName: $[dependencies.apply.outputs['outputVars.firstAppServiceName']]
-        secondAppServiceName: $[dependencies.apply.outputs['outputVars.secondAppServiceName']]
-        thirdAppServiceName: $[dependencies.apply.outputs['outputVars.thirdAppServiceName']]
-        fourthAppServiceName: $[dependencies.apply.outputs['outputVars.fourthAppServiceName']]
-      steps: 
-      # The load test are set up so we will be able to load test up to 4 different hostnames. A load test is only gonna run if the hostName variable is not null
-      - task: AzureCLI@2
-        name: startAppServiceOne
-        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
-        displayName: Starts the first hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: az webapp start -n $(firstAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['firstHostName'], 'null'), ne(variables['firstUmbracoVersion'], 'null'))
-        displayName: LoadTest 1
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(firstUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(firstHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]
-      - task: AzureCLI@2
-        name: startAppServiceTwo
-        condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
-        displayName: Starts the second hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: |
-          az webapp stop -n $(firstAppServiceName) -g $(azurergname)
-          az webapp start -n $(secondAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['secondHostName'], 'null'), ne(variables['secondUmbracoVersion'], 'null'))
-        displayName: LoadTest 2
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(secondUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(secondHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]  
-      - task: AzureCLI@2
-        name: startAppServiceThree
-        condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
-        displayName: Starts the third hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: |
-          az webapp stop -n $(secondAppServiceName) -g $(azurergname)
-          az webapp start -n $(thirdAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['thirdHostName'], 'null'), ne(variables['thirdUmbracoVersion'], 'null'))
-        displayName: LoadTest 3
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(thirdUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(thirdHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]    
-      - task: AzureCLI@2
-        name: startAppServiceFour
-        condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
-        displayName: Starts the fourth hostname
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: |
-          az webapp stop -n $(thirdAppServiceName) -g $(azurergname)
-          az webapp start -n $(fourthAppServiceName) -g $(azurergname)
-      - task: PowerShell@2
-        condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
-        displayName: Sleeps for 3 minutes
-        inputs:
-          targetType: 'inline'
-          script: Start-Sleep -Seconds 180
-      - task: AzureLoadTest@1
-        condition: or(ne(variables['fourthHostName'], 'null'), ne(variables['fourthUmbracoVersion'], 'null'))
-        displayName: LoadTest 4
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          loadTestConfigFile: '$(loadTestFileLocation)'
-          resourceGroup: '$(azurergname)'
-          loadTestResource: $(loadTestResourceName)
-          loadTestRunName: '$(fourthUmbracoVersion)'
-          loadTestRunDescription: 'We are load testing different versions of Umbraco'
-          env: |
-            [
-              {
-              "name": "hostName",
-              "value": "$(fourthHostName)"
-              },
-              {
-              "name": "users",
-              "value": "${{ parameters.userAmount }}"
-              }
-            ]
-
-
-    - job: doesResourceGroupExists
-      dependsOn: runLoadTest
-      condition: succeededOrFailed()
-      displayName: Checks if the resource group exists
-      steps:
-       - task: AzureCLI@2
-         name: checkResourceGroup
-         displayName: Checks if the resource group exists
-         inputs:
-           azureSubscription: '$(serviceConnection)'
-           scriptType: 'pscore'
-           scriptLocation: 'inlineScript'
-           inlineScript: 'Write-Host "##vso[task.setvariable variable=doesExist;isOutput=true]$(az group exists -n $(azurergname))"'
-    - job: manualValidationResourceGroup
-      dependsOn: doesResourceGroupExists
-      condition: eq(dependencies.doesResourceGroupExists.outputs['checkResourceGroup.doesExist'], true)
-      displayName: Manual validation for deleting the resource group
-      pool: server
-      timeoutInMinutes: 1440
-      steps:
-       - task: ManualValidation@0
-         displayName: Wait for external validation
-         timeoutInMinutes: 1440
-         inputs:
-           # notifyUsers: aze@umbraco.dk
-           instructions: 'Please press "Resume" if you want to keep the resource group $(azurergname). If you press "Reject" or do not pick an option after 24 hours, The resource group $(azurergname), and all the content inside of the resource group will be deleted'
-
-
-    - job: deleteResourceGroup
-      displayName: Deletes the resource group
-      dependsOn: manualValidationResourceGroup
-      condition: eq(dependencies.manualValidationResourceGroup.result, 'failed')
-      steps:
-      - task: AzureCLI@2
-        name: checkResourceGroupAgain
-        displayName: Checks if the resource group exists before deleting it
-        inputs:
-         azureSubscription: '$(serviceConnection)'
-         scriptType: 'pscore'
-         scriptLocation: 'inlineScript'
-         inlineScript: 'Write-Host "##vso[task.setvariable variable=doesResourceGroupExist;isOutput=true]$(az group exists -n $(azurergname))"'
-      - task: AzureCLI@2
-        displayName: Deletes the resource group
-        retryCountOnTaskFailure: 5
-        inputs:
-          azureSubscription: '$(serviceConnection)'
-          scriptType: 'pscore'
-          scriptLocation: 'inlineScript'
-          inlineScript: 'az group delete -n $(azurergname) --yes'
+  - template: templates/stages/cleanup.yml
+    parameters:
+      validationTimeoutMinutes: ${{ parameters.validationTimeoutMinutes }}
+      dependsOn: [provision, loadTest, regression]

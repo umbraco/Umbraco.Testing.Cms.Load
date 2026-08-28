@@ -1,11 +1,4 @@
-output "hostnames" {
-  value = module.umbraco.hostnames
-}
-
-output "cms_versions" {
-  value = module.umbraco.cms_versions
-}
-
-output "app_service_name" {
-  value = module.umbraco.app_service_name
+output "test_case_outputs" {
+  description = "Per-case Terraform outputs, keyed by testCaseId"
+  value       = module.umbraco.test_case_outputs
 }

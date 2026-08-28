@@ -1,41 +1,73 @@
 variable "resource_group_location" {
-  type = string
+  type        = string
+  description = "Azure region for resource deployment"
 }
 
 variable "resource_group_name" {
-  type = string
+  type        = string
+  description = "Name of the Azure resource group"
 }
 
 variable "resource_name_prefix" {
-  description = "This name will prefix all the created resources"
-  validation {
-    condition     = can(regex("^[0-9a-z]([-0-9a-z]{0,100}[0-9a-z])?$", var.resource_name_prefix))
-    error_message = "The prefix can contain only lowercase letters, numbers, and '-', but can't start or end with '-' or have more than 100 characters."
-  }
+  type        = string
+  description = "Prefix for all created resources. Validated at the root module (max 16 chars)."
 }
 
-variable "umbraco_cms_versions" {
+variable "tier_specs" {
   type = map(object({
-    dotnet_version  = string
-    umbraco_version = string
+    app_sku = string
+    dtu_max = number
   }))
+  description = "Decoded tier catalog (loadtests/tiers.json), keyed by tier name."
 }
 
-variable "client_id" {
-  type = string
-  sensitive = true
+variable "test_cases" {
+  type = map(object({
+    dotnet_version       = string
+    umbraco_version      = string
+    tier                 = string
+    scenario             = string
+    app_settings_overlay = map(string)
+  }))
+  description = "Map of test cases keyed by '{umbraco}__{tier}__{scenario}'."
 }
 
-variable "client_secret" {
-  type = string
-  sensitive = true
+variable "seeder_preset" {
+  type        = string
+  description = "Data seeder preset (Small, Medium, Large, Massive)"
+  default     = "Medium"
 }
 
-variable "tenant_id" {
-  type = string
-  sensitive = true
+variable "pool_dtu_override" {
+  type        = number
+  description = "Override per-DB DTU cap for every case (0 = use each tier's default from tier_specs)."
+  default     = 0
 }
 
-variable "app_service_plan_sku" {
-  type = string
+variable "app_sku_override" {
+  type        = string
+  description = "Override App Service Plan SKU for every case ('' = use each tier's default from tier_specs)."
+  default     = ""
+}
+
+variable "build_id" {
+  type        = string
+  description = "Pipeline build ID, surfaced as a resource tag"
+  default     = "local"
+}
+
+# Cost guard. See root variables.tf for rationale.
+variable "budget_alert_amount" {
+  type    = number
+  default = 50
+}
+
+variable "budget_alert_threshold_pct" {
+  type    = number
+  default = 80
+}
+
+variable "budget_alert_emails" {
+  type    = list(string)
+  default = []
 }

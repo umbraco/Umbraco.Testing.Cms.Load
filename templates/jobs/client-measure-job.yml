@@ -1,0 +1,198 @@
+# Per-tier client-measurement job: read terraform outputs -> start App Service ->
+# warm up (server warm, so we measure client-cold) -> run Playwright -> publish.
+parameters:
+  - name: testCaseId
+    type: string
+  - name: tier
+    type: string
+  - name: scenario
+    type: string
+  - name: umbracoVersion
+    type: string
+  - name: skipWarmup
+    type: boolean
+    default: false
+  - name: logAnalyticsDceUri
+    type: string
+    default: ''
+  - name: logAnalyticsDcrImmutableId
+    type: string
+    default: ''
+  - name: logAnalyticsClientStreamName
+    type: string
+    default: ''
+
+steps:
+  - task: PowerShell@2
+    displayName: 'Read terraform outputs [${{ parameters.testCaseId }}]'
+    env:
+      RESOLVED_TEST_CASES: $(resolvedTestCases)
+      TEST_CASE_OUTPUTS: $(testCaseOutputs)
+      SEEDER_RESULTS: $(seederResults)
+    inputs:
+      targetType: 'inline'
+      script: |
+        $resolved = $env:RESOLVED_TEST_CASES | ConvertFrom-Json
+        $outputs  = $env:TEST_CASE_OUTPUTS   | ConvertFrom-Json
+        $testCaseId = '${{ parameters.testCaseId }}'
+        $tfOut  = $outputs.$testCaseId
+        if (-not $tfOut) { Write-Host "##vso[task.logissue type=error]No terraform output for $testCaseId"; exit 1 }
+        Write-Host "##vso[task.setvariable variable=hostName]$($tfOut.hostname)"
+        Write-Host "##vso[task.setvariable variable=appServiceName]$($tfOut.app_service_name)"
+        Write-Host "##vso[task.setvariable variable=appServiceSku]$($tfOut.app_service_sku)"
+        Write-Host "##vso[task.setvariable variable=poolDtuMax]$($tfOut.pool_dtu_max)"
+        # Sanitized artifact key so each tier publishes a distinct artifact
+        # instead of every tier colliding on a bare 'client-results-'.
+        $safeKey = (($testCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
+        if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
+        Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
+        # Plain Write-Host (NOT ##vso setvariable, which the agent consumes and
+        # does not echo) so the backoffice URL is visible in this step log.
+        Write-Host ""
+        Write-Host "==================================================================="
+        Write-Host "  Backoffice URL: https://$($tfOut.hostname)/umbraco"
+        Write-Host "  App Service:    $($tfOut.app_service_name)  (RG $(azureResourceGroup))"
+        Write-Host "  Login:          loadtest@example.invalid / LoadTest123!"
+        Write-Host "  NOTE: the app is stopped after measurements — start it to inspect:"
+        Write-Host "    az webapp start -n $($tfOut.app_service_name) -g $(azureResourceGroup)"
+        Write-Host "==================================================================="
+
+  - task: AzureCLI@2
+    displayName: 'Start App Service [${{ parameters.testCaseId }}]'
+    inputs:
+      azureSubscription: '$(serviceConnection)'
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: az webapp start -n $(appServiceName) -g $(azureResourceGroup)
+
+  - ${{ if not(parameters.skipWarmup) }}:
+    - task: PowerShell@2
+      displayName: 'Warm up server [${{ parameters.testCaseId }}]'
+      inputs:
+        targetType: 'inline'
+        script: |
+          # Probe /umbraco (the backoffice login page reliably returns 200), not
+          # the site root — root routing is hostname-dependent and may not 200,
+          # which would waste the full deadline. This also warms the exact surface
+          # the measurements hit (backoffice), keeping the run client-cold/server-warm.
+          $base = "https://$(hostName)/umbraco"
+          $deadline = (Get-Date).AddMinutes(5)
+          do {
+            try { if ((Invoke-WebRequest -Uri $base -UseBasicParsing -TimeoutSec 15).StatusCode -eq 200) { Write-Host "warm"; break } } catch { }
+            Start-Sleep -Seconds 5
+          } while ((Get-Date) -lt $deadline)
+
+  - task: NodeTool@0
+    displayName: 'Install Node.js'
+    inputs:
+      versionSpec: '20.x'
+
+  - task: PowerShell@2
+    displayName: 'Run Playwright client measurement [${{ parameters.testCaseId }}]'
+    continueOnError: true
+    env:
+      UMBRACO_BASE_URL: 'https://$(hostName)'
+      UMBRACO_USER: 'loadtest@example.invalid'
+      UMBRACO_PASSWORD: 'LoadTest123!'
+      CLIENT_RUN_ID: '$(Build.BuildId)'
+      CLIENT_UMBRACO_VERSION: '${{ parameters.umbracoVersion }}'
+      CLIENT_TIER: '${{ parameters.tier }}'
+      CLIENT_SCENARIO: '${{ parameters.scenario }}'
+      # Per-tier results dir (keyed by safeTestCaseId, same key the artifacts use).
+      # All tiers run as sequential steps in ONE job sharing this filesystem, and
+      # emitMetric APPENDS — a shared dir would let tier N read tier N-1's NDJSON
+      # and republish it under tier N's metadata. Per-tier dirs keep them isolated.
+      CLIENT_RESULTS_DIR: '$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)'
+    inputs:
+      targetType: 'inline'
+      workingDirectory: '$(System.DefaultWorkingDirectory)/loadtests/scenarios/${{ parameters.scenario }}/client'
+      script: |
+        npm ci
+        npx playwright install --with-deps chromium
+        npx playwright test
+
+  # Print the per-metric averages into the run log (from the Playwright NDJSON)
+  # so the numbers are readable without downloading the artifact or querying LA.
+  # succeededOrFailed so it still prints when some specs failed.
+  - task: PowerShell@2
+    displayName: 'Summarize client metrics [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    inputs:
+      targetType: 'inline'
+      script: |
+        $dir = "$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)"
+        if (-not (Test-Path $dir)) { Write-Host "No client-results dir - Playwright produced no metrics."; exit 0 }
+        $loads = [System.Collections.Generic.List[object]]::new(); $ttfe = $null
+        foreach ($f in Get-ChildItem -Path $dir -Filter *.ndjson) {
+          foreach ($line in Get-Content $f.FullName) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            $m = $line | ConvertFrom-Json
+            if ($m.metric -eq 'time_to_first_edit') { $ttfe = $m; continue }
+            $loads.Add([pscustomobject][ordered]@{
+              Metric    = $m.metric
+              Reps      = $m.count
+              Median_ms = [math]::Round([double]$m.median, 1)
+              P75_ms    = [math]::Round([double]$m.p75, 1)
+              P95_ms    = [math]::Round([double]$m.p95, 1)
+              StdDev_ms = [math]::Round([double]$m.stddev, 1)
+            })
+          }
+        }
+        # Display order groups cold/cached per page for easy comparison.
+        $order = @{ 'cold_dashboard_load' = 1; 'cached_dashboard_load' = 2; 'cold_homenode_load' = 3; 'cached_homenode_load' = 4 }
+        Write-Host ""
+        Write-Host "================ Client metrics (avg) [${{ parameters.testCaseId }}] ================"
+        if ($loads.Count -gt 0) { $loads | Sort-Object { if ($order.ContainsKey($_.Metric)) { $order[$_.Metric] } else { 99 } } | Format-Table -AutoSize | Out-String -Width 200 | Write-Host }
+        else { Write-Host "(no cold/cached load metrics found)" }
+        if ($null -ne $ttfe) {
+          Write-Host ("Time to first edit (ms):  total={0}  login={1}  navigate={2}  editor_ready={3}  keystroke={4}" -f [math]::Round([double]$ttfe.median,1), [math]::Round([double]$ttfe.seg_login_median,1), [math]::Round([double]$ttfe.seg_navigate_median,1), [math]::Round([double]$ttfe.seg_editor_ready_median,1), [math]::Round([double]$ttfe.seg_keystroke_median,1))
+        } else { Write-Host "(no time_to_first_edit metric found)" }
+        Write-Host "=================================================================================="
+
+  - task: AzureCLI@2
+    displayName: 'Publish client results [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    continueOnError: true
+    inputs:
+      azureSubscription: '$(serviceConnection)'
+      scriptType: 'pscore'
+      scriptLocation: 'scriptPath'
+      scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-client-results.ps1'
+      arguments: >
+        -ResultsDir "$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)"
+        -HistoryResourceGroup "$(historyResourceGroup)"
+        -StorageAccountName "$(historyStorageAccount)"
+        -ContainerName "$(historyContainer)"
+        -BuildId "$(Build.BuildId)"
+        -Commit "$(Build.SourceVersion)"
+        -Branch "$(Build.SourceBranchName)"
+        -RunStartedAt "$(System.PipelineStartTime)"
+        -UmbracoVersion "${{ parameters.umbracoVersion }}"
+        -AppServiceSku "$(appServiceSku)"
+        -PoolDtuMax $(poolDtuMax)
+        -SeederPreset "$(resolvedSeederPreset)"
+        -Tier "${{ parameters.tier }}"
+        -Scenario "${{ parameters.scenario }}"
+        -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
+        -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
+        -LogAnalyticsClientStreamName "${{ parameters.logAnalyticsClientStreamName }}"
+
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish client artifacts [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    continueOnError: true
+    inputs:
+      PathtoPublish: '$(System.DefaultWorkingDirectory)/client-results/$(safeTestCaseId)'
+      ArtifactName: 'client-results-$(safeTestCaseId)'
+      publishLocation: 'Container'
+
+  # Publish the Playwright HTML report (from playwright-report/, separate from the
+  # NDJSON in client-results/) so it's downloadable per tier alongside the metrics.
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Playwright report [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    continueOnError: true
+    inputs:
+      PathtoPublish: '$(System.DefaultWorkingDirectory)/loadtests/scenarios/${{ parameters.scenario }}/client/playwright-report'
+      ArtifactName: 'client-playwright-report-$(safeTestCaseId)'
+      publishLocation: 'Container'
