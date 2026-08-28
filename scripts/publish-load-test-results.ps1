@@ -150,7 +150,7 @@ if (-not [string]::IsNullOrWhiteSpace($JmeterTestName)) {
 # or App Service CPU pegging — these fields close that gap. When the metric
 # query fails (network, missing role, no data points yet due to ingestion lag),
 # warn and continue with client-side metrics only; don't fail the whole publish.
-function Get-MetricSummary {
+function Get-MetricSummaryOnce {
     param(
         [Parameter(Mandatory)] [string]$ResourceId,
         [Parameter(Mandatory)] [string[]]$Metrics,
@@ -169,14 +169,12 @@ function Get-MetricSummary {
         # $_.$aggProp rather than a hardcoded .average.
         [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
         [string]$Aggregation = 'Average',
-        # PT1M by default (SQL DTU/CPU and HTTP error counts publish at that
-        # resolution). Pass '' to omit --interval and let Azure Monitor pick the
-        # metric's native granularity instead - needed for metrics whose native
-        # resolution is coarser than 1 minute (e.g. serverfarms CpuPercentage/
-        # MemoryPercentage, confirmed live: requesting PT1M got 12 data-point
-        # slots back with errorCode=Success but every one's 'average' null,
-        # because none of the 1-minute buckets aligned with the metric's actual
-        # sampling interval).
+        # PT1M by default. Pass '' to omit --interval and let Azure Monitor pick
+        # the metric's native granularity. serverfarms CpuPercentage/
+        # MemoryPercentage resolve to PT1M anyway (verified live), so '' is a
+        # no-op there rather than the resolution fix it once looked like - the
+        # nulls that motivated it were propagation lag, not interval
+        # misalignment. See Get-MetricSummary's retry knobs below.
         [string]$Interval = 'PT1M'
     )
     $aggProp = $Aggregation.ToLowerInvariant()
@@ -253,6 +251,58 @@ function Get-MetricSummary {
         Write-Host "##vso[task.logissue type=warning]$msg"
     }
     return @{ Summary = $summary; Series = $series }
+}
+
+# Retry wrapper around Get-MetricSummaryOnce. serverfarms CpuPercentage/
+# MemoryPercentage publish behind the query: across 18 runs, 4 returned zero
+# points and most of the rest were short by 3-24 minutes, while sql_/app_ over
+# the identical window were complete. The shortfall lands at the end of the
+# window - the busiest part - so plan_*_max was being computed over a truncated
+# series. Replaying one zero-point run's query later returned 14 of 14 points,
+# confirming lag rather than absent data.
+# MaxRetries = 0 (default) keeps single-shot behaviour for callers not affected.
+function Get-MetricSummary {
+    param(
+        [Parameter(Mandatory)] [string]$ResourceId,
+        [Parameter(Mandatory)] [string[]]$Metrics,
+        [Parameter(Mandatory)] [string]$StartTime,
+        [Parameter(Mandatory)] [string]$EndTime,
+        [string]$Prefix = '',
+        [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
+        [string]$Aggregation = 'Average',
+        [string]$Interval = 'PT1M',
+        # Points expected per metric (window minutes, for a PT1M series). 0
+        # disables the completeness check and with it the retries.
+        [int]$MinExpectedPoints = 0,
+        [int]$MaxRetries = 0,
+        [int]$RetryDelaySeconds = 90
+    )
+
+    $once = @{
+        ResourceId = $ResourceId; Metrics = $Metrics; StartTime = $StartTime
+        EndTime = $EndTime; Prefix = $Prefix; Aggregation = $Aggregation; Interval = $Interval
+    }
+
+    for ($attempt = 0; ; $attempt++) {
+        $result = Get-MetricSummaryOnce @once
+        # Series carries one point per (metric x interval), so divide by metric
+        # count - a 2-metric query must not be judged against a 1-metric bar.
+        $perMetric = if ($Metrics.Count -gt 0) {
+            [int][math]::Floor($result.Series.Count / $Metrics.Count)
+        } else { 0 }
+
+        if ($perMetric -ge $MinExpectedPoints -or $attempt -ge $MaxRetries) {
+            if ($MinExpectedPoints -gt 0 -and $perMetric -lt $MinExpectedPoints) {
+                $msg = "Azure Monitor still short on $ResourceId after $($attempt + 1) attempt(s): $perMetric of $MinExpectedPoints expected point(s) per metric. avg/max cover a partial window."
+                Write-Warning $msg
+                Write-Host "##vso[task.logissue type=warning]$msg"
+            }
+            return $result
+        }
+
+        Write-Host "Azure Monitor returned $perMetric of $MinExpectedPoints expected point(s) per metric on $ResourceId - waiting $RetryDelaySeconds s for propagation (attempt $($attempt + 1) of $($MaxRetries + 1))."
+        Start-Sleep -Seconds $RetryDelaySeconds
+    }
 }
 
 # Parse the load-test window into a length in seconds. Returns 0 if either
@@ -405,15 +455,6 @@ Write-Host ""
 if ($windowSec -ge $minWindowSec) {
     Write-Host "Querying Azure Monitor for server-side metrics over [$LoadTestStartTime, $LoadTestEndTime] ($([int]$windowSec)s)..."
 
-    $planResult = Get-MetricSummary `
-        -ResourceId $AppServicePlanResourceId `
-        -Metrics @("CpuPercentage", "MemoryPercentage") `
-        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
-        -Prefix 'plan' `
-        -Interval ''
-    foreach ($k in $planResult.Summary.Keys) { $metadata["plan_$k"] = $planResult.Summary[$k] }
-    foreach ($p in $planResult.Series) { $seriesPoints.Add($p) }
-
     $sqlResult = Get-MetricSummary `
         -ResourceId $SqlDatabaseResourceId `
         -Metrics @("dtu_consumption_percent", "cpu_percent", "log_write_percent", "physical_data_read_percent") `
@@ -430,6 +471,21 @@ if ($windowSec -ge $minWindowSec) {
         -Aggregation Total
     foreach ($k in $appResult.Summary.Keys) { $metadata["app_$k"] = $appResult.Summary[$k] }
     foreach ($p in $appResult.Series) { $seriesPoints.Add($p) }
+
+    # Plan metrics last, and with retries: they publish minutes behind sql_/app_
+    # over the same window, so the queries above double as propagation time we
+    # then don't have to wait out. A PT1M series should carry one point per
+    # window minute; anything less is lag, not missing data.
+    $planResult = Get-MetricSummary `
+        -ResourceId $AppServicePlanResourceId `
+        -Metrics @("CpuPercentage", "MemoryPercentage") `
+        -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
+        -Prefix 'plan' `
+        -Interval '' `
+        -MinExpectedPoints ([int][math]::Floor($windowSec / 60)) `
+        -MaxRetries 2 -RetryDelaySeconds 90
+    foreach ($k in $planResult.Summary.Keys) { $metadata["plan_$k"] = $planResult.Summary[$k] }
+    foreach ($p in $planResult.Series) { $seriesPoints.Add($p) }
 }
 else {
     Write-Warning "Test window unusable ($([int]$windowSec)s; start='$LoadTestStartTime', end='$LoadTestEndTime') - skipping Azure Monitor metric query. Most likely cause: AzureLoadTest@1 fast-failed (e.g. engine provisioning, auth)."
