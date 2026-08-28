@@ -222,7 +222,14 @@ steps:
           foreach ($u in @($inventory.sampleMediaUrls))                                                         { if ($u) { $targets.Add($u) } }
           Write-Host "  priming $($targets.Count) URL(s) across all buckets"
 
-          foreach ($path in $targets) {
+          # Run concurrently - each URL is an independent route, so a sequential
+          # crawl through every section/category/page/detail/media URL just adds
+          # wall-clock time and widens the window where a slower item (media
+          # crops/resizing in particular) risks still being cold when the load
+          # test starts hitting it at random.
+          $targets | ForEach-Object -ThrottleLimit 8 -Parallel {
+              $path = $_
+              $base = $using:base
               $absolute = if ($path -match '^https?://') { $path } else { "$base$path" }
               try {
                   $r = Invoke-WebRequest -Uri $absolute -UseBasicParsing -DisableKeepAlive -TimeoutSec 30
