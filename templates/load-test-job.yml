@@ -555,6 +555,8 @@ steps:
           -DurationSeconds $(testDuration)
           -SkipWarmup "${{ parameters.skipWarmup }}"
           -TestCaseId "${{ parameters.testCaseId }}"
+          -RampTimeSeconds $(rampTime)
+          -LoadProfile "$(loadProfile)"
           -LoadTestStartTime "$(loadTestStartTime)"
           -LoadTestEndTime "$(loadTestEndTime)"
           -AppServiceResourceId "$(appServiceResourceId)"
@@ -711,6 +713,8 @@ steps:
             -DurationSeconds $(testDuration)
             -SkipWarmup "${{ parameters.skipWarmup }}"
             -TestCaseId "${{ parameters.testCaseId }}"
+            -RampTimeSeconds $(rampTime)
+            -LoadProfile "$(loadProfile)"
             -LoadTestStartTime "$(loadTestStartTime)"
             -LoadTestEndTime "$(loadTestEndTime)"
             -AppServiceResourceId "$(appServiceResourceId)"

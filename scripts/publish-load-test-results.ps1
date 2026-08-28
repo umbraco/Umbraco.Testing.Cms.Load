@@ -33,6 +33,15 @@ param(
     [Parameter(Mandatory = $true)] [string]$SkipWarmup,
     [Parameter(Mandatory = $true)] [string]$TestCaseId,
 
+    # Effective VU ramp-up window in seconds (prepare-test-cases.ps1's resolved
+    # rampTime - already defaults to UserCount when the queue-time value was 0).
+    # Excluded from percentile/error/throughput stats: during ramp-up, load is
+    # below target so those samples are systematically easier than steady-state.
+    # LoadProfile == 'ramp' disables the exclusion - that profile's whole point
+    # is the climb, there's no separate steady state to isolate it from.
+    [Parameter(Mandatory = $true)] [int]$RampTimeSeconds,
+    [Parameter(Mandatory = $true)] [string]$LoadProfile,
+
     # Server-side metric query window + resource IDs. Queried via Azure Monitor
     # and injected into row metadata alongside the client-side latencies.
     [Parameter(Mandatory = $true)] [string]$LoadTestStartTime,
@@ -436,11 +445,32 @@ foreach ($zip in $resultsZips) {
     }
 }
 
+# Ramp-up cutoff (epoch ms), passed to Parse-JmeterCsv so ramp-window samples
+# are excluded from every stat. Skipped for the 'ramp' profile (the climb is
+# the point) and left disabled (0) if the start time can't be parsed - same
+# tolerant posture as Get-WindowSeconds: a bad timestamp means "can't judge the
+# window", not "block publish".
+$rampCutoffMs = 0
+if ($LoadProfile -ne 'ramp') {
+    try {
+        $loadTestStart = [DateTime]::Parse($LoadTestStartTime, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+        $rampCutoffMs = [DateTimeOffset]::new($loadTestStart, [TimeSpan]::Zero).ToUnixTimeMilliseconds() + ([long]$RampTimeSeconds * 1000)
+    } catch {
+        Write-Verbose "Couldn't parse LoadTestStartTime for ramp-window exclusion ($($_.Exception.Message)) - including all samples."
+    }
+}
+
 $engineFiles = @(Get-ChildItem -Path $ResultsDir -Recurse -Filter "engine*_results.csv" -File -ErrorAction SilentlyContinue)
 if ($engineFiles.Count -gt 0) {
     Write-Host "Parsing $($engineFiles.Count) engine result file(s) (JMeter format):"
     $engineFiles | ForEach-Object { Write-Host "  - $($_.FullName)" }
     $metadata.parse_status = "ok"
+
+    if ($rampCutoffMs -gt 0) {
+        Write-Host "Excluding the first ${RampTimeSeconds}s (VU ramp-up) from latency/error/throughput stats."
+    } elseif ($LoadProfile -eq 'ramp') {
+        Write-Host "LoadProfile=ramp - not excluding any ramp-up window (the climb is what this profile measures)."
+    }
 
     # Parse each engine CSV via the shared parser (Parse-JmeterCsv in _helpers.ps1);
     # merge the per-label buckets across engines. Single-engine runs trivially
@@ -460,7 +490,7 @@ if ($engineFiles.Count -gt 0) {
         # One unreadable/corrupt engine file (e.g. truncated mid-write) must not
         # abort the whole publish - skip it and keep the other engines' data.
         try {
-            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC
+            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs
         } catch {
             Write-Warning "Couldn't parse $($file.FullName): $($_.Exception.Message) - skipping this file."
             continue

@@ -126,7 +126,14 @@ function Parse-JmeterCsv {
         # Inverts the TC/sampler filter (see comment below). Default off keeps
         # the historical Locust/HTTP-sampler-only behaviour; backoffice (JMeter)
         # callers pass this to keep TC rows and drop the per-request rows.
-        [switch]$OnlyTransactionControllers
+        [switch]$OnlyTransactionControllers,
+        # Epoch-ms cutoff excluding the VU ramp-up window from every stat (latency
+        # samples, error counts, and the min/max timestamp span throughput is
+        # derived from) - during ramp-up, load is below target so those samples
+        # are systematically easier than steady-state and would understate p95/p99
+        # if left in. 0 (default) disables the filter - the caller skips it
+        # entirely for the 'ramp' profile, where the climb itself is the point.
+        [long]$RampCutoffMs = 0
     )
 
     $byLabel = @{}
@@ -183,6 +190,19 @@ function Parse-JmeterCsv {
         while ($null -ne ($line = $reader.ReadLine())) {
             $cols = Split-CsvLine $line
             if ($cols.Count -lt $minCols) { continue }
+
+            # Checked first so a ramp-window row is excluded from every stat below,
+            # not just the ones computed after it. $tsOk (not "$ts -gt 0") gates
+            # this - epoch-ms timestamps are never legitimately 0 in practice, but
+            # using the parse-success flag rather than overloading 0 as a sentinel
+            # avoids a real off-by-one if a test/edge-case value ever is 0. A row
+            # with an unparseable timestamp can't be judged against the cutoff, so
+            # it's let through rather than dropped - same tolerant posture as the
+            # min/max tracking a few lines down.
+            $ts = [long]0
+            $tsOk = [long]::TryParse($cols[$idxTimestamp], [ref]$ts)
+            if ($RampCutoffMs -gt 0 -and $tsOk -and $ts -lt $RampCutoffMs) { continue }
+
             $elapsed = 0
             if (-not [int]::TryParse($cols[$idxElapsed], [ref]$elapsed)) { continue }
             $label   = $cols[$idxLabel]
@@ -205,8 +225,7 @@ function Parse-JmeterCsv {
             if (-not $success) { $bucket.Errors++ }
 
             # Post-filter, so the span matches the samples the metrics come from.
-            $ts = [long]0
-            if ([long]::TryParse($cols[$idxTimestamp], [ref]$ts)) {
+            if ($tsOk) {
                 if ($ts -lt $minTs) { $minTs = $ts }
                 if ($ts -gt $maxTs) { $maxTs = $ts }
             }

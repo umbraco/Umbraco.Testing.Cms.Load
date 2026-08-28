@@ -145,6 +145,36 @@ finally {
     Remove-Item -LiteralPath $tmpNoTs.FullName -Force -ErrorAction SilentlyContinue
 }
 
+Write-Host "Parse-JmeterCsv -RampCutoffMs (VU ramp-up exclusion)"
+# Silent-wrong-numbers risk: a sentinel collision between "timestamp legitimately
+# 0" and "timestamp failed to parse" would incorrectly let a should-be-excluded
+# row survive - caught once already by direct testing, worth a durable check.
+$csvRamp = @(
+    'timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage'
+    '0,100,Homepage,200,OK,t1,text,true,'
+    '1000,100,Homepage,200,OK,t1,text,true,'
+    '4000,100,Homepage,200,OK,t1,text,true,'
+    '5000,100,Homepage,200,OK,t1,text,true,'
+    '9000,100,Homepage,200,OK,t1,text,true,'
+) -join "`n"
+$tmpRamp = New-TemporaryFile
+try {
+    Set-Content -LiteralPath $tmpRamp.FullName -Value $csvRamp -Encoding utf8
+    $rNoCutoff = Parse-JmeterCsv -Path $tmpRamp.FullName -RampCutoffMs 0
+    Assert-Equal 5 $rNoCutoff.ByLabel['Homepage'].Samples.Count "cutoff disabled (0) -> every row kept"
+    Assert-Equal 0 $rNoCutoff.MinTimestamp                      "cutoff disabled -> MinTimestamp includes a legitimate 0"
+
+    $rCutoff = Parse-JmeterCsv -Path $tmpRamp.FullName -RampCutoffMs 5000
+    Assert-Equal 2 $rCutoff.ByLabel['Homepage'].Samples.Count   "cutoff=5000 -> only t>=5000 rows kept (not t=0 via sentinel collision)"
+    Assert-Equal 5000 $rCutoff.MinTimestamp                     "cutoff=5000 -> MinTimestamp reflects the surviving rows"
+
+    $rAllExcluded = Parse-JmeterCsv -Path $tmpRamp.FullName -RampCutoffMs 99999
+    Assert-Equal $false $rAllExcluded.ByLabel.ContainsKey('Homepage') "cutoff beyond all data -> bucket absent, not a stray t=0 row"
+}
+finally {
+    Remove-Item -LiteralPath $tmpRamp.FullName -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host ""
 if ($script:failures -gt 0) {
     Write-Host "$($script:failures) of $($script:checks) checks FAILED." -ForegroundColor Red
