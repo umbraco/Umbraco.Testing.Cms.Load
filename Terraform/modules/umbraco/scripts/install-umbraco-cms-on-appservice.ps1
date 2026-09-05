@@ -48,10 +48,7 @@ if (-not $env:ARM_CLIENT_SECRET -and -not $env:ARM_OIDC_TOKEN) {
 $seederPackageVersions = @{
     13 = "13.0.0-beta.1"
     17 = "17.0.0-beta.2"
-    # No dedicated v18 build yet; v17 seeder works on v18 (the seeder's surface
-    # area is stable across the v17→v18 jump). Bump to a v18 build if/when one
-    # ships and the v17 fallback drifts.
-    18 = "17.0.0-beta.2"
+    18 = "18.0.0-beta.1"
     # v14/v15/v16: no published seeder yet. resolve-run-config.ps1 fails the
     # run at validation with a clear message; add entries here in lockstep when
     # those builds ship.
