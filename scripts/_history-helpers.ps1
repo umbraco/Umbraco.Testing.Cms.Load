@@ -65,7 +65,20 @@ function Get-HistoryCells {
         [Parameter(Mandatory = $true)] [string]$StorageAccountName,
         [Parameter(Mandatory = $true)] [string]$ContainerName,
         [string]$Major,
-        [string]$Sampler
+        [string]$Sampler,
+
+        # When both are set, every row whose run_id matches -RunId is recorded into
+        # AttemptedVersionTiers.Value as "version__tier" -> $true, BEFORE any of the
+        # ok/cold_start/scenario_name filters below run. A tier that fails completely
+        # (e.g. its .jmx never produced engine_results.csv) still gets a metadata-only
+        # placeholder row published to history — no scenario_name, parse_status
+        # "no_metrics" — which the filters below correctly exclude from $cells but
+        # which still proves the run attempted that tier. Without this, a caller has
+        # no way to tell "this run attempted this tier and it totally failed" apart
+        # from "this run never touched this tier" — $cells alone can't make that
+        # distinction, since a fully-failed tier has zero ok rows either way.
+        [string]$RunId,
+        [ref]$AttemptedVersionTiers
     )
 
     $prefix = Get-HistoryPrefix -Scenario $Scenario -Major $Major
@@ -103,6 +116,9 @@ function Get-HistoryCells {
         foreach ($line in $lines) {
             if ([string]::IsNullOrWhiteSpace($line)) { continue }
             try { $row = $line | ConvertFrom-Json } catch { continue }
+            if ($AttemptedVersionTiers -and $RunId -and [string]$row.run_id -eq $RunId -and $row.umbraco_version -and $row.infra_tier) {
+                $AttemptedVersionTiers.Value["$($row.umbraco_version)__$($row.infra_tier)"] = $true
+            }
             if (-not $row.scenario_name) { continue }
             # Match the Workbook's filters so every Get-HistoryCells consumer
             # (regression gate, compare-runs, show-trends) works over the same

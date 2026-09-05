@@ -78,13 +78,16 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 # --- Load history ---
 
+$attemptedVersionTiers = @{}
 $cells = Get-HistoryCells `
     -Scenario $Scenario `
     -HistoryResourceGroup $HistoryResourceGroup `
     -StorageAccountName $StorageAccountName `
     -ContainerName $ContainerName `
     -Major $Major `
-    -Sampler $Sampler
+    -Sampler $Sampler `
+    -RunId $RunId `
+    -AttemptedVersionTiers ([ref]$attemptedVersionTiers)
 
 if ($cells.Count -eq 0) {
     Write-Warning "No metric rows matched the filter - nothing to check."
@@ -256,13 +259,16 @@ foreach ($cellKey in $cells.Keys) {
 # Scoping only the denominator (as $cellsPerPlan did) left an inflated numerator
 # that pushed real partial-publish failures over the whole-plan threshold and
 # reported them as expected.
-$runVersionTiers = @{}
-foreach ($cellKey in $candidateByCell.Keys) {
-    $p = $cellKey -split '__', 3
-    $runVersionTiers["$($p[0])__$($p[1])"] = $true
-}
-if ($runVersionTiers.Count -gt 0) {
-    $missing = @($missing | Where-Object { $runVersionTiers.ContainsKey("$($_.Version)__$($_.Tier)") })
+#
+# Built from $attemptedVersionTiers (every row matching -RunId, any parse_status),
+# NOT from $candidateByCell (ok rows only): a tier that fails completely (zero ok
+# rows) still has to show up here, or it gets silently dropped out of $missing
+# instead of reported - exactly the silent-publish-failure case this script
+# exists to catch. $attemptedVersionTiers still catches that case because
+# publish-load-test-results.ps1 always writes a metadata-only placeholder row to
+# history even when a tier totally fails to produce metrics.
+if ($attemptedVersionTiers.Count -gt 0) {
+    $missing = @($missing | Where-Object { $attemptedVersionTiers.ContainsKey("$($_.Version)__$($_.Tier)") })
 }
 
 # --- Render markdown report ---
@@ -328,7 +334,7 @@ if ($missing.Count -gt 0) {
     $scopedCellCount = 0
     foreach ($k in $cells.Keys) {
         $parts = $k -split '__', 3
-        if ($runVersionTiers.Count -gt 0 -and -not $runVersionTiers.ContainsKey("$($parts[0])__$($parts[1])")) { continue }
+        if ($attemptedVersionTiers.Count -gt 0 -and -not $attemptedVersionTiers.ContainsKey("$($parts[0])__$($parts[1])")) { continue }
         $cellsPerPlan[(Get-PlanName $parts[2])] = 1 + [int]$cellsPerPlan[(Get-PlanName $parts[2])]
         $scopedCellCount++
     }
