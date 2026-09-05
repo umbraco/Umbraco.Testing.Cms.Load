@@ -371,15 +371,20 @@ function Send-SeriesToLogAnalytics {
     }
 }
 
-# Bail out if there's no results dir at all. Still emit a metadata-only row to
-# Log Analytics so the run is visible in the Workbook (rather than vanishing
-# entirely and leaving downstream regression-check comparing against stale
-# baselines without anyone noticing).
-if (-not (Test-Path $ResultsDir)) {
-    Write-Warning "Results dir '$ResultsDir' not found - emitting metadata-only Log Analytics row and exiting."
-    $metadata.parse_status = "no_results_dir"
-    Send-RowsToLogAnalytics -Rows @([pscustomobject]$metadata)
-    exit 0
+# A missing results dir (e.g. AzureLoadTest@1 fast-failed before producing any
+# artifacts) still needs a placeholder row published - Get-ChildItem below
+# already tolerates a missing path via -ErrorAction SilentlyContinue and falls
+# through to the "no engine_results.csv found" branch, which sets parse_status
+# accordingly (see $resultsDirExists there). This used to exit right after
+# posting a Log Analytics-only row, which made the failure invisible to every
+# blob-storage-only consumer (Get-HistoryCells, compare-runs.ps1,
+# show-trends.ps1) - the same failure this script already handles fine when a
+# results dir exists but yields no engine_results.csv (parse_status
+# "no_metrics", which DOES reach blob storage below). Tracked here so the raw-
+# artifact upload near the end (which needs a real path) can be skipped.
+$resultsDirExists = Test-Path $ResultsDir
+if (-not $resultsDirExists) {
+    Write-Warning "Results dir '$ResultsDir' not found - will emit a metadata-only placeholder row to Log Analytics AND blob history (parse_status 'no_results_dir'), instead of vanishing from history entirely."
 }
 
 # ALT emits engine{N}_results.csv (JMeter format) — raw per-request data, one
@@ -612,8 +617,12 @@ if ($engineFiles.Count -gt 0) {
     Write-Host "Parsed $($rows.Count) sampler row(s) from $($engineFiles.Count) engine file(s)."
 }
 else {
-    Write-Warning "No engine_results.csv found under '$ResultsDir' - emitting metadata-only record."
-    $metadata.parse_status = "no_metrics"
+    if ($resultsDirExists) {
+        Write-Warning "No engine_results.csv found under '$ResultsDir' - emitting metadata-only record."
+        $metadata.parse_status = "no_metrics"
+    } else {
+        $metadata.parse_status = "no_results_dir"
+    }
 }
 
 # Always emit at least the metadata so the run is searchable. Downstream queries
@@ -659,30 +668,37 @@ az storage blob upload `
     --name "$blobPrefix/summary.ndjson" `
     --overwrite | Out-Null
 
-# Trim redundant artifacts before the raw upload (the history container has no
-# expiry beyond the lifecycle tier, so anything uploaded here is kept forever):
-#  - *-extracted working dirs: unpacked only to scan engine_results.csv; their
-#    contents already live inside results.zip, so keeping them doubles every CSV.
-#  - report.zip: ALT's generated HTML report. Nothing in this repo consumes it
-#    (the parser reads results.zip) and the same report is in the Azure portal
-#    run view, so archiving it here is pure bloat.
-# results.zip is deliberately kept — it carries the raw per-request data that
-# re-analysis may need beyond what summary.ndjson surfaces.
-Get-ChildItem -Path $ResultsDir -Recurse -Directory -Filter '*-extracted' -ErrorAction SilentlyContinue |
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-Get-ChildItem -Path $ResultsDir -Recurse -File -Filter 'report.zip' -ErrorAction SilentlyContinue |
-    Remove-Item -Force -ErrorAction SilentlyContinue
+# No results dir means no raw artifacts to trim or upload - az storage blob
+# upload-batch would fail on a nonexistent --source, aborting the script after
+# the summary row above already published successfully.
+if ($resultsDirExists) {
+    # Trim redundant artifacts before the raw upload (the history container has no
+    # expiry beyond the lifecycle tier, so anything uploaded here is kept forever):
+    #  - *-extracted working dirs: unpacked only to scan engine_results.csv; their
+    #    contents already live inside results.zip, so keeping them doubles every CSV.
+    #  - report.zip: ALT's generated HTML report. Nothing in this repo consumes it
+    #    (the parser reads results.zip) and the same report is in the Azure portal
+    #    run view, so archiving it here is pure bloat.
+    # results.zip is deliberately kept — it carries the raw per-request data that
+    # re-analysis may need beyond what summary.ndjson surfaces.
+    Get-ChildItem -Path $ResultsDir -Recurse -Directory -Filter '*-extracted' -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $ResultsDir -Recurse -File -Filter 'report.zip' -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
 
-# Raw artifacts kept for analyses that need fields the summary doesn't surface.
-az storage blob upload-batch `
-    --account-name $StorageAccountName --account-key $storageKey `
-    --destination $ContainerName `
-    --destination-path "$blobPrefix/raw" `
-    --source $ResultsDir `
-    --pattern "*" `
-    --overwrite | Out-Null
+    # Raw artifacts kept for analyses that need fields the summary doesn't surface.
+    az storage blob upload-batch `
+        --account-name $StorageAccountName --account-key $storageKey `
+        --destination $ContainerName `
+        --destination-path "$blobPrefix/raw" `
+        --source $ResultsDir `
+        --pattern "*" `
+        --overwrite | Out-Null
 
-Write-Host "Published $($rows.Count) record(s) + raw artifacts."
+    Write-Host "Published $($rows.Count) record(s) + raw artifacts."
+} else {
+    Write-Host "Published $($rows.Count) record(s) (no results dir - no raw artifacts to upload)."
+}
 
 # Mirror to Log Analytics. Same defensive posture as the Azure Monitor metric
 # query above — failure warns and continues; the blob upload is the source of
