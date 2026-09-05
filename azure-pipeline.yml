@@ -363,6 +363,11 @@ stages:
                     LogAnalyticsDceUri         = '$(monitoringDceUri)'
                     LogAnalyticsDcrImmutableId = '$(monitoringDcrImmutableId)'
                     LogAnalyticsStreamName     = '$(monitoringStreamName)'
+                    # Lets check-regression.ps1 cross-check Log Analytics for a tier
+                    # that failed before any results dir existed - that failure posts
+                    # straight to Log Analytics and never reaches blob history, so
+                    # blob-storage-only attempted-tier detection can't see it.
+                    WorkspaceName              = '$(historyWorkspaceName)'
                 }
                 $failOnRegression = [System.Convert]::ToBoolean('${{ parameters.failOnRegression }}')
                 if (-not $failOnRegression) { $splat.NoFailOnRegression = $true }

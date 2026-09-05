@@ -66,7 +66,17 @@ param (
     # regression status alongside the run. Empty (default) skips the post.
     [string]$LogAnalyticsDceUri,
     [string]$LogAnalyticsDcrImmutableId,
-    [string]$LogAnalyticsStreamName
+    [string]$LogAnalyticsStreamName,
+
+    # Optional Log Analytics workspace name, used only to QUERY (not post) rows
+    # for -RunId. Get-HistoryCells only sees rows that reached blob storage —
+    # a tier that fails before $ResultsDir ever exists (publish-load-test-results.ps1's
+    # "no_results_dir" branch) posts its metadata-only row straight to Log Analytics
+    # and exits without ever writing to blob storage, so it's invisible to the
+    # blob-storage-only attempted-tier detection below. When set (alongside -RunId),
+    # this closes that gap by cross-checking Log Analytics directly. Empty (default)
+    # skips the cross-check — same blob-storage-only behaviour as before.
+    [string]$WorkspaceName
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,6 +98,36 @@ $cells = Get-HistoryCells `
     -Sampler $Sampler `
     -RunId $RunId `
     -AttemptedVersionTiers ([ref]$attemptedVersionTiers)
+
+# Cross-check Log Analytics for (version, tier) combos this run touched but
+# blob storage never saw — the "no_results_dir" branch of
+# publish-load-test-results.ps1 posts straight to Log Analytics and exits
+# before writing anything to blob storage, so a tier that fails that early is
+# otherwise indistinguishable from a tier this run never intended to cover.
+# Best-effort: a query failure here must not turn an unrelated glitch into a
+# regression-gate failure, so it only warns and falls back to blob-storage-only
+# attempted-tier detection.
+if ($RunId -and $WorkspaceName) {
+    Write-Host "Cross-checking Log Analytics for run '$RunId' (version, tier) coverage blob storage can't see..."
+    try {
+        $workspaceCustomerId = az monitor log-analytics workspace show -n $WorkspaceName -g $HistoryResourceGroup --query customerId -o tsv
+        if ([string]::IsNullOrWhiteSpace($workspaceCustomerId)) {
+            Write-Warning "Couldn't resolve workspace '$WorkspaceName' customerId - skipping the Log Analytics attempted-tier cross-check."
+        } else {
+            $escapedRunId = $RunId -replace "'", "''"
+            $attemptQuery = "LoadTestSummary_CL | where run_id == '$escapedRunId' and isnotempty(umbraco_version) and isnotempty(infra_tier) | distinct umbraco_version, infra_tier"
+            $attemptRows = @(az monitor log-analytics query -w $workspaceCustomerId --analytics-query $attemptQuery -o json | ConvertFrom-Json)
+            foreach ($row in $attemptRows) {
+                if ($row.umbraco_version -and $row.infra_tier) {
+                    $attemptedVersionTiers["$($row.umbraco_version)__$($row.infra_tier)"] = $true
+                }
+            }
+            Write-Host "   $($attemptedVersionTiers.Count) (version, tier) combo(s) confirmed attempted (blob storage + Log Analytics)."
+        }
+    } catch {
+        Write-Warning "Log Analytics attempted-tier cross-check failed ($($_.Exception.Message)) - falling back to blob-storage-only detection."
+    }
+}
 
 if ($cells.Count -eq 0) {
     Write-Warning "No metric rows matched the filter - nothing to check."
