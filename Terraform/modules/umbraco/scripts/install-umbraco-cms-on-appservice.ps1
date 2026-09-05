@@ -63,6 +63,15 @@ if (-not $seederPackageVersion) {
     Write-Error "No Umbraco.Cms.TestDataSeeder version mapped for Umbraco $UmbracoVersion (major $umbracoMajor). Add an entry to `$seederPackageVersions in this script when the package ships for that major."
     exit 1
 }
+# True whenever a major borrows another major's seeder build (e.g. 18 -> the
+# 17.0.0-beta.2 seeder above). The borrowed seeder's own Umbraco.Cms.Core
+# dependency range (>= $seederMajor.0.0 && < ($seederMajor+1).0.0) is then
+# fully disjoint from the range the main project needs
+# (>= $UmbracoVersion && < ($umbracoMajor+1).0.0) - no single Core version
+# satisfies both, so NuGet hard-fails with NU1107 instead of resolving (unlike
+# an overlapping-range conflict, which just downgrades to a NU1608 warning).
+# Handled below by pinning Core directly once the project exists.
+$seederMajor = [int](($seederPackageVersion -split '\.')[0])
 
 # Captured before Set-Location so finally{} can restore cwd on failure.
 $terraformCwd = (Get-Location).Path
@@ -130,6 +139,21 @@ try {
         dotnet add package Umbraco.Cms.TestDataSeeder --version $seederPackageVersion
     } catch {
         throw "dotnet add package Umbraco.Cms.TestDataSeeder failed: $($_.Exception.Message)"
+    }
+
+    if ($seederMajor -ne $umbracoMajor) {
+        # A borrowed-major seeder's Core dependency is transitive-only, so it
+        # can't win a disjoint-range conflict against the main project's own
+        # Core requirement - NuGet's own NU1107 text names the fix ("Install/
+        # reference Umbraco.Cms.Core $UmbracoVersion directly..."): a direct
+        # top-level reference is authoritative over a transitive range, so this
+        # resolves to $UmbracoVersion outright instead of hard-failing restore.
+        Write-Host "Pinning Umbraco.Cms.Core to $UmbracoVersion directly (seeder major $seederMajor borrowed for target major $umbracoMajor would otherwise hard-conflict on restore)..."
+        try {
+            dotnet add package Umbraco.Cms.Core --version $UmbracoVersion
+        } catch {
+            throw "dotnet add package Umbraco.Cms.Core failed: $($_.Exception.Message)"
+        }
     }
 
     # Copy scenario code overlay (everything except appsettings.json) into the project tree.
