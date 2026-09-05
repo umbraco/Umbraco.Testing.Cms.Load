@@ -9,6 +9,26 @@ function Get-Pct ($Sorted, [double]$Pct) {
     return $Sorted[$i]
 }
 
+function Get-LogAnalyticsWorkspaceCustomerId {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceName,
+        [Parameter(Mandatory)] [string]$ResourceGroupName
+    )
+    return az monitor log-analytics workspace show -n $WorkspaceName -g $ResourceGroupName --query customerId -o tsv
+}
+
+# Thin wrapper so every KQL-issuing script shares one az CLI invocation +
+# JSON-decode shape. Callers still write their own KQL string.
+function Invoke-LogAnalyticsQuery {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceCustomerId,
+        [Parameter(Mandatory)] [string]$Query
+    )
+    return @(az monitor log-analytics query -w $WorkspaceCustomerId --analytics-query $Query -o json | ConvertFrom-Json)
+}
+
 function Get-StorageAccountKey {
     [CmdletBinding()]
     param(

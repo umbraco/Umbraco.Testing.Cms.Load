@@ -110,13 +110,19 @@ $cells = Get-HistoryCells `
 if ($RunId -and $WorkspaceName) {
     Write-Host "Cross-checking Log Analytics for run '$RunId' (version, tier) coverage blob storage can't see..."
     try {
-        $workspaceCustomerId = az monitor log-analytics workspace show -n $WorkspaceName -g $HistoryResourceGroup --query customerId -o tsv
+        $workspaceCustomerId = Get-LogAnalyticsWorkspaceCustomerId -WorkspaceName $WorkspaceName -ResourceGroupName $HistoryResourceGroup
         if ([string]::IsNullOrWhiteSpace($workspaceCustomerId)) {
             Write-Warning "Couldn't resolve workspace '$WorkspaceName' customerId - skipping the Log Analytics attempted-tier cross-check."
         } else {
-            $escapedRunId = $RunId -replace "'", "''"
-            $attemptQuery = "LoadTestSummary_CL | where run_id == '$escapedRunId' and isnotempty(umbraco_version) and isnotempty(infra_tier) | distinct umbraco_version, infra_tier"
-            $attemptRows = @(az monitor log-analytics query -w $workspaceCustomerId --analytics-query $attemptQuery -o json | ConvertFrom-Json)
+            # Scoped by scenario too, matching the blob-storage path (which is
+            # rooted at the $Scenario/$Major/ prefix before any row is
+            # considered) — a bare run_id filter would be fine today (one
+            # scenario per Build.BuildId), but nothing enforces that, and this
+            # keeps the two attempted-tier sources consistent if that ever changes.
+            $escapedRunId    = $RunId -replace "'", "''"
+            $escapedScenario = $Scenario -replace "'", "''"
+            $attemptQuery = "LoadTestSummary_CL | where run_id == '$escapedRunId' and scenario == '$escapedScenario' and isnotempty(umbraco_version) and isnotempty(infra_tier) | distinct umbraco_version, infra_tier"
+            $attemptRows = Invoke-LogAnalyticsQuery -WorkspaceCustomerId $workspaceCustomerId -Query $attemptQuery
             foreach ($row in $attemptRows) {
                 if ($row.umbraco_version -and $row.infra_tier) {
                     $attemptedVersionTiers["$($row.umbraco_version)__$($row.infra_tier)"] = $true
