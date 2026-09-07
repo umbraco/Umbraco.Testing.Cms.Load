@@ -152,10 +152,11 @@ if ($Workload -eq 'frontend') {
 
 # Single source of truth shared with Terraform/modules/umbraco/scripts/install-
 # umbraco-cms-on-appservice.ps1 (the actual install reads the same file).
-# Checked here so a major without a published seeder build - or a mapped
-# version that isn't actually on nuget.org yet - fails at validation (minute 0)
-# instead of install (minute ~10), after Terraform has already stood up a full
-# App Service + SQL DB.
+# Checked here so a major without a published seeder build fails at validation
+# (minute 0) instead of install (minute ~10), after Terraform has already stood
+# up a full App Service + SQL DB. Deliberately NOT also checked against nuget.org
+# (unlike the Umbraco.Templates check above) - that check was tried and pulled:
+# see git history on this line if reintroducing it.
 $seederVersionsPath = Join-Path $WorkspaceRoot "scripts/seeder-versions.json"
 if (-not (Test-Path -LiteralPath $seederVersionsPath)) {
     Write-PipelineError "Couldn't find seeder-versions.json at '$seederVersionsPath'."
@@ -164,9 +165,6 @@ $seederPackageVersions = Get-Content -LiteralPath $seederVersionsPath -Raw | Con
 $seederPackageVersion = $seederPackageVersions["$umbracoMajor"]
 if (-not $seederPackageVersion) {
     Write-PipelineError "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet (no entry in scripts/seeder-versions.json). Update scripts/seeder-versions.json once the package ships for that major."
-}
-if (-not (Test-NuGetPackageVersionExists -PackageId 'Umbraco.Cms.TestDataSeeder' -Version $seederPackageVersion)) {
-    Write-PipelineError "Umbraco.Cms.TestDataSeeder $seederPackageVersion (mapped for major $umbracoMajor in scripts/seeder-versions.json) was not found on nuget.org (checked https://api.nuget.org/v3-flatcontainer/umbraco.cms.testdataseeder/index.json). The map entry may be stale or the version unpublished/unlisted - verify before queuing."
 }
 
 # 'Auto' = Terraform's "use the tier's default" sentinel (0 for DTU, '' for SKU).
