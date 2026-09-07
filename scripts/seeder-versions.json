@@ -1,0 +1,6 @@
+{
+  "//": "Umbraco.Cms.TestDataSeeder package version per Umbraco major. Single source of truth read by both resolve-run-config.ps1 (queue-time validation) and Terraform/modules/umbraco/scripts/install-umbraco-cms-on-appservice.ps1 (the actual install) - update this one file when a new seeder build ships. A major with no entry here has no published seeder build yet; resolve-run-config.ps1 fails the run at validation with a clear message.",
+  "13": "13.0.0-beta.1",
+  "17": "17.0.0-beta.2",
+  "18": "18.0.0-beta.1"
+}

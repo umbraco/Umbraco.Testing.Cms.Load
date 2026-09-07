@@ -42,36 +42,38 @@ if (-not $env:ARM_CLIENT_SECRET -and -not $env:ARM_OIDC_TOKEN) {
     exit 1
 }
 
-# Umbraco.Cms.TestDataSeeder package version per Umbraco major. Update an entry
-# here when a new seeder build ships; null means the seeder isn't available yet
-# for that major and the run will fail-fast below with a clear message.
-$seederPackageVersions = @{
-    13 = "13.0.0-beta.1"
-    17 = "17.0.0-beta.2"
-    18 = "18.0.0-beta.1"
-    # v14/v15/v16: no published seeder yet. resolve-run-config.ps1 fails the
-    # run at validation with a clear message; add entries here in lockstep when
-    # those builds ship.
-}
+# Captured before Set-Location so finally{} can restore cwd on failure, and so
+# the seeder-versions.json lookup below can find the repo root regardless of
+# where this script is invoked from.
+$terraformCwd = (Get-Location).Path
 
-$umbracoMajor = [int](($UmbracoVersion -split '\.')[0])
-$seederPackageVersion = $seederPackageVersions[$umbracoMajor]
-if (-not $seederPackageVersion) {
-    Write-Error "No Umbraco.Cms.TestDataSeeder version mapped for Umbraco $UmbracoVersion (major $umbracoMajor). Add an entry to `$seederPackageVersions in this script when the package ships for that major."
+# Umbraco.Cms.TestDataSeeder package version per Umbraco major. Single source
+# of truth shared with resolve-run-config.ps1 (queue-time validation reads the
+# same file) - update scripts/seeder-versions.json when a new seeder build
+# ships, not a copy in this script. A major with no entry has no published
+# seeder build yet and fails fast below.
+$seederVersionsPath = Join-Path $terraformCwd "../scripts/seeder-versions.json"
+if (-not (Test-Path -LiteralPath $seederVersionsPath)) {
+    Write-Error "Couldn't find seeder-versions.json at '$seederVersionsPath' (expected at <repo-root>/scripts/seeder-versions.json, resolved relative to this script's working directory)."
     exit 1
 }
-# True whenever a major borrows another major's seeder build (e.g. 18 -> the
-# 17.0.0-beta.2 seeder above). The borrowed seeder's own Umbraco.Cms.Core
-# dependency range (>= $seederMajor.0.0 && < ($seederMajor+1).0.0) is then
-# fully disjoint from the range the main project needs
-# (>= $UmbracoVersion && < ($umbracoMajor+1).0.0) - no single Core version
-# satisfies both, so NuGet hard-fails with NU1107 instead of resolving (unlike
-# an overlapping-range conflict, which just downgrades to a NU1608 warning).
-# Handled below by pinning Core directly once the project exists.
-$seederMajor = [int](($seederPackageVersion -split '\.')[0])
+$seederPackageVersions = Get-Content -LiteralPath $seederVersionsPath -Raw | ConvertFrom-Json -AsHashtable
 
-# Captured before Set-Location so finally{} can restore cwd on failure.
-$terraformCwd = (Get-Location).Path
+$umbracoMajor = [int](($UmbracoVersion -split '\.')[0])
+$seederPackageVersion = $seederPackageVersions["$umbracoMajor"]
+if (-not $seederPackageVersion) {
+    Write-Error "No Umbraco.Cms.TestDataSeeder version mapped for Umbraco $UmbracoVersion (major $umbracoMajor). Add an entry to scripts/seeder-versions.json when the package ships for that major."
+    exit 1
+}
+# True whenever a major borrows another major's seeder build. The borrowed
+# seeder's own Umbraco.Cms.Core dependency range (>= $seederMajor.0.0 &&
+# < ($seederMajor+1).0.0) is then fully disjoint from the range the main
+# project needs (>= $UmbracoVersion && < ($umbracoMajor+1).0.0) - no single
+# Core version satisfies both, so NuGet hard-fails with NU1107 instead of
+# resolving (unlike an overlapping-range conflict, which just downgrades to a
+# NU1608 warning). Handled below by pinning Core directly once the project
+# exists.
+$seederMajor = [int](($seederPackageVersion -split '\.')[0])
 
 $updatedVersionName = $UmbracoVersion.Replace('.', '')
 $pathToApp          = "./NewUmbracoProject$updatedVersionName"
