@@ -1180,7 +1180,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Overall version-vs-baseline delta. For each non-baseline version,\n// compute median p95/p99 per sampler, take the average % delta against\n// the baseline version's median, then summarize across samplers as a\n// single per-version row. 'faster_p95' counts how many samplers got\n// better in the candidate; 'slower_p95' the opposite.\nlet baseline = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version == '{VersionsBaseline}'\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0) and parse_status == 'ok' and coalesce(cold_start, false) == false and ('{Profile}' == '*' or '{Profile}' == '' or case(spawn_rate == 1, 'ramp', duration_seconds <= 60, 'smoke', duration_seconds <= 300, 'standard', 'stress') == '{Profile}') and ('{Workload}' == '*' or '{Workload}' == '' or iif(isnotempty(jmeter_test_name), 'backoffice', 'frontend') == '{Workload}')\n    | summarize base_p95 = percentile(p95_ms, 50), base_p99 = percentile(p99_ms, 50) by scenario_name;\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version != '{VersionsBaseline}'\n| where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0) and parse_status == 'ok' and coalesce(cold_start, false) == false and ('{Profile}' == '*' or '{Profile}' == '' or case(spawn_rate == 1, 'ramp', duration_seconds <= 60, 'smoke', duration_seconds <= 300, 'standard', 'stress') == '{Profile}') and ('{Workload}' == '*' or '{Workload}' == '' or iif(isnotempty(jmeter_test_name), 'backoffice', 'frontend') == '{Workload}')\n| summarize cand_p95 = percentile(p95_ms, 50), cand_p99 = percentile(p99_ms, 50), runs = count_distinct(run_id) by scenario_name, umbraco_version\n| join kind=leftouter baseline on scenario_name\n| extend p95_delta = (cand_p95 - base_p95) / base_p95 * 100,\n         p99_delta = (cand_p99 - base_p99) / base_p99 * 100\n| summarize\n    ['Samplers']     = count(),\n    runs_min         = min(runs),\n    runs_max         = max(runs),\n    ['Avg p95 change %']  = round(avg(p95_delta), 0),\n    ['Avg p99 change %']  = round(avg(p99_delta), 0),\n    ['Samplers faster'] = countif(p95_delta < 0),\n    ['Samplers slower'] = countif(p95_delta > 0)\n    by Version = umbraco_version\n| extend ['Runs (per sampler)'] = iif(runs_min == runs_max, tostring(runs_min), strcat(runs_min, '–', runs_max))\n| project Version, Samplers, ['Runs (per sampler)'], ['Avg p95 change %'], ['Avg p99 change %'], ['Samplers faster'], ['Samplers slower']\n| order by Version asc",
+        "query": "// Overall version-vs-baseline delta. For each non-baseline version,\n// compute median p95/p99 per sampler, take the average % delta against\n// the baseline version's median, then summarize across samplers as a\n// single per-version row. 'faster_p95' counts how many samplers got\n// better in the candidate; 'slower_p95' the opposite.\n// Reliability: run-to-run coefficient of variation (stdev/median) on the\n// candidate's own p95 per sampler, worst-case across samplers. Flags when a\n// dramatic delta might just be noise from one volatile run rather than a\n// real signal - a single-run pick (see the Compare tab) can and does swing\n// far from this median at only 3 runs. Same cv thresholds as the Trends\n// tab's Stability column, but no n>=5 floor: this tab's own caption already\n// treats 3 runs as meaningful, so a noisy 3-run cv is still worth surfacing\n// rather than hidden behind 'few runs'.\nlet baseline = LoadTestSummary_CL\n    | where TimeGenerated {TimeRange}\n    | where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version == '{VersionsBaseline}'\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0) and parse_status == 'ok' and coalesce(cold_start, false) == false and ('{Profile}' == '*' or '{Profile}' == '' or case(spawn_rate == 1, 'ramp', duration_seconds <= 60, 'smoke', duration_seconds <= 300, 'standard', 'stress') == '{Profile}') and ('{Workload}' == '*' or '{Workload}' == '' or iif(isnotempty(jmeter_test_name), 'backoffice', 'frontend') == '{Workload}')\n    | summarize base_p95 = percentile(p95_ms, 50), base_p99 = percentile(p99_ms, 50) by scenario_name;\nLoadTestSummary_CL\n| where TimeGenerated {TimeRange}\n| where scenario == '{VersionsScenario}' and infra_tier == '{VersionsTier}' and umbraco_version != '{VersionsBaseline}'\n| where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0) and parse_status == 'ok' and coalesce(cold_start, false) == false and ('{Profile}' == '*' or '{Profile}' == '' or case(spawn_rate == 1, 'ramp', duration_seconds <= 60, 'smoke', duration_seconds <= 300, 'standard', 'stress') == '{Profile}') and ('{Workload}' == '*' or '{Workload}' == '' or iif(isnotempty(jmeter_test_name), 'backoffice', 'frontend') == '{Workload}')\n| summarize cand_p95 = percentile(p95_ms, 50), cand_p99 = percentile(p99_ms, 50), cand_p95_sd = stdev(p95_ms), runs = count_distinct(run_id) by scenario_name, umbraco_version\n| join kind=leftouter baseline on scenario_name\n| extend p95_delta = (cand_p95 - base_p95) / base_p95 * 100,\n         p99_delta = (cand_p99 - base_p99) / base_p99 * 100,\n         cv = iif(runs < 2 or cand_p95 == 0, real(null), cand_p95_sd / cand_p95 * 100.0)\n| summarize\n    ['Samplers']     = count(),\n    runs_min         = min(runs),\n    runs_max         = max(runs),\n    ['Avg p95 change %']  = round(avg(p95_delta), 0),\n    ['Avg p99 change %']  = round(avg(p99_delta), 0),\n    ['Samplers faster'] = countif(p95_delta < 0),\n    ['Samplers slower'] = countif(p95_delta > 0),\n    max_cv = max(cv)\n    by Version = umbraco_version\n| extend ['Runs (per sampler)'] = iif(runs_min == runs_max, tostring(runs_min), strcat(runs_min, '–', runs_max))\n| extend Reliability = case(isnull(max_cv), 'n/a', max_cv < 10, 'stable', max_cv < 25, 'moderate', 'noisy')\n| project Version, Samplers, ['Runs (per sampler)'], Reliability, ['Avg p95 change %'], ['Avg p99 change %'], ['Samplers faster'], ['Samplers slower']\n| order by Version asc",
         "size": 0,
         "title": "Overall — each version vs baseline {VersionsBaseline}",
         "noDataMessage": "No other version has run yet for this scenario/tier — nothing to compare {VersionsBaseline} against.",
@@ -1192,6 +1192,39 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
+            {
+              "columnMatch": "Reliability",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "noisy",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "moderate",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "stable",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "n/a",
+                    "representation": "unknown"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "info"
+                  }
+                ]
+              }
+            },
             {
               "columnMatch": "Avg p95 change %",
               "formatter": 18,
@@ -1444,7 +1477,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// {Baseline}/{Candidate} values are composite keys 'run_id|scenario|version|tier'\n// produced by the dropdown queries above. Split here so a single dropdown\n// pick targets exactly one case of one run, not 'all cases of run_id'.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0);\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n// Columns grouped per metric (raw baseline, raw candidate, change %) so each\n// row reads as 'for this sampler: avg story, p95 story, p99 story' instead\n// of jumping between far-apart raw and % blocks.\n| project Sampler = coalesce(scenario_name, scenario_name1),\n          ['Reqs baseline'] = request_count,    ['Reqs candidate'] = request_count1,\n          ['avg baseline (ms)'] = round(avg_ms, 0), ['avg candidate (ms)'] = round(avg_ms1, 0), ['avg change %'] = delta(avg_ms, avg_ms1),\n          ['p95 baseline (ms)'] = round(p95_ms, 0), ['p95 candidate (ms)'] = round(p95_ms1, 0), ['p95 change %'] = delta(p95_ms, p95_ms1),\n          ['p99 baseline (ms)'] = round(p99_ms, 0), ['p99 candidate (ms)'] = round(p99_ms1, 0), ['p99 change %'] = delta(p99_ms, p99_ms1)\n| order by Sampler asc",
+        "query": "// {Baseline}/{Candidate} values are composite keys 'run_id|scenario|version|tier'\n// produced by the dropdown queries above. Split here so a single dropdown\n// pick targets exactly one case of one run, not 'all cases of run_id'.\nlet b_parts = split('{Baseline}', '|');\nlet c_parts = split('{Candidate}', '|');\nlet baseline = LoadTestSummary_CL\n    | where run_id == tostring(b_parts[0]) and scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0);\nlet candidate = LoadTestSummary_CL\n    | where run_id == tostring(c_parts[0]) and scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0);\n// Reliability context: how noisy is this sampler across EVERY run of the\n// picked side's own (scenario, version, tier), not just the one run picked\n// here - a picked run can be an outlier of its own population, which is\n// exactly what makes a single Baseline/Candidate pick disagree with the\n// Versions tab's multi-run median for the same version pair. Same cv\n// (stdev/median) thresholds as the Trends tab's Stability column.\nlet baseline_cv = LoadTestSummary_CL\n    | where scenario == tostring(b_parts[1]) and umbraco_version == tostring(b_parts[2]) and infra_tier == tostring(b_parts[3])\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0) and parse_status == 'ok' and coalesce(cold_start, false) == false\n    | summarize med = percentile(p95_ms, 50), sd = stdev(p95_ms), n = count_distinct(run_id) by scenario_name\n    | extend base_cv = iif(n < 2 or med == 0, real(null), sd / med * 100.0)\n    | project scenario_name, base_cv;\nlet candidate_cv = LoadTestSummary_CL\n    | where scenario == tostring(c_parts[1]) and umbraco_version == tostring(c_parts[2]) and infra_tier == tostring(c_parts[3])\n    | where isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0) and parse_status == 'ok' and coalesce(cold_start, false) == false\n    | summarize med = percentile(p95_ms, 50), sd = stdev(p95_ms), n = count_distinct(run_id) by scenario_name\n    | extend cand_cv = iif(n < 2 or med == 0, real(null), sd / med * 100.0)\n    | project scenario_name, cand_cv;\nlet delta = (a:real, b:real) { iif(a == 0 or isnull(a) or isnull(b), real(null), round((b - a) / a * 100.0, 0)) };\nlet toReliability = (cv: real) { case(isnull(cv), 'n/a', cv < 10, 'stable', cv < 25, 'moderate', 'noisy') };\nbaseline\n| join kind=fullouter (candidate) on scenario_name\n| join kind=leftouter (baseline_cv) on scenario_name\n// candidate_cv joins on scenario_name1 (the candidate side's own sampler-name\n// column from the fullouter join above), not scenario_name (baseline's) - a\n// sampler present only in the candidate run would otherwise fail to match.\n| join kind=leftouter (candidate_cv) on $left.scenario_name1 == $right.scenario_name\n// Columns grouped per metric (raw baseline, raw candidate, change %) so each\n// row reads as 'for this sampler: avg story, p95 story, p99 story' instead\n// of jumping between far-apart raw and % blocks.\n| project Sampler = coalesce(scenario_name, scenario_name1),\n          ['Reqs baseline'] = request_count,    ['Reqs candidate'] = request_count1,\n          ['avg baseline (ms)'] = round(avg_ms, 0), ['avg candidate (ms)'] = round(avg_ms1, 0), ['avg change %'] = delta(avg_ms, avg_ms1),\n          ['p95 baseline (ms)'] = round(p95_ms, 0), ['p95 candidate (ms)'] = round(p95_ms1, 0), ['p95 change %'] = delta(p95_ms, p95_ms1),\n          ['p99 baseline (ms)'] = round(p99_ms, 0), ['p99 candidate (ms)'] = round(p99_ms1, 0), ['p99 change %'] = delta(p99_ms, p99_ms1),\n          ['Baseline reliability'] = toReliability(base_cv),\n          ['Candidate reliability'] = toReliability(cand_cv)\n| order by Sampler asc",
         "size": 0,
         "title": "Per-sampler change",
         "queryType": 0,
@@ -1455,6 +1488,72 @@
         "visualization": "table",
         "gridSettings": {
           "formatters": [
+            {
+              "columnMatch": "Baseline reliability",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "noisy",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "moderate",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "stable",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "n/a",
+                    "representation": "unknown"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "info"
+                  }
+                ]
+              }
+            },
+            {
+              "columnMatch": "Candidate reliability",
+              "formatter": 18,
+              "formatOptions": {
+                "thresholdsOptions": "icons",
+                "thresholdsGrid": [
+                  {
+                    "operator": "==",
+                    "thresholdValue": "noisy",
+                    "representation": "critical"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "moderate",
+                    "representation": "3"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "stable",
+                    "representation": "success"
+                  },
+                  {
+                    "operator": "==",
+                    "thresholdValue": "n/a",
+                    "representation": "unknown"
+                  },
+                  {
+                    "operator": "Default",
+                    "representation": "info"
+                  }
+                ]
+              }
+            },
             {
               "columnMatch": "avg change %",
               "formatter": 18,
