@@ -373,7 +373,25 @@ if ($insufficient.Count -gt 0) {
 # per azure-pipeline.yml) - expected, so it must not warn. A partial absence is
 # the publish anomaly -RunId exists to catch.
 $missingPartialPlans = @()
-if ($missing.Count -gt 0) {
+
+# A (version, tier) this run attempted but has NO graded cell for published
+# nothing at all - it fast-failed (no_results_dir / no_metrics placeholder
+# only). Every plan is absent there, so the whole-plan test below would call
+# each one "didn't run - Expected" and hide the failure. Report those tiers
+# once, up front, and keep them out of the per-plan totals so "Expected" only
+# ever describes a plan absent on tiers that otherwise published. Computed
+# outside the $missing guard: a dead tier with no history yet adds nothing to
+# $missing and would otherwise never be mentioned at all.
+$publishedVersionTiers = @{}
+foreach ($k in $candidateByCell.Keys) {
+    $p = $k -split '__', 3
+    $publishedVersionTiers["$($p[0])__$($p[1])"] = $true
+}
+$deadVersionTiers = @($attemptedVersionTiers.Keys | Where-Object { -not $publishedVersionTiers.ContainsKey($_) } | Sort-Object)
+$deadSet = @{}
+foreach ($vt in $deadVersionTiers) { $deadSet[$vt] = $true }
+
+if ($missing.Count -gt 0 -or $deadVersionTiers.Count -gt 0) {
     # Same (version, tier) scope as $missing above, so numerator and denominator
     # describe the same population.
     $scopedCellCount = 0
@@ -382,7 +400,7 @@ if ($missing.Count -gt 0) {
         if ($attemptedVersionTiers.Count -gt 0 -and -not $attemptedVersionTiers.ContainsKey("$($parts[0])__$($parts[1])")) { continue }
         $scopedCellCount++
     }
-    $publishedNone = ($missing.Count -ge $scopedCellCount)
+    $publishedNone = ($scopedCellCount -gt 0 -and $missing.Count -ge $scopedCellCount)
 
     [void]$out.AppendLine("## Candidate missing (no row for run ``$RunId``)")
     [void]$out.AppendLine()
@@ -392,25 +410,13 @@ if ($missing.Count -gt 0) {
         [void]$out.AppendLine("**No rows from this run matched** any of the $scopedCellCount cell(s) in history for the version/tier it covers. Either the run published nothing (check the loadTest stage), or its rows were filtered out - a ``skipWarmup`` run is excluded from comparison because every row is flagged ``cold_start``.")
         [void]$out.AppendLine()
     }
-    # A (version, tier) this run attempted but has NO graded cell for published
-    # nothing at all - it fast-failed (no_results_dir / no_metrics placeholder
-    # only). Every plan is absent there, so the whole-plan test below would call
-    # each one "didn't run - Expected" and hide the failure. Report those tiers
-    # once, up front, and keep them out of the per-plan totals so "Expected"
-    # only ever describes a plan absent on tiers that otherwise published.
-    $publishedVersionTiers = @{}
-    foreach ($k in $candidateByCell.Keys) {
-        $p = $k -split '__', 3
-        $publishedVersionTiers["$($p[0])__$($p[1])"] = $true
-    }
-    $deadVersionTiers = @($attemptedVersionTiers.Keys | Where-Object { -not $publishedVersionTiers.ContainsKey($_) } | Sort-Object)
     foreach ($vt in $deadVersionTiers) {
         $p = $vt -split '__', 2
         $deadCells = @($missing | Where-Object { $_.Version -eq $p[0] -and $_.Tier -eq $p[1] })
-        [void]$out.AppendLine("- **$($p[0]) / $($p[1])**: attempted but published no metric rows ($($deadCells.Count) cell(s) absent) - the tier fast-failed before Azure Load Testing produced results, or every row was filtered. Check the loadTest and publish steps.")
+        $absent = if ($deadCells.Count -gt 0) { "$($deadCells.Count) cell(s) absent" } else { "no history for this tier yet" }
+        [void]$out.AppendLine("- **$($p[0]) / $($p[1])**: attempted but published no metric rows ($absent) - the tier fast-failed before Azure Load Testing produced results, or every row was filtered. Check the loadTest and publish steps.")
         $missingPartialPlans += "$($p[0])/$($p[1])"
     }
-    $deadSet = @{}; foreach ($vt in $deadVersionTiers) { $deadSet[$vt] = $true }
     $liveMissing = @($missing | Where-Object { -not $deadSet.ContainsKey("$($_.Version)__$($_.Tier)") })
     $cellsPerPlan = @{}
     foreach ($k in $cells.Keys) {

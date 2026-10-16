@@ -117,7 +117,7 @@ $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 # Checked against every feed the install restores from, so nightly tags pass.
 if (-not $SkipNuGetCheck) {
     if (-not (Test-NuGetPackageVersionExists -PackageId 'Umbraco.Templates' -Version $UmbracoVersion)) {
-        Write-PipelineError "Umbraco.Templates $UmbracoVersion was not found on nuget.org or the Umbraco prerelease/nightly MyGet feeds (checked $($UmbracoPackageFlatContainerUrls -join ', ')). Verify the version string and that it's actually published before queuing - this pipeline provisions a full App Service + SQL DB before install-umbraco-cms-on-appservice.ps1 would otherwise discover this."
+        Write-PipelineError "Umbraco.Templates $UmbracoVersion was not found on nuget.org or the Umbraco prerelease/nightly MyGet feeds (checked $($UmbracoPackageFlatContainerUrls -join ', '); a feed warned about as unreachable above was skipped). Verify the version string and that it's actually published before queuing - this pipeline provisions a full App Service + SQL DB before install-umbraco-cms-on-appservice.ps1 would otherwise discover this."
     }
 }
 
