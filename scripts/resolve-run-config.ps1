@@ -114,9 +114,7 @@ $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 # or not-yet-published version (a queued RC that hasn't hit any feed yet) would
 # otherwise fail 10+ minutes into deploy_umbraco, after a full App Service + SQL
 # DB were already stood up. Same "fail here costs nothing" rationale as below.
-# Checked against every feed the install script restores from (nuget.org plus
-# the Umbraco prerelease and nightly MyGet feeds - see
-# $UmbracoPackageFlatContainerUrls in _helpers.ps1), so nightly tags pass.
+# Checked against every feed the install restores from, so nightly tags pass.
 if (-not $SkipNuGetCheck) {
     if (-not (Test-NuGetPackageVersionExists -PackageId 'Umbraco.Templates' -Version $UmbracoVersion)) {
         Write-PipelineError "Umbraco.Templates $UmbracoVersion was not found on nuget.org or the Umbraco prerelease/nightly MyGet feeds (checked $($UmbracoPackageFlatContainerUrls -join ', ')). Verify the version string and that it's actually published before queuing - this pipeline provisions a full App Service + SQL DB before install-umbraco-cms-on-appservice.ps1 would otherwise discover this."

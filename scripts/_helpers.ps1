@@ -23,7 +23,11 @@ $script:UmbracoPackageFlatContainerUrls = @(
 # True when $Version is a published version of $PackageId on any of the feeds
 # (flat-container index: immediately consistent, unlike search). $PackageId is
 # lowercased because the API requires it. A 404 (package id unknown on that
-# feed) moves on to the next feed; any other error propagates.
+# feed) moves on to the next feed. An unreachable feed (DNS, timeout, 5xx) is
+# warned about and skipped too - `dotnet new install` does the same (NU1801)
+# and resolves from the remaining sources, so the gate shouldn't be stricter
+# than the install it guards. Only when every feed is unreachable does this
+# throw, since then nothing was actually checked.
 function Test-NuGetPackageVersionExists {
     [CmdletBinding()]
     param(
@@ -31,15 +35,21 @@ function Test-NuGetPackageVersionExists {
         [Parameter(Mandatory)] [string]$Version,
         [string[]]$FlatContainerUrls = $script:UmbracoPackageFlatContainerUrls
     )
+    $unreachable = 0
     foreach ($root in $FlatContainerUrls) {
         $url = "$($root.TrimEnd('/'))/$($PackageId.ToLowerInvariant())/index.json"
         try {
-            $index = Invoke-RestMethod -Uri $url -Method Get
+            $index = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 30
         } catch {
             if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { continue }
-            throw
+            Write-Warning "Package feed $root is unreachable ($($_.Exception.Message)) - skipping it."
+            $unreachable++
+            continue
         }
         if (@($index.versions) -icontains $Version) { return $true }
+    }
+    if ($FlatContainerUrls.Count -gt 0 -and $unreachable -eq $FlatContainerUrls.Count) {
+        throw "None of the $unreachable package feed(s) could be reached, so $PackageId $Version could not be checked."
     }
     return $false
 }
