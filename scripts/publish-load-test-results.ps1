@@ -96,7 +96,10 @@ $PSNativeCommandUseErrorActionPreference = $true
 #   1 - VU ramp-up window excluded from percentile/error/throughput stats.
 #   2 - frontend ramp derived from users/spawn (Locust's real ramp) instead of
 #       rampTime, which is JMeter-only and up to 50x longer.
-$MethodologyVersion = 2
+# Scoped per workload: 2 only changed how frontend numbers are computed, so
+# backoffice rows stay on 1 and keep their baselines instead of reporting
+# "insufficient history" for a change that never touched them.
+$MethodologyVersion = if ($JmeterTestName) { 1 } else { 2 }
 
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize

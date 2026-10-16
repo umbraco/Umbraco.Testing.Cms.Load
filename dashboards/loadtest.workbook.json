@@ -1945,7 +1945,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Drill-down: paste a run_id into the parameter to see per-sampler detail for\n// that run. Tier column is required because a multi-tier pipeline run produces\n// one row per (sampler, tier) — without Tier the table shows duplicate sampler\n// names with no way to tell Standard from Starter.\nLoadTestSummary_CL\n| where run_id == '{DrillRun}' and isnotempty(scenario_name)\n| project Tier=infra_tier, Sampler=scenario_name,\n          Reqs=request_count, Fails=failure_count,\n          ['Error %']=round(error_rate*100, 1),\n          Avg=round(avg_ms, 0), p50=round(p50_ms, 0), p90=round(p90_ms, 0), p95=round(p95_ms, 0), p99=round(p99_ms, 0), Max=round(max_ms, 0)\n| order by Sampler asc, Tier asc",
+        "query": "// Drill-down: paste a run_id into the parameter to see per-sampler detail for\n// that run. Tier column is required because a multi-tier pipeline run produces\n// one row per (sampler, tier) — without Tier the table shows duplicate sampler\n// names with no way to tell Standard from Starter.\nLoadTestSummary_CL\n| where run_id == '{DrillRun}' and isnotempty(scenario_name) and (isempty(jmeter_test_name) or indexof(scenario_name, strcat(jmeter_test_name, ' / ')) == 0)\n| project Tier=infra_tier, Sampler=scenario_name,\n          Reqs=request_count, Fails=failure_count,\n          ['Error %']=round(error_rate*100, 1),\n          Avg=round(avg_ms, 0), p50=round(p50_ms, 0), p90=round(p90_ms, 0), p95=round(p95_ms, 0), p99=round(p99_ms, 0), Max=round(max_ms, 0)\n| order by Sampler asc, Tier asc",
         "size": 0,
         "title": "Per-sampler detail for selected run",
         "queryType": 0,
