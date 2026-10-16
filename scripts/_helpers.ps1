@@ -9,27 +9,39 @@ function Get-Pct ($Sorted, [double]$Pct) {
     return $Sorted[$i]
 }
 
-# True when $Version is a published version of $PackageId on nuget.org - checked
-# against the flat-container index (https://learn.microsoft.com/nuget/api/package-base-address-resource),
-# the same immediately-consistent source used to confirm the TestDataSeeder push
-# in this session, rather than the search endpoint (which can lag). $PackageId is
-# lowercased because the flat-container API requires it. A 404 means the package
-# id itself doesn't exist - treated the same as "version not found" here, since
-# either way the caller's answer is "this won't restore."
+# Flat-container (package-base-address) roots of every feed the install script
+# restores from, in the same order install-umbraco-cms-on-appservice.ps1 adds
+# them: nuget.org, then the Umbraco prerelease and nightly MyGet feeds. Nightly
+# tags (e.g. 18.2.0--rc.preview.84.g7df92f1) only ever exist on the last one,
+# so a nuget.org-only check would reject versions that install fine.
+$script:UmbracoPackageFlatContainerUrls = @(
+    'https://api.nuget.org/v3-flatcontainer',
+    'https://www.myget.org/F/umbracoprereleases/api/v3/flatcontainer',
+    'https://www.myget.org/F/umbraconightly/api/v3/flatcontainer'
+)
+
+# True when $Version is a published version of $PackageId on any of the feeds
+# (flat-container index: immediately consistent, unlike search). $PackageId is
+# lowercased because the API requires it. A 404 (package id unknown on that
+# feed) moves on to the next feed; any other error propagates.
 function Test-NuGetPackageVersionExists {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string]$PackageId,
-        [Parameter(Mandatory)] [string]$Version
+        [Parameter(Mandatory)] [string]$Version,
+        [string[]]$FlatContainerUrls = $script:UmbracoPackageFlatContainerUrls
     )
-    $url = "https://api.nuget.org/v3-flatcontainer/$($PackageId.ToLowerInvariant())/index.json"
-    try {
-        $index = Invoke-RestMethod -Uri $url -Method Get
-    } catch {
-        if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { return $false }
-        throw
+    foreach ($root in $FlatContainerUrls) {
+        $url = "$($root.TrimEnd('/'))/$($PackageId.ToLowerInvariant())/index.json"
+        try {
+            $index = Invoke-RestMethod -Uri $url -Method Get
+        } catch {
+            if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { continue }
+            throw
+        }
+        if (@($index.versions) -icontains $Version) { return $true }
     }
-    return @($index.versions) -icontains $Version
+    return $false
 }
 
 function Get-LogAnalyticsWorkspaceCustomerId {

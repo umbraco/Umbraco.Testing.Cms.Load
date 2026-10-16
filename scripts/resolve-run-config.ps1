@@ -24,7 +24,10 @@ param (
     [Parameter(Mandatory = $true)] [string]$AppSkuOverride,
     [Parameter(Mandatory = $true)] [ValidateSet('Auto', 'Small', 'Medium', 'Large', 'Massive')] [string]$SeederPresetOverride,
     [Parameter(Mandatory = $true)] [ValidateSet('frontend', 'backoffice', 'client')] [string]$Workload,
-    [Parameter(Mandatory = $true)] [string]$WorkspaceRoot
+    [Parameter(Mandatory = $true)] [string]$WorkspaceRoot,
+    # Skips the package-feed lookup for $UmbracoVersion. For tests and offline
+    # runs only; the pipeline never sets it.
+    [switch]$SkipNuGetCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -108,12 +111,16 @@ $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 # provisions anything. install-umbraco-cms-on-appservice.ps1's first package
 # pull is `dotnet new install "Umbraco.Templates@$UmbracoVersion"`, so that's
 # the most direct proxy for "will this install structurally succeed" - a typo'd
-# or not-yet-published version (a queued RC that hasn't hit nuget.org yet, or a
-# version string that only ever existed on the prerelease/nightly feeds) would
+# or not-yet-published version (a queued RC that hasn't hit any feed yet) would
 # otherwise fail 10+ minutes into deploy_umbraco, after a full App Service + SQL
 # DB were already stood up. Same "fail here costs nothing" rationale as below.
-if (-not (Test-NuGetPackageVersionExists -PackageId 'Umbraco.Templates' -Version $UmbracoVersion)) {
-    Write-PipelineError "Umbraco.Templates $UmbracoVersion was not found on nuget.org (checked https://api.nuget.org/v3-flatcontainer/umbraco.templates/index.json). Verify the version string and that it's actually published there before queuing - this pipeline provisions a full App Service + SQL DB before install-umbraco-cms-on-appservice.ps1 would otherwise discover this."
+# Checked against every feed the install script restores from (nuget.org plus
+# the Umbraco prerelease and nightly MyGet feeds - see
+# $UmbracoPackageFlatContainerUrls in _helpers.ps1), so nightly tags pass.
+if (-not $SkipNuGetCheck) {
+    if (-not (Test-NuGetPackageVersionExists -PackageId 'Umbraco.Templates' -Version $UmbracoVersion)) {
+        Write-PipelineError "Umbraco.Templates $UmbracoVersion was not found on nuget.org or the Umbraco prerelease/nightly MyGet feeds (checked $($UmbracoPackageFlatContainerUrls -join ', ')). Verify the version string and that it's actually published before queuing - this pipeline provisions a full App Service + SQL DB before install-umbraco-cms-on-appservice.ps1 would otherwise discover this."
+    }
 }
 
 # Validate that the chosen (scenario, workload) pair has the files the runner

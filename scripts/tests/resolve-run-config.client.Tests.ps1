@@ -6,7 +6,7 @@ Describe 'resolve-run-config client workload validation' {
             -Profile standard -UmbracoVersion 17.0.0 -Scenario Bare `
             -RunStarter True -RunStandard False -RunPro False -RunEnterprise False `
             -PoolDtuOverride Auto -AppSkuOverride Auto -SeederPresetOverride Auto `
-            -Workload client -WorkspaceRoot $tmp 2>&1
+            -Workload client -WorkspaceRoot $tmp -SkipNuGetCheck 2>&1
         $LASTEXITCODE | Should -Not -Be 0
         ($out -join "`n") | Should -Match 'client/'
     }
@@ -21,7 +21,7 @@ Describe 'resolve-run-config client workload validation' {
             -Profile standard -UmbracoVersion 17.0.0 -Scenario Default `
             -RunStarter True -RunStandard False -RunPro False -RunEnterprise False `
             -PoolDtuOverride Auto -AppSkuOverride Auto -SeederPresetOverride Auto `
-            -Workload client -WorkspaceRoot $tmp 2>&1
+            -Workload client -WorkspaceRoot $tmp -SkipNuGetCheck 2>&1
         ($out -join "`n") | Should -Not -Match 'has no client/ project'
     }
 }
