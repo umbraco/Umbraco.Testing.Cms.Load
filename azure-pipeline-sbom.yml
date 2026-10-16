@@ -1,0 +1,63 @@
+name: sbom_pipeline
+
+# SBOM + licence gate. Separate from the load-test pipelines (manual queue,
+# provision real infrastructure): runs on every push to main and every PR.
+trigger:
+  - main
+
+pr:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+jobs:
+  - job: sbom
+    displayName: Generate SBOMs + check licences
+    steps:
+      # One BOM per ecosystem (umbraco-sbom scans one per call): the Playwright
+      # client (npm) and the Terraform providers. Exit 10 = warnings only;
+      # 50 = licence policy violation, fails the run.
+      - pwsh: |
+          dotnet tool install --global Umbraco.Internal.Sbom
+          umbraco-sbom loadtests/scenarios/Default/client --output-file $(Build.ArtifactStagingDirectory)/bom/bom-npm.xml
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 10) { exit $LASTEXITCODE }
+          umbraco-sbom Terraform --output-file $(Build.ArtifactStagingDirectory)/bom/bom-terraform.xml
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 10) { exit $LASTEXITCODE }
+          exit 0
+        displayName: 'Generate SBOMs'
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish SBOMs'
+        inputs:
+          pathtoPublish: '$(Build.ArtifactStagingDirectory)/bom'
+          artifactName: 'sbom'
+
+      # Dependency-Track keeps one BOM per project version, so one project per
+      # ecosystem. Main only; DT_API_URI / DT_API_KEY are secret pipeline
+      # variables set in Azure DevOps, not in git.
+      - task: upload-bom-dtrack@1
+        displayName: 'Upload npm SBOM to Dependency-Track'
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+        continueOnError: true
+        inputs:
+          dtrackURI: $(DT_API_URI)
+          dtrackAPIKey: $(DT_API_KEY)
+          dtrackProjAutoCreate: true
+          dtrackProjClassifier: APPLICATION
+          dtrackProjName: 'Umbraco.Cms.Testing.Load'
+          dtrackProjVersion: 'main'
+          bomFilePath: '$(Build.ArtifactStagingDirectory)/bom/bom-npm.xml'
+
+      - task: upload-bom-dtrack@1
+        displayName: 'Upload Terraform SBOM to Dependency-Track'
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+        continueOnError: true
+        inputs:
+          dtrackURI: $(DT_API_URI)
+          dtrackAPIKey: $(DT_API_KEY)
+          dtrackProjAutoCreate: true
+          dtrackProjClassifier: APPLICATION
+          dtrackProjName: 'Umbraco.Cms.Testing.Load.Terraform'
+          dtrackProjVersion: 'main'
+          bomFilePath: '$(Build.ArtifactStagingDirectory)/bom/bom-terraform.xml'
