@@ -173,11 +173,13 @@ function Get-MetricSummary {
         [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
         [string]$Aggregation = 'Average',
         # PT1M by default (SQL DTU/CPU and HTTP error counts publish at that
-        # resolution). Pass '' to omit --interval; az CLI then still defaults
-        # to 1m, so it does not change the granularity. (It was once used for
-        # serverfarms CpuPercentage/MemoryPercentage coming back as 12 slots
-        # with every 'average' null; that recurred with '' in place - run
-        # 294055, first-tested Starter plan only - so the cause is elsewhere.)
+        # resolution). Pass '' to omit --interval and let Azure Monitor pick the
+        # metric's native granularity instead - needed for metrics whose native
+        # resolution is coarser than 1 minute (e.g. serverfarms CpuPercentage/
+        # MemoryPercentage, confirmed live: requesting PT1M got 12 data-point
+        # slots back with errorCode=Success but every one's 'average' null,
+        # because none of the 1-minute buckets aligned with the metric's actual
+        # sampling interval).
         [string]$Interval = 'PT1M'
     )
     $aggProp = $Aggregation.ToLowerInvariant()
@@ -415,7 +417,8 @@ if ($windowSec -ge $minWindowSec) {
         -ResourceId $AppServicePlanResourceId `
         -Metrics @("CpuPercentage", "MemoryPercentage") `
         -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
-        -Prefix 'plan'
+        -Prefix 'plan' `
+        -Interval ''
     foreach ($k in $planResult.Summary.Keys) { $metadata["plan_$k"] = $planResult.Summary[$k] }
     foreach ($p in $planResult.Series) { $seriesPoints.Add($p) }
 
