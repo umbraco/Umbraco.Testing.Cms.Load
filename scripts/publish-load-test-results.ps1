@@ -548,6 +548,8 @@ if ($engineFiles.Count -gt 0) {
     # merge the per-label buckets across engines. Single-engine runs trivially
     # become one parse call; multi-engine runs concatenate samples per label.
     $byLabel = @{}
+    # Per-minute samples across every engine file, for the latency series.
+    $byMinute = @{}
     # Sample window across every engine file, for the throughput denominator.
     $spanMinTs = [long]::MaxValue
     $spanMaxTs = [long]::MinValue
@@ -555,7 +557,7 @@ if ($engineFiles.Count -gt 0) {
         # One unreadable/corrupt engine file (e.g. truncated mid-write) must not
         # abort the whole publish - skip it and keep the other engines' data.
         try {
-            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs
+            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs -CollectPerMinute
         } catch {
             Write-Warning "Couldn't parse $($file.FullName): $($_.Exception.Message) - skipping this file."
             continue
@@ -571,6 +573,12 @@ if ($engineFiles.Count -gt 0) {
             }
             $merged.Samples.AddRange($kv.Value.Samples)
             $merged.Errors += $kv.Value.Errors
+        }
+        foreach ($kv in $parsed.ByMinute.GetEnumerator()) {
+            if (-not $byMinute.ContainsKey($kv.Key)) {
+                $byMinute[$kv.Key] = New-Object 'System.Collections.Generic.List[int]'
+            }
+            $byMinute[$kv.Key].AddRange($kv.Value)
         }
         if ($null -ne $parsed.MinTimestamp -and $parsed.MinTimestamp -lt $spanMinTs) { $spanMinTs = $parsed.MinTimestamp }
         if ($null -ne $parsed.MaxTimestamp -and $parsed.MaxTimestamp -gt $spanMaxTs) { $spanMaxTs = $parsed.MaxTimestamp }
@@ -634,6 +642,12 @@ if ($engineFiles.Count -gt 0) {
         $rows += [pscustomobject]$merged
     }
     Write-Host "Parsed $($rows.Count) sampler row(s) from $($engineFiles.Count) engine file(s)."
+
+    # Client-side latency per minute, into the same series table as the server
+    # metrics so the drill-down can show both on one time axis.
+    $latencyPoints = Get-PerMinuteLatencyPoints -ByMinute $byMinute
+    foreach ($p in $latencyPoints) { $seriesPoints.Add($p) }
+    Write-Host "Added $($latencyPoints.Count) per-minute latency point(s) to the series."
 }
 else {
     if ($resultsDirExists) {
@@ -724,6 +738,6 @@ if ($resultsDirExists) {
 # truth and recoverable via backfill-monitoring.ps1.
 Send-RowsToLogAnalytics -Rows $rows
 # Per-minute series mirror — additive to the summary, populates the table
-# the workbook's per-run drill-down reads. Empty when the test window was
-# unusable above (no datapoints were retrieved).
+# the workbook's per-run drill-down reads. Server metrics are absent when the
+# test window was unusable above; latency points still go when samples parsed.
 Send-SeriesToLogAnalytics -Points $seriesPoints

@@ -201,11 +201,16 @@ function Parse-JmeterCsv {
         # are systematically easier than steady-state and would understate p95/p99
         # if left in. 0 (default) disables the filter - the caller skips it
         # entirely for the 'ramp' profile, where the climb itself is the point.
-        [long]$RampCutoffMs = 0
+        [long]$RampCutoffMs = 0,
+        # Also bucket the kept samples by the minute they started in (epoch ms of
+        # the minute -> elapsed list), for the per-minute latency series. Off by
+        # default: only the history publish needs it.
+        [switch]$CollectPerMinute
     )
 
     $byLabel = @{}
     $allElapsed = if ($BuildAggregate) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
+    $byMinute   = if ($CollectPerMinute) { @{} } else { $null }
     $totalErrors = 0
     # Sample window (JMeter timeStamp is epoch ms), so callers can derive
     # throughput from the span covered rather than the configured duration.
@@ -296,6 +301,15 @@ function Parse-JmeterCsv {
             if ($tsOk) {
                 if ($ts -lt $minTs) { $minTs = $ts }
                 if ($ts -gt $maxTs) { $maxTs = $ts }
+                if ($CollectPerMinute) {
+                    $minute = $ts - ($ts % 60000)
+                    $minuteSamples = $byMinute[$minute]
+                    if (-not $minuteSamples) {
+                        $minuteSamples = New-Object 'System.Collections.Generic.List[int]'
+                        $byMinute[$minute] = $minuteSamples
+                    }
+                    $minuteSamples.Add($elapsed)
+                }
             }
 
             if ($BuildAggregate) {
@@ -309,7 +323,37 @@ function Parse-JmeterCsv {
         ByLabel      = $byLabel
         AllElapsed   = $allElapsed
         TotalErrors  = $totalErrors
+        ByMinute     = $byMinute
         MinTimestamp = if ($minTs -eq [long]::MaxValue) { $null } else { $minTs }
         MaxTimestamp = if ($maxTs -eq [long]::MinValue) { $null } else { $maxTs }
     }
+}
+
+# Per-minute client-side latency across all samplers, as LoadTestSeries_CL
+# points (same shape as the Azure Monitor series): latency_p50_ms,
+# latency_p95_ms and latency_max_ms per minute. Shows WHEN slow requests
+# happened - a run-wide stall (every sampler capped at the same max) shows as
+# a spike in one or two minutes, a uniformly slower build as a raised line.
+# $ByMinute is Parse-JmeterCsv -CollectPerMinute's ByMinute, merged across
+# engine files. The first and last minute are usually partial.
+function Get-PerMinuteLatencyPoints {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [hashtable]$ByMinute)
+    $points = New-Object System.Collections.Generic.List[object]
+    foreach ($minute in ($ByMinute.Keys | Sort-Object)) {
+        $sorted = [System.Collections.Generic.List[int]]::new($ByMinute[$minute])
+        if ($sorted.Count -eq 0) { continue }
+        $sorted.Sort()
+        $time = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$minute).UtcDateTime.ToString('o')
+        foreach ($stat in @(
+                @{ Name = 'latency_p50_ms'; Value = (Get-Pct $sorted 50) },
+                @{ Name = 'latency_p95_ms'; Value = (Get-Pct $sorted 95) },
+                @{ Name = 'latency_max_ms'; Value = $sorted[$sorted.Count - 1] })) {
+            $points.Add([pscustomobject]@{
+                TimeGenerated = $time
+                metric_name   = $stat.Name
+                value         = [double]$stat.Value
+            })
+        }
+    }
+    return $points
 }
