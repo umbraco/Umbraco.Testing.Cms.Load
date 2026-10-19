@@ -173,29 +173,44 @@ function Get-MetricSummary {
         [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
         [string]$Aggregation = 'Average',
         # PT1M by default (SQL DTU/CPU and HTTP error counts publish at that
-        # resolution). Pass '' to omit --interval and let Azure Monitor pick the
-        # metric's native granularity instead - needed for metrics whose native
-        # resolution is coarser than 1 minute (e.g. serverfarms CpuPercentage/
-        # MemoryPercentage, confirmed live: requesting PT1M got 12 data-point
-        # slots back with errorCode=Success but every one's 'average' null,
-        # because none of the 1-minute buckets aligned with the metric's actual
-        # sampling interval).
-        [string]$Interval = 'PT1M'
+        # resolution). Pass '' to omit --interval. Note az CLI then still
+        # defaults to 1m, so '' is effectively PT1M: the serverfarms "12 slots,
+        # every 'average' null" case it was meant to fix came back on
+        # 19-10-2026 (run 294055, Starter only) with '' in place. That case is
+        # handled by the retry below instead.
+        [string]$Interval = 'PT1M',
+        # Metrics for a freshly provisioned resource can reach Azure Monitor
+        # minutes after the load test ends; querying straight away then gets
+        # every slot null. When any requested metric comes back with no usable
+        # points, wait and query again, up to $MaxAttempts in total (1 = no
+        # retry; only the plan query opts in, so a legitimately empty metric
+        # elsewhere never adds waiting to every run).
+        [int]$MaxAttempts = 1,
+        [int]$RetryDelaySec = 60
     )
     $aggProp = $Aggregation.ToLowerInvariant()
     $summary = @{}
     $series  = New-Object System.Collections.Generic.List[object]
     try {
         $intervalArgs = if ($Interval) { @('--interval', $Interval) } else { @() }
-        $json = az monitor metrics list `
-            --resource $ResourceId `
-            --metric ($Metrics -join ',') `
-            --aggregation $Aggregation `
-            --start-time $StartTime `
-            --end-time $EndTime `
-            @intervalArgs `
-            -o json
-        $data = $json | ConvertFrom-Json
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            $json = az monitor metrics list `
+                --resource $ResourceId `
+                --metric ($Metrics -join ',') `
+                --aggregation $Aggregation `
+                --start-time $StartTime `
+                --end-time $EndTime `
+                @intervalArgs `
+                -o json
+            $data = $json | ConvertFrom-Json
+            $emptyMetrics = @($data.value | Where-Object {
+                @($_.timeseries | ForEach-Object { $_.data } |
+                    Where-Object { $null -ne $_.$aggProp }).Count -eq 0
+            } | ForEach-Object { $_.name.value })
+            if ($emptyMetrics.Count -eq 0 -or $attempt -eq $MaxAttempts) { break }
+            Write-Host "No datapoints yet for $($emptyMetrics -join ', ') on $ResourceId (attempt $attempt/$MaxAttempts); retrying in ${RetryDelaySec}s."
+            Start-Sleep -Seconds $RetryDelaySec
+        }
         foreach ($metric in $data.value) {
             $name = $metric.name.value
             $prefixedName = if ($Prefix) { "${Prefix}_${name}" } else { $name }
@@ -227,7 +242,7 @@ function Get-MetricSummary {
                 $rawDataPointCount  = @($metric.timeseries | ForEach-Object { $_.data } | Where-Object { $_ }).Count
                 $errorCode = if ($metric.errorCode) { [string]$metric.errorCode } else { "n/a" }
                 $errorDetail = if ($metric.errormessage) { " errormessage=`"$($metric.errormessage)`"" } else { "" }
-                $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] - column will be null. errorCode=$errorCode$errorDetail timeseries=$rawTimeseriesCount rawDataPoints=$rawDataPointCount (aggregation=$Aggregation)."
+                $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] after $attempt attempt(s) - column will be null. errorCode=$errorCode$errorDetail timeseries=$rawTimeseriesCount rawDataPoints=$rawDataPointCount (aggregation=$Aggregation)."
                 Write-Warning $msg
                 Write-Host "##vso[task.logissue type=warning]$msg"
                 continue
@@ -418,7 +433,8 @@ if ($windowSec -ge $minWindowSec) {
         -Metrics @("CpuPercentage", "MemoryPercentage") `
         -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
         -Prefix 'plan' `
-        -Interval ''
+        -Interval '' `
+        -MaxAttempts 4
     foreach ($k in $planResult.Summary.Keys) { $metadata["plan_$k"] = $planResult.Summary[$k] }
     foreach ($p in $planResult.Series) { $seriesPoints.Add($p) }
 
