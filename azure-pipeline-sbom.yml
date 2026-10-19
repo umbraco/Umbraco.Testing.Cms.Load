@@ -47,6 +47,7 @@ jobs:
           dtrackProjClassifier: APPLICATION
           dtrackProjName: 'Umbraco.Cms.Testing.Load.Npm'
           dtrackProjVersion: 'main'
+          dtrackIsLatest: true
           bomFilePath: '$(Build.ArtifactStagingDirectory)/bom/bom-npm.xml'
 
       - task: upload-bom-dtrack@1
@@ -60,4 +61,5 @@ jobs:
           dtrackProjClassifier: APPLICATION
           dtrackProjName: 'Umbraco.Cms.Testing.Load.Terraform'
           dtrackProjVersion: 'main'
+          dtrackIsLatest: true
           bomFilePath: '$(Build.ArtifactStagingDirectory)/bom/bom-terraform.xml'
