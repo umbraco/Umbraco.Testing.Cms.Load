@@ -194,19 +194,31 @@ function Get-MetricSummary {
     try {
         $intervalArgs = if ($Interval) { @('--interval', $Interval) } else { @() }
         for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-            $json = az monitor metrics list `
-                --resource $ResourceId `
-                --metric ($Metrics -join ',') `
-                --aggregation $Aggregation `
-                --start-time $StartTime `
-                --end-time $EndTime `
-                @intervalArgs `
-                -o json
-            $data = $json | ConvertFrom-Json
+            try {
+                $json = az monitor metrics list `
+                    --resource $ResourceId `
+                    --metric ($Metrics -join ',') `
+                    --aggregation $Aggregation `
+                    --start-time $StartTime `
+                    --end-time $EndTime `
+                    @intervalArgs `
+                    -o json
+                $attemptData = $json | ConvertFrom-Json
+            } catch {
+                # A failed first attempt goes to the outer catch as before. A
+                # failed retry (throttling, empty output) must not discard what
+                # earlier attempts got, e.g. a valid MemoryPercentage.
+                if ($attempt -eq 1) { throw }
+                Write-Host "Retry $attempt/$MaxAttempts for $ResourceId failed ($($_.Exception.Message)); keeping attempt $($attempt - 1)'s result."
+                $attempt--
+                break
+            }
+            $data = $attemptData
             # Only Success-but-empty is worth waiting for; an API error (bad
-            # metric name, auth) won't change by retrying.
+            # metric name, auth) won't change by retrying. A missing errorCode
+            # counts as Success rather than silently disabling the retry.
             $emptyMetrics = @($data.value | Where-Object {
-                [string]$_.errorCode -eq 'Success' -and
+                (-not $_.errorCode -or [string]$_.errorCode -eq 'Success') -and
                 @($_.timeseries | ForEach-Object { $_.data } |
                     Where-Object { $null -ne $_.$aggProp }).Count -eq 0
             } | ForEach-Object { $_.name.value })
@@ -252,7 +264,7 @@ function Get-MetricSummary {
                 $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] after $attempt attempt(s) - column will be null. errorCode=$errorCode$errorDetail timeseries=$rawTimeseriesCount rawDataPoints=$rawDataPointCount (aggregation=$Aggregation)."
                 Write-Warning $msg
                 Write-Host "##vso[task.logissue type=warning]$msg"
-                if ($MaxAttempts -gt 1 -and $errorCode -eq 'Success') {
+                if ($MaxAttempts -gt 1 -and $errorCode -in @('Success', 'n/a')) {
                     Write-MetricEmissionDiagnostic -ResourceId $ResourceId -Metric $name -Aggregation $Aggregation -StartTime $StartTime -EndTime $EndTime
                 }
                 continue
@@ -284,10 +296,12 @@ function Get-MetricSummary {
 }
 
 # After a retried metric stays empty: query from 30 min before the test window
-# to now and log when the resource first and last had a value. No values at
-# all, or a first value after the window, means it wasn't emitting during the
-# test (e.g. a freshly provisioned plan); values inside the window that the
-# window query missed would point at lag instead. Log-only, never throws.
+# to now and log how many values fall before, inside and after the window.
+# Values after the window but none inside point at the resource not emitting
+# during the test (ingestion doesn't skip earlier minutes while delivering
+# later ones); values inside now visible mean they arrived late (lag). No
+# values at all can be either, since this runs seconds after the last retry.
+# Log-only, never throws.
 function Write-MetricEmissionDiagnostic {
     param(
         [Parameter(Mandatory)] [string]$ResourceId,
@@ -298,21 +312,29 @@ function Write-MetricEmissionDiagnostic {
     )
     try {
         $aggProp = $Aggregation.ToLowerInvariant()
-        $from = [DateTimeOffset]::Parse($StartTime, [System.Globalization.CultureInfo]::InvariantCulture).AddMinutes(-30).UtcDateTime.ToString('o')
+        $culture = [System.Globalization.CultureInfo]::InvariantCulture
+        $windowStart = [DateTimeOffset]::Parse($StartTime, $culture)
+        $windowEnd   = [DateTimeOffset]::Parse($EndTime, $culture)
+        $from = $windowStart.AddMinutes(-30).UtcDateTime.ToString('o')
         $to   = [DateTimeOffset]::UtcNow.UtcDateTime.ToString('o')
         $json = az monitor metrics list --resource $ResourceId --metric $Metric --aggregation $Aggregation `
             --start-time $from --end-time $to --interval PT1M -o json
-        $values = @(($json | ConvertFrom-Json).value | ForEach-Object { $_.timeseries } | ForEach-Object { $_.data } |
-            Where-Object { $null -ne $_.$aggProp } | Sort-Object timeStamp)
-        if ($values.Count -eq 0) {
-            Write-Host "Diagnostic: $Metric on $ResourceId has no values at all in [$from, $to] - it was not emitted around the test window [$StartTime, $EndTime]."
-        } else {
-            # ConvertFrom-Json turns the ISO timestamps into DateTime; print them
-            # back as ISO so they compare at a glance with the window.
-            $first = ([datetime]$values[0].timeStamp).ToUniversalTime().ToString('o')
-            $last  = ([datetime]$values[-1].timeStamp).ToUniversalTime().ToString('o')
-            Write-Host "Diagnostic: $Metric on $ResourceId has $($values.Count) value(s) in [$from, $to]; first at $first, last at $last. Test window was [$StartTime, $EndTime]."
+        # ConvertFrom-Json turns the ISO timestamps into DateTime (Kind Utc).
+        $times = @(($json | ConvertFrom-Json).value | ForEach-Object { $_.timeseries } | ForEach-Object { $_.data } |
+            Where-Object { $null -ne $_.$aggProp } | ForEach-Object { [DateTimeOffset]$_.timeStamp } | Sort-Object)
+        if ($times.Count -eq 0) {
+            Write-Host "Diagnostic: $Metric on $ResourceId has no values visible as of $to in [$from, $to] (not emitted, or not ingested yet). Test window was [$StartTime, $EndTime]."
+            return
         }
+        # A 1-minute slot counts as inside when it overlaps the window.
+        $before = @($times | Where-Object { $_.AddMinutes(1) -le $windowStart }).Count
+        $after  = @($times | Where-Object { $_ -ge $windowEnd }).Count
+        $inside = $times.Count - $before - $after
+        $reading = if ($inside -gt 0) { 'values for the window are visible now, so they arrived late (ingestion lag)' }
+                   elseif ($after -gt 0) { 'values after the window but none inside: the resource was likely not emitting during the test' }
+                   else { 'values only before the window: it stopped emitting, or nothing since has been ingested yet' }
+        Write-Host ("Diagnostic: $Metric on $ResourceId has $before value(s) before, $inside inside and $after after the test window [$StartTime, $EndTime]" +
+            " (first at $($times[0].UtcDateTime.ToString('o')), last at $($times[-1].UtcDateTime.ToString('o'))) - $reading.")
     } catch {
         Write-Host "Diagnostic query for $Metric on $ResourceId failed: $($_.Exception.Message)"
     }
