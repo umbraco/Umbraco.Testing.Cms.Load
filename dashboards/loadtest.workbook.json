@@ -2020,7 +2020,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Per-minute resource pressure (% metrics only) for the drilled run.\n// Sourced from LoadTestSeries_CL. Split from the HTTP-error chart below\n// because percentages share a 0-100 scale where errors would visually flatten.\n// Tier in the series name: a multi-tier run shares one run_id, so without it\n// both tiers' values land on the same line.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where metric_name startswith 'plan_' or metric_name startswith 'sql_'\n| extend series = strcat(infra_tier, ' | ', iff(isempty(jmeter_test_name), metric_name, strcat(jmeter_test_name, ' | ', metric_name)))\n| project TimeGenerated, series, value\n| evaluate pivot(series, any(value))\n| order by TimeGenerated asc",
+        "query": "// Per-minute resource pressure (% metrics only) for the drilled run.\n// Sourced from LoadTestSeries_CL. Split from the HTTP-error chart below\n// because percentages share a 0-100 scale where errors would visually flatten.\n// Tier in the series name: a multi-tier run shares one run_id, so without it\n// both tiers' values land on the same line.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where '{Tier}' == '*' or '{Tier}' == '' or infra_tier == '{Tier}'\n| where metric_name startswith 'plan_' or metric_name startswith 'sql_'\n| extend series = strcat(infra_tier, ' | ', iff(isempty(jmeter_test_name), metric_name, strcat(jmeter_test_name, ' | ', metric_name)))\n| project TimeGenerated, series, value\n| evaluate pivot(series, any(value))\n| order by TimeGenerated asc",
         "size": 0,
         "title": "Per-minute resource pressure (% metrics) — App / SQL CPU, DTU, log-write, physical reads.",
         "queryType": 0,
@@ -2063,7 +2063,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Per-minute HTTP error counts (4xx / 5xx) for the drilled run. Separate\n// chart from the % metrics above so the count Y-axis auto-scales to the\n// natural range (usually 0-10 except during spikes) instead of being crushed\n// against a 0-100 floor shared with CPU/DTU percentages.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where metric_name startswith 'app_Http'\n| extend series = strcat(infra_tier, ' | ', iff(isempty(jmeter_test_name), metric_name, strcat(jmeter_test_name, ' | ', metric_name)))\n| project TimeGenerated, series, value\n| evaluate pivot(series, any(value))\n| order by TimeGenerated asc",
+        "query": "// Per-minute HTTP error counts (4xx / 5xx) for the drilled run. Separate\n// chart from the % metrics above so the count Y-axis auto-scales to the\n// natural range (usually 0-10 except during spikes) instead of being crushed\n// against a 0-100 floor shared with CPU/DTU percentages.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where '{Tier}' == '*' or '{Tier}' == '' or infra_tier == '{Tier}'\n| where metric_name startswith 'app_Http'\n| extend series = strcat(infra_tier, ' | ', iff(isempty(jmeter_test_name), metric_name, strcat(jmeter_test_name, ' | ', metric_name)))\n| project TimeGenerated, series, value\n| evaluate pivot(series, any(value))\n| order by TimeGenerated asc",
         "size": 0,
         "title": "Per-minute HTTP error counts — 4xx (client errors) + 5xx (server errors). Auto-scaled Y-axis.",
         "queryType": 0,
@@ -2095,9 +2095,9 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "// Client-side latency per minute for the drilled run, across all samplers:\n// p50, p95 and max of the requests that started in that minute (from the\n// engines' own results, ramp-up excluded). Answers 'when in the run were\n// requests slow?': a stall shows as a max/p95 spike in one or two minutes,\n// a uniformly slower build as a raised p50/p95 line. First and last minute\n// are usually partial. Runs published before this series existed show nothing.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where metric_name startswith 'latency_'\n| extend series = strcat(infra_tier, ' | ', iff(isempty(jmeter_test_name), metric_name, strcat(jmeter_test_name, ' | ', metric_name)))\n| project TimeGenerated, series, value\n| evaluate pivot(series, any(value))\n| order by TimeGenerated asc",
+        "query": "// Client-side latency per minute for the drilled run: p50 and p95 of the\n// requests that started in that minute, across the run's samplers (backoffice:\n// the transaction-controller steps), from the engines' own results with the\n// ramp-up excluded (none for the ramp profile). A raised line is a slower\n// build; a spike in one or two minutes is a stall (see the max chart below).\n// First and last minute are usually partial. Runs published before this\n// series existed show nothing.\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where '{Tier}' == '*' or '{Tier}' == '' or infra_tier == '{Tier}'\n| where metric_name in ('latency_p50_ms', 'latency_p95_ms')\n| extend series = strcat(infra_tier, ' | ', iff(isempty(jmeter_test_name), metric_name, strcat(jmeter_test_name, ' | ', metric_name)))\n| project TimeGenerated, series, value\n| evaluate pivot(series, any(value))\n| order by TimeGenerated asc",
         "size": 0,
-        "title": "Per-minute client latency (ms) — p50 / p95 / max across all samplers, per tier. A spike in one or two minutes is a stall; a raised line is a slower build.",
+        "title": "Per-minute client latency (ms) — p50 / p95 per tier. A raised line is a slower build; a spike in one or two minutes is a stall.",
         "queryType": 0,
         "resourceType": "microsoft.operationalinsights/workspaces",
         "crossComponentResources": [
@@ -2110,6 +2110,38 @@
         }
       },
       "name": "runs-series-latency",
+      "conditionalVisibilities": [
+        {
+          "parameterName": "SelectedTab",
+          "comparison": "isEqualTo",
+          "value": "Runs"
+        },
+        {
+          "parameterName": "DrillRun",
+          "comparison": "isNotEqualTo",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Slowest request per minute for the drilled run (same samples as the\n// p50/p95 chart above). Own chart because its scale (up to seconds) would\n// flatten p50/p95. A run-wide stall shows as every tier's max jumping to\n// the stall length in the same minute(s).\nLoadTestSeries_CL\n| where run_id == '{DrillRun}'\n| where '{Tier}' == '*' or '{Tier}' == '' or infra_tier == '{Tier}'\n| where metric_name == 'latency_max_ms'\n| extend series = strcat(infra_tier, ' | ', iff(isempty(jmeter_test_name), metric_name, strcat(jmeter_test_name, ' | ', metric_name)))\n| project TimeGenerated, series, value\n| evaluate pivot(series, any(value))\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Per-minute slowest request (ms) per tier. A jump to the same value across samplers and minutes points at a stall.",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "visualization": "linechart",
+        "chartSettings": {
+          "xAxis": "TimeGenerated",
+          "showLegend": true
+        }
+      },
+      "name": "runs-series-latency-max",
       "conditionalVisibilities": [
         {
           "parameterName": "SelectedTab",

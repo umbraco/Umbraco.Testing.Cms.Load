@@ -173,19 +173,19 @@ function Get-MetricSummary {
         [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
         [string]$Aggregation = 'Average',
         # PT1M by default (SQL DTU/CPU and HTTP error counts publish at that
-        # resolution). Pass '' to omit --interval. Note az CLI then still
-        # defaults to 1m, so '' is effectively PT1M: the serverfarms "12 slots,
-        # every 'average' null" case it was meant to fix came back on
-        # 19-10-2026 (run 294055, Starter only) with '' in place. That case is
-        # handled by the retry below instead.
+        # resolution). Pass '' to omit --interval; az CLI then still defaults
+        # to 1m, so it does not change the granularity.
         [string]$Interval = 'PT1M',
-        # Metrics for a freshly provisioned resource can reach Azure Monitor
-        # minutes after the load test ends; querying straight away then gets
-        # every slot null. When any requested metric comes back with no usable
-        # points, wait and query again, up to $MaxAttempts in total (1 = no
-        # retry; only the plan query opts in, so a legitimately empty metric
-        # elsewhere never adds waiting to every run).
-        [int]$MaxAttempts = 1,
+        # Retry for the serverfarms case: run 294055 (19-10-2026) got 12 slots
+        # with every 'average' null for the first-tested (Starter) plan, while
+        # the later Standard plan was fine. When a metric comes back Success but
+        # with no usable points, wait and query again, up to $MaxAttempts in
+        # total (1 = no retry; only the plan query opts in, so a legitimately
+        # empty metric elsewhere never adds waiting to every run). Whether
+        # retrying helps is unproven: the log says on which attempt data
+        # arrived, and on final failure a wider-window query shows whether the
+        # resource emitted at all around the test (late start vs ingestion lag).
+        [ValidateRange(1, 10)] [int]$MaxAttempts = 1,
         [int]$RetryDelaySec = 60
     )
     $aggProp = $Aggregation.ToLowerInvariant()
@@ -203,11 +203,18 @@ function Get-MetricSummary {
                 @intervalArgs `
                 -o json
             $data = $json | ConvertFrom-Json
+            # Only Success-but-empty is worth waiting for; an API error (bad
+            # metric name, auth) won't change by retrying.
             $emptyMetrics = @($data.value | Where-Object {
+                [string]$_.errorCode -eq 'Success' -and
                 @($_.timeseries | ForEach-Object { $_.data } |
                     Where-Object { $null -ne $_.$aggProp }).Count -eq 0
             } | ForEach-Object { $_.name.value })
-            if ($emptyMetrics.Count -eq 0 -or $attempt -eq $MaxAttempts) { break }
+            if ($emptyMetrics.Count -eq 0) {
+                if ($attempt -gt 1) { Write-Host "Datapoints for $ResourceId arrived on attempt $attempt/$MaxAttempts." }
+                break
+            }
+            if ($attempt -eq $MaxAttempts) { break }
             Write-Host "No datapoints yet for $($emptyMetrics -join ', ') on $ResourceId (attempt $attempt/$MaxAttempts); retrying in ${RetryDelaySec}s."
             Start-Sleep -Seconds $RetryDelaySec
         }
@@ -245,6 +252,9 @@ function Get-MetricSummary {
                 $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] after $attempt attempt(s) - column will be null. errorCode=$errorCode$errorDetail timeseries=$rawTimeseriesCount rawDataPoints=$rawDataPointCount (aggregation=$Aggregation)."
                 Write-Warning $msg
                 Write-Host "##vso[task.logissue type=warning]$msg"
+                if ($MaxAttempts -gt 1 -and $errorCode -eq 'Success') {
+                    Write-MetricEmissionDiagnostic -ResourceId $ResourceId -Metric $name -Aggregation $Aggregation -StartTime $StartTime -EndTime $EndTime
+                }
                 continue
             }
             # Per-minute points retained for LoadTestSeries_CL. The summary
@@ -271,6 +281,41 @@ function Get-MetricSummary {
         Write-Host "##vso[task.logissue type=warning]$msg"
     }
     return @{ Summary = $summary; Series = $series }
+}
+
+# After a retried metric stays empty: query from 30 min before the test window
+# to now and log when the resource first and last had a value. No values at
+# all, or a first value after the window, means it wasn't emitting during the
+# test (e.g. a freshly provisioned plan); values inside the window that the
+# window query missed would point at lag instead. Log-only, never throws.
+function Write-MetricEmissionDiagnostic {
+    param(
+        [Parameter(Mandatory)] [string]$ResourceId,
+        [Parameter(Mandatory)] [string]$Metric,
+        [Parameter(Mandatory)] [string]$Aggregation,
+        [Parameter(Mandatory)] [string]$StartTime,
+        [Parameter(Mandatory)] [string]$EndTime
+    )
+    try {
+        $aggProp = $Aggregation.ToLowerInvariant()
+        $from = [DateTimeOffset]::Parse($StartTime, [System.Globalization.CultureInfo]::InvariantCulture).AddMinutes(-30).UtcDateTime.ToString('o')
+        $to   = [DateTimeOffset]::UtcNow.UtcDateTime.ToString('o')
+        $json = az monitor metrics list --resource $ResourceId --metric $Metric --aggregation $Aggregation `
+            --start-time $from --end-time $to --interval PT1M -o json
+        $values = @(($json | ConvertFrom-Json).value | ForEach-Object { $_.timeseries } | ForEach-Object { $_.data } |
+            Where-Object { $null -ne $_.$aggProp } | Sort-Object timeStamp)
+        if ($values.Count -eq 0) {
+            Write-Host "Diagnostic: $Metric on $ResourceId has no values at all in [$from, $to] - it was not emitted around the test window [$StartTime, $EndTime]."
+        } else {
+            # ConvertFrom-Json turns the ISO timestamps into DateTime; print them
+            # back as ISO so they compare at a glance with the window.
+            $first = ([datetime]$values[0].timeStamp).ToUniversalTime().ToString('o')
+            $last  = ([datetime]$values[-1].timeStamp).ToUniversalTime().ToString('o')
+            Write-Host "Diagnostic: $Metric on $ResourceId has $($values.Count) value(s) in [$from, $to]; first at $first, last at $last. Test window was [$StartTime, $EndTime]."
+        }
+    } catch {
+        Write-Host "Diagnostic query for $Metric on $ResourceId failed: $($_.Exception.Message)"
+    }
 }
 
 # Parse the load-test window into a length in seconds. Returns 0 if either
@@ -433,7 +478,6 @@ if ($windowSec -ge $minWindowSec) {
         -Metrics @("CpuPercentage", "MemoryPercentage") `
         -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
         -Prefix 'plan' `
-        -Interval '' `
         -MaxAttempts 4
     foreach ($k in $planResult.Summary.Keys) { $metadata["plan_$k"] = $planResult.Summary[$k] }
     foreach ($p in $planResult.Series) { $seriesPoints.Add($p) }
