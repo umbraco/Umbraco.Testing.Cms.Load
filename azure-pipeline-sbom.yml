@@ -15,6 +15,13 @@ jobs:
   - job: sbom
     displayName: Generate SBOMs + check licences
     steps:
+      # umbraco-sbom is a .NET 10 tool.
+      - task: UseDotNet@2
+        displayName: 'Install .NET SDK 10.x'
+        inputs:
+          packageType: sdk
+          version: '10.x'
+
       # One BOM per ecosystem (umbraco-sbom scans one per call): the Playwright
       # client (npm) and the Terraform providers. Exit 10 = warnings only;
       # 50 = licence policy violation, fails the run.
