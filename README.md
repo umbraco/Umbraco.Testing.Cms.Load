@@ -63,6 +63,7 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 ```
 ├── azure-pipeline.yml           # Load test pipeline — Locust/JMeter (manual queue)
 ├── azure-pipeline-client.yml    # Client measurement pipeline — Playwright (manual queue)
+├── azure-pipeline-sbom.yml      # SBOM + licence gate — npm client and Terraform providers (main + PRs)
 ├── README.md
 │
 ├── dashboards/
@@ -804,6 +805,12 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 ### Smoke-testing changes
 
 When iterating on scripts or Terraform, the full pipeline (~20-30 min) is too slow a feedback loop. Run a **profile-only smoke**: `loadProfile=smoke`, `runStarter=true` (everything else default). Full stack runs (provision + build + seed + 60s load test + publish + regression check) in ~12-15 min. Exercises the full ephemeral-infra cycle and the load-test path on the smallest seeder preset.
+
+### SBOM and licence check
+
+`azure-pipeline-sbom.yml` is the only pipeline that runs automatically: on every push to `main` and every PR. It generates CycloneDX SBOMs with `umbraco-sbom` (the `Umbraco.Internal.Sbom` tool, as used by Umbraco-CMS) for the two ecosystems in this repo — the Playwright client under `loadtests/scenarios/Default/client/` (npm) and the Terraform providers under `Terraform/` — publishes them as the `sbom` artifact, and fails the run on a copyleft or commercial licence (exit 50). A reviewed exception goes in as `--allow-package <ecosystem>:<pattern>` on the `umbraco-sbom` call. On `main` both BOMs are also uploaded to Dependency-Track (projects `Umbraco.Cms.Testing.Load.Npm` and `Umbraco.Cms.Testing.Load.Terraform`, version `main`) using the secret pipeline variables `DT_API_URI` and `DT_API_KEY`, set on the pipeline in Azure DevOps. The pipeline has to be registered once in Azure DevOps against this file.
+
+Not covered: Locust and JMeter (run on Azure Load Testing's managed agents, no manifest in this repo), the Umbraco app and `Umbraco.Cms.TestDataSeeder` package the pipeline installs at provision time (versions are queue parameters), and Pester, installed at run time.
 
 ### Running Terraform Locally
 
