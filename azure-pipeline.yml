@@ -24,7 +24,7 @@ parameters:
   # provisioned Umbraco. 'frontend' runs the scenario's locustfile.py (the
   # default path, unchanged from prior versions). 'backoffice' runs the JMeter
   # tests under loadtests/scenarios/<scenario>/jmeter/v<major>/. v17 JMeter
-  # files are used for v18 deployments (matches the seeder fallback).
+  # files are reused for v18 (and, unverified, v19 - see Get-JmeterMajor).
   # resolve-run-config validates that the chosen (scenario, workload) pair has
   # the required files — e.g. workload=backoffice on a scenario without a
   # jmeter/ folder fails fast at queue-time, not 15 minutes into provisioning.

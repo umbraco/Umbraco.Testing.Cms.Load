@@ -86,26 +86,75 @@ if ($SeederPresetOverride -ne 'Auto') {
     $preset = $SeederPresetOverride
 }
 
-# Each Umbraco major mapped explicitly (not by range) so a future major without
-# a known TFM hits default and errors, rather than silently inheriting v17/v18.
-# dotnetVersion = App Service framework_version ('vX.0'); sdkVersion = SDK feed
-# selector for UseDotNet@2 ('X.x').
-$umbracoMajor = Get-UmbracoMajor $UmbracoVersion
-$dotnetVersion = switch ($umbracoMajor) {
-    13      { 'v8.0' }
-    14      { 'v8.0' }
-    15      { 'v9.0' }
-    16      { 'v9.0' }
-    17      { 'v10.0' }
-    18      { 'v10.0' }   # verify against v18 release notes
-    default { $null }
+# Single source of truth shared with Terraform/modules/umbraco/scripts/install-
+# umbraco-cms-on-appservice.ps1 (the actual install reads the same file).
+# Loaded up front so the "supported majors" wording below is derived from it
+# rather than hand-typed; the per-major gate itself runs after the cheaper
+# checks. Deliberately NOT also checked against nuget.org (unlike the
+# Umbraco.Templates check below) - that check was tried and pulled: see git
+# history on the seeder gate if reintroducing it.
+$seederVersionsPath = Join-Path $WorkspaceRoot "scripts/seeder-versions.json"
+if (-not (Test-Path -LiteralPath $seederVersionsPath)) {
+    Write-PipelineError "Couldn't find seeder-versions.json at '$seederVersionsPath'."
 }
+$seederPackageVersions = Get-Content -LiteralPath $seederVersionsPath -Raw | ConvertFrom-Json -AsHashtable
+$seederShippedMajors = @($seederPackageVersions.Keys | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
+
+# Each Umbraco major mapped explicitly (not by range) so a future major without
+# a known TFM is absent and errors, rather than silently inheriting v18/v19.
+# runtime = App Service framework_version ('vX.0'), from which the UseDotNet@2
+# SDK selector ('X.x') is derived. previewSdk = let UseDotNet@2 pick a pre-GA
+# SDK for that selector - only for a major whose .NET hasn't GA'd yet.
+# blockedBy = a reason this major can't be provisioned yet even though it's
+# mapped; the run fails here with that reason instead of later in Terraform.
+$runtimeMaps = @{
+    13 = @{ runtime = 'v8.0';  previewSdk = $false }
+    14 = @{ runtime = 'v8.0';  previewSdk = $false }
+    15 = @{ runtime = 'v9.0';  previewSdk = $false }
+    16 = @{ runtime = 'v9.0';  previewSdk = $false }
+    17 = @{ runtime = 'v10.0'; previewSdk = $false }
+    18 = @{ runtime = 'v10.0'; previewSdk = $false }   # verify against v18 release notes
+    # Umbraco.Cms.* 19.0.0-beta1 targets net11.0 only (nuspec). .NET 11 was at
+    # 11.0.0-rc.3 on 30-10-2026 (dotnet release index); GA is expected in
+    # November 2026 per the usual .NET cadence - flip previewSdk to $false once
+    # 11.0.100 is GA. blockedBy: the azurerm provider validates
+    # azurerm_windows_web_app.application_stack.dotnet_version against a fixed
+    # list that ends at v10.0 - in the pinned release and, as of 30-10-2026, on
+    # main (internal/services/appservice/helpers/app_stack.go). Terraform/main.tf
+    # constrains azurerm to '~> 4.20' while the provider's current line is 5.x,
+    # so any release that adds 'v11.0' will need that constraint raised to 5.x
+    # (a provider major upgrade), not just a lock bump. Remove blockedBy once
+    # that's done; the rest of the v19 path is already wired.
+    19 = @{ runtime = 'v11.0'; previewSdk = $true
+            blockedBy = "the azurerm Terraform provider pinned in Terraform/.terraform.lock.hcl (currently {azurerm}) rejects dotnet_version 'v11.0' for a Windows App Service (see internal/services/appservice/helpers/app_stack.go in hashicorp/terraform-provider-azurerm). Any release that accepts it will be on the provider's 5.x line, which Terraform/main.tf's '~> 4.20' constraint excludes - raise that constraint (a provider major upgrade), re-init, then drop 'blockedBy' from the v19 entry in resolve-run-config.ps1" }
+}
+# What a queue can actually run today: mapped, not blocked, and with a seeder.
+$supportedMajors = @($runtimeMaps.Keys | Where-Object { -not $runtimeMaps[$_].blockedBy -and $_ -in $seederShippedMajors } | Sort-Object)
+$supportedList   = ($supportedMajors | ForEach-Object { "v$_" }) -join ', '
+
+$umbracoMajor = Get-UmbracoMajor $UmbracoVersion
+$runtimeMap = $runtimeMaps[$umbracoMajor]
+$dotnetVersion = $runtimeMap.runtime
 if (-not $dotnetVersion) {
-    # Note the runnable set is narrower than this TFM map: the seeder gate below
-    # blocks 14/15/16. The honest "what can actually run" answer is v13, v17, v18.
-    Write-PipelineError "Umbraco $UmbracoVersion is unsupported. This pipeline supports v13, v17, and v18 (the majors with a published TestDataSeeder build; v18 reuses v17's). Extend the major→runtime map in resolve-run-config.ps1 when a new major is supported."
+    Write-PipelineError "Umbraco $UmbracoVersion is unsupported: no .NET runtime is mapped for major $umbracoMajor. This pipeline can run $supportedList today. Extend `$runtimeMaps in resolve-run-config.ps1 (and scripts/seeder-versions.json) when a new major is supported."
+}
+if ($runtimeMap.blockedBy) {
+    # Fail here rather than at terraform plan: the provision stage only runs
+    # after ensureHistoryInfra/ensureMonitoringInfra, so "plan fails" still
+    # costs several minutes of agent time and idempotent-infra churn per attempt.
+    # The pinned provider version is read from the lock file so the message
+    # can't go stale on a lock bump.
+    $azurermPinned = 'unknown'
+    $lockPath = Join-Path $WorkspaceRoot 'Terraform/.terraform.lock.hcl'
+    if (Test-Path -LiteralPath $lockPath) {
+        $lock = Get-Content -LiteralPath $lockPath -Raw
+        if ($lock -match 'provider "registry\.terraform\.io/hashicorp/azurerm" \{\s*version\s*=\s*"([^"]+)"') { $azurermPinned = $Matches[1] }
+    }
+    $reason = $runtimeMap.blockedBy.Replace('{azurerm}', $azurermPinned)
+    Write-PipelineError "Umbraco $UmbracoVersion (major $umbracoMajor, .NET $dotnetVersion) can't be provisioned yet: $reason. Runnable today: $supportedList."
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
+$sdkIncludePreview = if ($runtimeMap.previewSdk) { 'true' } else { 'false' }
 
 # Confirm the exact requested version is actually published before Terraform
 # provisions anything. install-umbraco-cms-on-appservice.ps1's first package
@@ -135,9 +184,7 @@ if ($Workload -eq 'frontend') {
         Write-PipelineError "Workload=frontend selected but scenario '$Scenario' has no locustfile.py. Either add one or pick a different workload."
     }
 } elseif ($Workload -eq 'backoffice') {
-    # Mirror the v17→v18 fallback used in generate-loadtest-config.ps1 and the
-    # seeder package map in install-umbraco-cms-on-appservice.ps1.
-    $jmeterMajor = if ($umbracoMajor -eq 18) { 17 } else { $umbracoMajor }
+    $jmeterMajor = Get-JmeterMajor $umbracoMajor
     $jmeterDir = Join-Path $scenarioRoot "jmeter/v$jmeterMajor"
     if (-not (Test-Path -LiteralPath $jmeterDir -PathType Container)) {
         Write-PipelineError "Workload=backoffice selected but scenario '$Scenario' has no jmeter/v$jmeterMajor/ folder (looked at $jmeterDir). Add JMeter test plans there or pick a different scenario."
@@ -155,18 +202,10 @@ if ($Workload -eq 'frontend') {
     }
 }
 
-# Single source of truth shared with Terraform/modules/umbraco/scripts/install-
-# umbraco-cms-on-appservice.ps1 (the actual install reads the same file).
-# Checked here so a major without a published seeder build fails at validation
-# (minute 0) instead of install (minute ~10), after Terraform has already stood
-# up a full App Service + SQL DB. Deliberately NOT also checked against nuget.org
-# (unlike the Umbraco.Templates check above) - that check was tried and pulled:
-# see git history on this line if reintroducing it.
-$seederVersionsPath = Join-Path $WorkspaceRoot "scripts/seeder-versions.json"
-if (-not (Test-Path -LiteralPath $seederVersionsPath)) {
-    Write-PipelineError "Couldn't find seeder-versions.json at '$seederVersionsPath'."
-}
-$seederPackageVersions = Get-Content -LiteralPath $seederVersionsPath -Raw | ConvertFrom-Json -AsHashtable
+# Seeder gate (map loaded at the top of this script). Checked here so a major
+# without a published seeder build fails at validation (minute 0) instead of
+# install (minute ~10), after Terraform has already stood up a full App Service
+# + SQL DB.
 $seederPackageVersion = $seederPackageVersions["$umbracoMajor"]
 if (-not $seederPackageVersion) {
     Write-PipelineError "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet (no entry in scripts/seeder-versions.json). Update scripts/seeder-versions.json once the package ships for that major."
@@ -178,7 +217,7 @@ $appSkuOverrideValue  = if ($AppSkuOverride  -eq 'Auto') { ''  } else { $AppSkuO
 
 Write-Host "Tiers:           $($tiers -join ', ')"
 Write-Host "Profile '$Profile': preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
-Write-Host "Umbraco $UmbracoVersion (major $umbracoMajor) -> .NET $dotnetVersion"
+Write-Host "Umbraco $UmbracoVersion (major $umbracoMajor) -> .NET $dotnetVersion (SDK $sdkVersion, preview SDKs: $sdkIncludePreview)"
 Write-Host "Pool DTU override: $(if ($poolDtuOverrideValue -ne '0') { "$poolDtuOverrideValue DTUs per DB" } else { 'Auto (per-tier defaults)' })"
 Write-Host "App SKU override:  $(if ($appSkuOverrideValue) { $appSkuOverrideValue } else { 'Auto (per-tier defaults)' })"
 
@@ -193,6 +232,7 @@ $env:TEST_CASES_JSON = ($testCases | ConvertTo-Json -Compress -Depth 5)
 # Downstream stages read these via $[stageDependencies.X.Y.outputs['out.NAME']].
 Write-Host "##vso[task.setvariable variable=resolvedDotnetVersion;isOutput=true]$dotnetVersion"
 Write-Host "##vso[task.setvariable variable=resolvedSdkVersion;isOutput=true]$sdkVersion"
+Write-Host "##vso[task.setvariable variable=resolvedSdkIncludePreview;isOutput=true]$sdkIncludePreview"
 Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$preset"
 Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
 Write-Host "##vso[task.setvariable variable=resolvedPoolDtuOverride;isOutput=true]$poolDtuOverrideValue"

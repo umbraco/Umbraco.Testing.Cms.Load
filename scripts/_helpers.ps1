@@ -122,6 +122,19 @@ function Get-UmbracoMajor([string] $Version) {
     return $major
 }
 
+# Which loadtests/scenarios/<scenario>/jmeter/v<N>/ folder a major's backoffice
+# run uses. v18 reuses the v17 plans (confirmed live). v19 is mapped the same
+# way on the assumption its beta keeps the Management API routes those plans
+# hit - NOT yet verified against a v19 deployment; if the warm-up route check in
+# templates/load-test-job.yml reports drift on v19, copy jmeter/v17/ to
+# jmeter/v19/ and fix the plans there instead of extending this list. Shared by
+# resolve-run-config.ps1 (queue-time check) and generate-loadtest-config.ps1
+# (the actual .jmx lookup) so the two can't drift when a major is added.
+function Get-JmeterMajor([int] $UmbracoMajor) {
+    if ($UmbracoMajor -in 18, 19) { return 17 }
+    return $UmbracoMajor
+}
+
 # Normalize a datetime string to ISO-8601 UTC. Azure DevOps' $(System.PipelineStartTime)
 # is space-separated ("2026-06-15 13:45:30+00:00"), which the Log Analytics Logs
 # Ingestion API rejects on datetime columns with a 400. Round-tripping through
