@@ -181,6 +181,7 @@ stages:
       resolvedPoolDtuOverride:  $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedPoolDtuOverride'] ]
       resolvedAppSkuOverride:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedAppSkuOverride'] ]
       resolvedSdkVersion:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkVersion'] ]
+      resolvedSdkIncludePreview: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkIncludePreview'] ]
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
@@ -254,6 +255,9 @@ stages:
             inputs:
               packageType: sdk
               version: '$(resolvedSdkVersion)'
+              # 'true' only for majors whose .NET is still pre-GA (v19 / .NET 11,
+              # GA expected November 2026) - see resolve-run-config.ps1.
+              includePreviewVersions: $(resolvedSdkIncludePreview)
 
           - task: PowerShell@2
             displayName: Terraform Init

@@ -82,7 +82,7 @@ function Get-DedupKey($row) {
 $isClientTable = $TableName -eq "ClientMeasurement_CL"
 if (-not $Force) {
     Write-Host "-> Querying existing run_ids in $TableName"
-    $workspaceCustomerId = az monitor log-analytics workspace show -n $WorkspaceName -g $HistoryResourceGroup --query customerId -o tsv
+    $workspaceCustomerId = Get-LogAnalyticsWorkspaceCustomerId -WorkspaceName $WorkspaceName -ResourceGroupName $HistoryResourceGroup
     if ([string]::IsNullOrWhiteSpace($workspaceCustomerId)) {
         Write-PipelineError "Couldn't resolve workspace customerId. Run ensure-monitoring-infra.ps1 first or pass -Force to skip the dedup query."
     }
@@ -93,10 +93,7 @@ if (-not $Force) {
         "$TableName | where isnotempty(run_id) | distinct run_id, jmeter_test_name"
     }
     try {
-        $queryResult = az monitor log-analytics query `
-            -w $workspaceCustomerId `
-            --analytics-query $dedupQuery `
-            -o json | ConvertFrom-Json
+        $queryResult = Invoke-LogAnalyticsQuery -WorkspaceCustomerId $workspaceCustomerId -Query $dedupQuery
         foreach ($row in @($queryResult)) {
             if ($row.run_id) { $existingKeys[(Get-DedupKey $row)] = $true }
         }

@@ -201,7 +201,7 @@ foreach ($case in $cases) {
         }
     }
 
-    # Supported range is v13–v18. The .NET runtime + seeder package version maps
+    # Supported range is v13–v19. The .NET runtime + seeder package version maps
     # in resolve-run-config.ps1 and install-umbraco-cms-on-appservice.ps1 must
     # know each major; resolve-run-config catches new majors with an explicit
     # error. Here we just enforce the lower bound + parse.

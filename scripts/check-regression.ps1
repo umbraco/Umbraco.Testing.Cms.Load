@@ -66,7 +66,17 @@ param (
     # regression status alongside the run. Empty (default) skips the post.
     [string]$LogAnalyticsDceUri,
     [string]$LogAnalyticsDcrImmutableId,
-    [string]$LogAnalyticsStreamName
+    [string]$LogAnalyticsStreamName,
+
+    # Optional Log Analytics workspace name, used only to QUERY (not post) rows
+    # for -RunId. Get-HistoryCells only sees rows that reached blob storage —
+    # a tier that fails before $ResultsDir ever exists (publish-load-test-results.ps1's
+    # "no_results_dir" branch) posts its metadata-only row straight to Log Analytics
+    # and exits without ever writing to blob storage, so it's invisible to the
+    # blob-storage-only attempted-tier detection below. When set (alongside -RunId),
+    # this closes that gap by cross-checking Log Analytics directly. Empty (default)
+    # skips the cross-check — same blob-storage-only behaviour as before.
+    [string]$WorkspaceName
 )
 
 $ErrorActionPreference = "Stop"
@@ -78,13 +88,52 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 # --- Load history ---
 
+$attemptedVersionTiers = @{}
 $cells = Get-HistoryCells `
     -Scenario $Scenario `
     -HistoryResourceGroup $HistoryResourceGroup `
     -StorageAccountName $StorageAccountName `
     -ContainerName $ContainerName `
     -Major $Major `
-    -Sampler $Sampler
+    -Sampler $Sampler `
+    -RunId $RunId `
+    -AttemptedVersionTiers ([ref]$attemptedVersionTiers)
+
+# Cross-check Log Analytics for (version, tier) combos this run touched but
+# blob storage never saw — the "no_results_dir" branch of
+# publish-load-test-results.ps1 posts straight to Log Analytics and exits
+# before writing anything to blob storage, so a tier that fails that early is
+# otherwise indistinguishable from a tier this run never intended to cover.
+# Best-effort: a query failure here must not turn an unrelated glitch into a
+# regression-gate failure, so it only warns and falls back to blob-storage-only
+# attempted-tier detection.
+if ($RunId -and $WorkspaceName) {
+    Write-Host "Cross-checking Log Analytics for run '$RunId' (version, tier) coverage blob storage can't see..."
+    try {
+        $workspaceCustomerId = Get-LogAnalyticsWorkspaceCustomerId -WorkspaceName $WorkspaceName -ResourceGroupName $HistoryResourceGroup
+        if ([string]::IsNullOrWhiteSpace($workspaceCustomerId)) {
+            Write-Warning "Couldn't resolve workspace '$WorkspaceName' customerId - skipping the Log Analytics attempted-tier cross-check."
+        } else {
+            # Scoped by scenario too, matching the blob-storage path (which is
+            # rooted at the $Scenario/$Major/ prefix before any row is
+            # considered) — a bare run_id filter would be fine today (one
+            # scenario per Build.BuildId), but nothing enforces that, and this
+            # keeps the two attempted-tier sources consistent if that ever changes.
+            $escapedRunId    = $RunId -replace "'", "''"
+            $escapedScenario = $Scenario -replace "'", "''"
+            $attemptQuery = "LoadTestSummary_CL | where run_id == '$escapedRunId' and scenario == '$escapedScenario' and isnotempty(umbraco_version) and isnotempty(infra_tier) | distinct umbraco_version, infra_tier"
+            $attemptRows = Invoke-LogAnalyticsQuery -WorkspaceCustomerId $workspaceCustomerId -Query $attemptQuery
+            foreach ($row in $attemptRows) {
+                if ($row.umbraco_version -and $row.infra_tier) {
+                    $attemptedVersionTiers["$($row.umbraco_version)__$($row.infra_tier)"] = $true
+                }
+            }
+            Write-Host "   $($attemptedVersionTiers.Count) (version, tier) combo(s) confirmed attempted (blob storage + Log Analytics)."
+        }
+    } catch {
+        Write-Warning "Log Analytics attempted-tier cross-check failed ($($_.Exception.Message)) - falling back to blob-storage-only detection."
+    }
+}
 
 if ($cells.Count -eq 0) {
     Write-Warning "No metric rows matched the filter - nothing to check."
@@ -256,13 +305,16 @@ foreach ($cellKey in $cells.Keys) {
 # Scoping only the denominator (as $cellsPerPlan did) left an inflated numerator
 # that pushed real partial-publish failures over the whole-plan threshold and
 # reported them as expected.
-$runVersionTiers = @{}
-foreach ($cellKey in $candidateByCell.Keys) {
-    $p = $cellKey -split '__', 3
-    $runVersionTiers["$($p[0])__$($p[1])"] = $true
-}
-if ($runVersionTiers.Count -gt 0) {
-    $missing = @($missing | Where-Object { $runVersionTiers.ContainsKey("$($_.Version)__$($_.Tier)") })
+#
+# Built from $attemptedVersionTiers (every row matching -RunId, any parse_status),
+# NOT from $candidateByCell (ok rows only): a tier that fails completely (zero ok
+# rows) still has to show up here, or it gets silently dropped out of $missing
+# instead of reported - exactly the silent-publish-failure case this script
+# exists to catch. $attemptedVersionTiers still catches that case because
+# publish-load-test-results.ps1 always writes a metadata-only placeholder row to
+# history even when a tier totally fails to produce metrics.
+if ($attemptedVersionTiers.Count -gt 0) {
+    $missing = @($missing | Where-Object { $attemptedVersionTiers.ContainsKey("$($_.Version)__$($_.Tier)") })
 }
 
 # --- Render markdown report ---
@@ -321,18 +373,34 @@ if ($insufficient.Count -gt 0) {
 # per azure-pipeline.yml) - expected, so it must not warn. A partial absence is
 # the publish anomaly -RunId exists to catch.
 $missingPartialPlans = @()
-if ($missing.Count -gt 0) {
+
+# A (version, tier) this run attempted but has NO graded cell for published
+# nothing at all - it fast-failed (no_results_dir / no_metrics placeholder
+# only). Every plan is absent there, so the whole-plan test below would call
+# each one "didn't run - Expected" and hide the failure. Report those tiers
+# once, up front, and keep them out of the per-plan totals so "Expected" only
+# ever describes a plan absent on tiers that otherwise published. Computed
+# outside the $missing guard: a dead tier with no history yet adds nothing to
+# $missing and would otherwise never be mentioned at all.
+$publishedVersionTiers = @{}
+foreach ($k in $candidateByCell.Keys) {
+    $p = $k -split '__', 3
+    $publishedVersionTiers["$($p[0])__$($p[1])"] = $true
+}
+$deadVersionTiers = @($attemptedVersionTiers.Keys | Where-Object { -not $publishedVersionTiers.ContainsKey($_) } | Sort-Object)
+$deadSet = @{}
+foreach ($vt in $deadVersionTiers) { $deadSet[$vt] = $true }
+
+if ($missing.Count -gt 0 -or $deadVersionTiers.Count -gt 0) {
     # Same (version, tier) scope as $missing above, so numerator and denominator
     # describe the same population.
-    $cellsPerPlan   = @{}
     $scopedCellCount = 0
     foreach ($k in $cells.Keys) {
         $parts = $k -split '__', 3
-        if ($runVersionTiers.Count -gt 0 -and -not $runVersionTiers.ContainsKey("$($parts[0])__$($parts[1])")) { continue }
-        $cellsPerPlan[(Get-PlanName $parts[2])] = 1 + [int]$cellsPerPlan[(Get-PlanName $parts[2])]
+        if ($attemptedVersionTiers.Count -gt 0 -and -not $attemptedVersionTiers.ContainsKey("$($parts[0])__$($parts[1])")) { continue }
         $scopedCellCount++
     }
-    $publishedNone = ($missing.Count -ge $scopedCellCount)
+    $publishedNone = ($scopedCellCount -gt 0 -and $missing.Count -ge $scopedCellCount)
 
     [void]$out.AppendLine("## Candidate missing (no row for run ``$RunId``)")
     [void]$out.AppendLine()
@@ -342,7 +410,24 @@ if ($missing.Count -gt 0) {
         [void]$out.AppendLine("**No rows from this run matched** any of the $scopedCellCount cell(s) in history for the version/tier it covers. Either the run published nothing (check the loadTest stage), or its rows were filtered out - a ``skipWarmup`` run is excluded from comparison because every row is flagged ``cold_start``.")
         [void]$out.AppendLine()
     }
-    foreach ($grp in ($missing | Group-Object Plan | Sort-Object Name)) {
+    foreach ($vt in $deadVersionTiers) {
+        $p = $vt -split '__', 2
+        $deadCells = @($missing | Where-Object { $_.Version -eq $p[0] -and $_.Tier -eq $p[1] })
+        $absent = if ($deadCells.Count -gt 0) { "$($deadCells.Count) cell(s) absent" } else { "no history for this tier yet" }
+        [void]$out.AppendLine("- **$($p[0]) / $($p[1])**: attempted but published no metric rows ($absent) - the tier fast-failed before Azure Load Testing produced results, or every row was filtered. Check the loadTest and publish steps.")
+        $missingPartialPlans += "$($p[0])/$($p[1])"
+    }
+    $liveMissing = @($missing | Where-Object { -not $deadSet.ContainsKey("$($_.Version)__$($_.Tier)") })
+    $cellsPerPlan = @{}
+    foreach ($k in $cells.Keys) {
+        $parts = $k -split '__', 3
+        $vt = "$($parts[0])__$($parts[1])"
+        if ($attemptedVersionTiers.Count -gt 0 -and -not $attemptedVersionTiers.ContainsKey($vt)) { continue }
+        if ($deadSet.ContainsKey($vt)) { continue }
+        $cellsPerPlan[(Get-PlanName $parts[2])] = 1 + [int]$cellsPerPlan[(Get-PlanName $parts[2])]
+    }
+
+    foreach ($grp in ($liveMissing | Group-Object Plan | Sort-Object Name)) {
         $total     = $cellsPerPlan[$grp.Name]
         $wholePlan = ($grp.Count -ge $total)
         if ($wholePlan -and -not $publishedNone) {

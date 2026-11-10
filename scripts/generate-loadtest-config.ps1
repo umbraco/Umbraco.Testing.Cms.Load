@@ -41,8 +41,7 @@ param(
 
     # Workload selector: 'frontend' (Locust) or 'backoffice' (JMeter). For
     # backoffice mode, UmbracoVersion is required to pick the right .jmx
-    # subfolder (v17 .jmx files are also used for v18 — matches the seeder
-    # fallback in install-umbraco-cms-on-appservice.ps1).
+    # subfolder (see Get-JmeterMajor in _helpers.ps1 for the v17 reuse).
     [ValidateSet('frontend', 'backoffice')] [string]$Workload = 'frontend',
     [string]$UmbracoVersion = '',
 
@@ -252,8 +251,8 @@ $sqlComponent
 "@
 
 if ($Workload -eq 'backoffice') {
-    # JMeter mode. v17 .jmx files are used for v18 deployments — matches the
-    # seeder fallback in install-umbraco-cms-on-appservice.ps1.
+    # JMeter mode. Folder choice is shared with resolve-run-config.ps1's
+    # queue-time check via Get-JmeterMajor.
     if (-not $UmbracoVersion) {
         Write-Error "Workload=backoffice requires -UmbracoVersion to pick the .jmx subfolder."
         exit 1
@@ -263,7 +262,7 @@ if ($Workload -eq 'backoffice') {
         exit 1
     }
     $umbracoMajor = Get-UmbracoMajor $UmbracoVersion
-    $jmeterMajor  = if ($umbracoMajor -eq 18) { 17 } else { $umbracoMajor }
+    $jmeterMajor  = Get-JmeterMajor $umbracoMajor
     $jmeterDir    = "loadtests/scenarios/$Scenario/jmeter/v$jmeterMajor"
 
     $testPlanRel = "$jmeterDir/$JmxName.jmx"

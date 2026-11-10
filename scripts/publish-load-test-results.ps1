@@ -96,7 +96,10 @@ $PSNativeCommandUseErrorActionPreference = $true
 #   1 - VU ramp-up window excluded from percentile/error/throughput stats.
 #   2 - frontend ramp derived from users/spawn (Locust's real ramp) instead of
 #       rampTime, which is JMeter-only and up to 50x longer.
-$MethodologyVersion = 2
+# Scoped per workload: 2 only changed how frontend numbers are computed, so
+# backoffice rows stay on 1 and keep their baselines instead of reporting
+# "insufficient history" for a change that never touched them.
+$MethodologyVersion = if ($JmeterTestName) { 1 } else { 2 }
 
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize
@@ -421,15 +424,20 @@ function Send-SeriesToLogAnalytics {
     }
 }
 
-# Bail out if there's no results dir at all. Still emit a metadata-only row to
-# Log Analytics so the run is visible in the Workbook (rather than vanishing
-# entirely and leaving downstream regression-check comparing against stale
-# baselines without anyone noticing).
-if (-not (Test-Path $ResultsDir)) {
-    Write-Warning "Results dir '$ResultsDir' not found - emitting metadata-only Log Analytics row and exiting."
-    $metadata.parse_status = "no_results_dir"
-    Send-RowsToLogAnalytics -Rows @([pscustomobject]$metadata)
-    exit 0
+# A missing results dir (e.g. AzureLoadTest@1 fast-failed before producing any
+# artifacts) still needs a placeholder row published - Get-ChildItem below
+# already tolerates a missing path via -ErrorAction SilentlyContinue and falls
+# through to the "no engine_results.csv found" branch, which sets parse_status
+# accordingly (see $resultsDirExists there). This used to exit right after
+# posting a Log Analytics-only row, which made the failure invisible to every
+# blob-storage-only consumer (Get-HistoryCells, compare-runs.ps1,
+# show-trends.ps1) - the same failure this script already handles fine when a
+# results dir exists but yields no engine_results.csv (parse_status
+# "no_metrics", which DOES reach blob storage below). Tracked here so the raw-
+# artifact upload near the end (which needs a real path) can be skipped.
+$resultsDirExists = Test-Path $ResultsDir
+if (-not $resultsDirExists) {
+    Write-Warning "Results dir '$ResultsDir' not found - will emit a metadata-only placeholder row to Log Analytics AND blob history (parse_status 'no_results_dir'), instead of vanishing from history entirely."
 }
 
 # ALT emits engine{N}_results.csv (JMeter format) — raw per-request data, one
@@ -580,6 +588,8 @@ if ($engineFiles.Count -gt 0) {
     # merge the per-label buckets across engines. Single-engine runs trivially
     # become one parse call; multi-engine runs concatenate samples per label.
     $byLabel = @{}
+    # Per-minute samples across every engine file, for the latency series.
+    $byMinute = @{}
     # Sample window across every engine file, for the throughput denominator.
     $spanMinTs = [long]::MaxValue
     $spanMaxTs = [long]::MinValue
@@ -587,7 +597,7 @@ if ($engineFiles.Count -gt 0) {
         # One unreadable/corrupt engine file (e.g. truncated mid-write) must not
         # abort the whole publish - skip it and keep the other engines' data.
         try {
-            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs
+            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs -CollectPerMinute
         } catch {
             Write-Warning "Couldn't parse $($file.FullName): $($_.Exception.Message) - skipping this file."
             continue
@@ -603,6 +613,12 @@ if ($engineFiles.Count -gt 0) {
             }
             $merged.Samples.AddRange($kv.Value.Samples)
             $merged.Errors += $kv.Value.Errors
+        }
+        foreach ($kv in $parsed.ByMinute.GetEnumerator()) {
+            if (-not $byMinute.ContainsKey($kv.Key)) {
+                $byMinute[$kv.Key] = New-Object 'System.Collections.Generic.List[int]'
+            }
+            $byMinute[$kv.Key].AddRange($kv.Value)
         }
         if ($null -ne $parsed.MinTimestamp -and $parsed.MinTimestamp -lt $spanMinTs) { $spanMinTs = $parsed.MinTimestamp }
         if ($null -ne $parsed.MaxTimestamp -and $parsed.MaxTimestamp -gt $spanMaxTs) { $spanMaxTs = $parsed.MaxTimestamp }
@@ -666,10 +682,20 @@ if ($engineFiles.Count -gt 0) {
         $rows += [pscustomobject]$merged
     }
     Write-Host "Parsed $($rows.Count) sampler row(s) from $($engineFiles.Count) engine file(s)."
+
+    # Client-side latency per minute, into the same series table as the server
+    # metrics so the drill-down can show both on one time axis.
+    $latencyPoints = Get-PerMinuteLatencyPoints -ByMinute $byMinute
+    foreach ($p in $latencyPoints) { $seriesPoints.Add($p) }
+    Write-Host "Added $($latencyPoints.Count) per-minute latency point(s) to the series."
 }
 else {
-    Write-Warning "No engine_results.csv found under '$ResultsDir' - emitting metadata-only record."
-    $metadata.parse_status = "no_metrics"
+    if ($resultsDirExists) {
+        Write-Warning "No engine_results.csv found under '$ResultsDir' - emitting metadata-only record."
+        $metadata.parse_status = "no_metrics"
+    } else {
+        $metadata.parse_status = "no_results_dir"
+    }
 }
 
 # Always emit at least the metadata so the run is searchable. Downstream queries
@@ -715,36 +741,43 @@ az storage blob upload `
     --name "$blobPrefix/summary.ndjson" `
     --overwrite | Out-Null
 
-# Trim redundant artifacts before the raw upload (the history container has no
-# expiry beyond the lifecycle tier, so anything uploaded here is kept forever):
-#  - *-extracted working dirs: unpacked only to scan engine_results.csv; their
-#    contents already live inside results.zip, so keeping them doubles every CSV.
-#  - report.zip: ALT's generated HTML report. Nothing in this repo consumes it
-#    (the parser reads results.zip) and the same report is in the Azure portal
-#    run view, so archiving it here is pure bloat.
-# results.zip is deliberately kept — it carries the raw per-request data that
-# re-analysis may need beyond what summary.ndjson surfaces.
-Get-ChildItem -Path $ResultsDir -Recurse -Directory -Filter '*-extracted' -ErrorAction SilentlyContinue |
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-Get-ChildItem -Path $ResultsDir -Recurse -File -Filter 'report.zip' -ErrorAction SilentlyContinue |
-    Remove-Item -Force -ErrorAction SilentlyContinue
+# No results dir means no raw artifacts to trim or upload - az storage blob
+# upload-batch would fail on a nonexistent --source, aborting the script after
+# the summary row above already published successfully.
+if ($resultsDirExists) {
+    # Trim redundant artifacts before the raw upload (the history container has no
+    # expiry beyond the lifecycle tier, so anything uploaded here is kept forever):
+    #  - *-extracted working dirs: unpacked only to scan engine_results.csv; their
+    #    contents already live inside results.zip, so keeping them doubles every CSV.
+    #  - report.zip: ALT's generated HTML report. Nothing in this repo consumes it
+    #    (the parser reads results.zip) and the same report is in the Azure portal
+    #    run view, so archiving it here is pure bloat.
+    # results.zip is deliberately kept — it carries the raw per-request data that
+    # re-analysis may need beyond what summary.ndjson surfaces.
+    Get-ChildItem -Path $ResultsDir -Recurse -Directory -Filter '*-extracted' -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path $ResultsDir -Recurse -File -Filter 'report.zip' -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
 
-# Raw artifacts kept for analyses that need fields the summary doesn't surface.
-az storage blob upload-batch `
-    --account-name $StorageAccountName --account-key $storageKey `
-    --destination $ContainerName `
-    --destination-path "$blobPrefix/raw" `
-    --source $ResultsDir `
-    --pattern "*" `
-    --overwrite | Out-Null
+    # Raw artifacts kept for analyses that need fields the summary doesn't surface.
+    az storage blob upload-batch `
+        --account-name $StorageAccountName --account-key $storageKey `
+        --destination $ContainerName `
+        --destination-path "$blobPrefix/raw" `
+        --source $ResultsDir `
+        --pattern "*" `
+        --overwrite | Out-Null
 
-Write-Host "Published $($rows.Count) record(s) + raw artifacts."
+    Write-Host "Published $($rows.Count) record(s) + raw artifacts."
+} else {
+    Write-Host "Published $($rows.Count) record(s) (no results dir - no raw artifacts to upload)."
+}
 
 # Mirror to Log Analytics. Same defensive posture as the Azure Monitor metric
 # query above — failure warns and continues; the blob upload is the source of
 # truth and recoverable via backfill-monitoring.ps1.
 Send-RowsToLogAnalytics -Rows $rows
 # Per-minute series mirror — additive to the summary, populates the table
-# the workbook's per-run drill-down reads. Empty when the test window was
-# unusable above (no datapoints were retrieved).
+# the workbook's per-run drill-down reads. Server metrics are absent when the
+# test window was unusable above; latency points still go when samples parsed.
 Send-SeriesToLogAnalytics -Points $seriesPoints

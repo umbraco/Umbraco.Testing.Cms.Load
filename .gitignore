@@ -9,6 +9,7 @@
 !loadtests/tiers.json
 !loadtests/scenarios/**/*.json
 !dashboards/*.workbook.json
+!scripts/seeder-versions.json
 !**/.terraform.lock.hcl
 
 .terraform/

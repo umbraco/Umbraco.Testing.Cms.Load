@@ -9,6 +9,71 @@ function Get-Pct ($Sorted, [double]$Pct) {
     return $Sorted[$i]
 }
 
+# Flat-container (package-base-address) roots of every feed the install script
+# restores from, in the same order install-umbraco-cms-on-appservice.ps1 adds
+# them: nuget.org, then the Umbraco prerelease and nightly MyGet feeds. Nightly
+# tags (e.g. 18.2.0--rc.preview.84.g7df92f1) only ever exist on the last one,
+# so a nuget.org-only check would reject versions that install fine.
+$script:UmbracoPackageFlatContainerUrls = @(
+    'https://api.nuget.org/v3-flatcontainer',
+    'https://www.myget.org/F/umbracoprereleases/api/v3/flatcontainer',
+    'https://www.myget.org/F/umbraconightly/api/v3/flatcontainer'
+)
+
+# True when $Version is a published version of $PackageId on any of the feeds
+# (flat-container index: immediately consistent, unlike search). $PackageId is
+# lowercased because the API requires it. A 404 (package id unknown on that
+# feed) moves on to the next feed. An unreachable feed (DNS, timeout, 5xx) is
+# warned about and skipped too - `dotnet new install` does the same (NU1801)
+# and resolves from the remaining sources, so the gate shouldn't be stricter
+# than the install it guards. Only when every feed is unreachable does this
+# throw, since then nothing was actually checked.
+function Test-NuGetPackageVersionExists {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$PackageId,
+        [Parameter(Mandatory)] [string]$Version,
+        [string[]]$FlatContainerUrls = $script:UmbracoPackageFlatContainerUrls
+    )
+    $unreachable = 0
+    foreach ($root in $FlatContainerUrls) {
+        $url = "$($root.TrimEnd('/'))/$($PackageId.ToLowerInvariant())/index.json"
+        try {
+            $index = Invoke-RestMethod -Uri $url -Method Get -TimeoutSec 30
+        } catch {
+            if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { continue }
+            Write-Warning "Package feed $root is unreachable ($($_.Exception.Message)) - skipping it."
+            $unreachable++
+            continue
+        }
+        if (@($index.versions) -icontains $Version) { return $true }
+    }
+    if ($FlatContainerUrls.Count -gt 0 -and $unreachable -eq $FlatContainerUrls.Count) {
+        throw "None of the $unreachable package feed(s) could be reached, so $PackageId $Version could not be checked."
+    }
+    return $false
+}
+
+function Get-LogAnalyticsWorkspaceCustomerId {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceName,
+        [Parameter(Mandatory)] [string]$ResourceGroupName
+    )
+    return az monitor log-analytics workspace show -n $WorkspaceName -g $ResourceGroupName --query customerId -o tsv
+}
+
+# Thin wrapper so every KQL-issuing script shares one az CLI invocation +
+# JSON-decode shape. Callers still write their own KQL string.
+function Invoke-LogAnalyticsQuery {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string]$WorkspaceCustomerId,
+        [Parameter(Mandatory)] [string]$Query
+    )
+    return @(az monitor log-analytics query -w $WorkspaceCustomerId --analytics-query $Query -o json | ConvertFrom-Json)
+}
+
 function Get-StorageAccountKey {
     [CmdletBinding()]
     param(
@@ -55,6 +120,19 @@ function Get-UmbracoMajor([string] $Version) {
         Write-PipelineError "Cannot parse Umbraco major from '$Version' (expected X.Y.Z[-suffix])."
     }
     return $major
+}
+
+# Which loadtests/scenarios/<scenario>/jmeter/v<N>/ folder a major's backoffice
+# run uses. v18 reuses the v17 plans (confirmed live). v19 is mapped the same
+# way on the assumption its beta keeps the Management API routes those plans
+# hit - NOT yet verified against a v19 deployment; if the warm-up route check in
+# templates/load-test-job.yml reports drift on v19, copy jmeter/v17/ to
+# jmeter/v19/ and fix the plans there instead of extending this list. Shared by
+# resolve-run-config.ps1 (queue-time check) and generate-loadtest-config.ps1
+# (the actual .jmx lookup) so the two can't drift when a major is added.
+function Get-JmeterMajor([int] $UmbracoMajor) {
+    if ($UmbracoMajor -in 18, 19) { return 17 }
+    return $UmbracoMajor
 }
 
 # Normalize a datetime string to ISO-8601 UTC. Azure DevOps' $(System.PipelineStartTime)
@@ -136,11 +214,16 @@ function Parse-JmeterCsv {
         # are systematically easier than steady-state and would understate p95/p99
         # if left in. 0 (default) disables the filter - the caller skips it
         # entirely for the 'ramp' profile, where the climb itself is the point.
-        [long]$RampCutoffMs = 0
+        [long]$RampCutoffMs = 0,
+        # Also bucket the kept samples by the minute they started in (epoch ms of
+        # the minute -> elapsed list), for the per-minute latency series. Off by
+        # default: only the history publish needs it.
+        [switch]$CollectPerMinute
     )
 
     $byLabel = @{}
     $allElapsed = if ($BuildAggregate) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
+    $byMinute   = if ($CollectPerMinute) { @{} } else { $null }
     $totalErrors = 0
     # Sample window (JMeter timeStamp is epoch ms), so callers can derive
     # throughput from the span covered rather than the configured duration.
@@ -231,6 +314,15 @@ function Parse-JmeterCsv {
             if ($tsOk) {
                 if ($ts -lt $minTs) { $minTs = $ts }
                 if ($ts -gt $maxTs) { $maxTs = $ts }
+                if ($CollectPerMinute) {
+                    $minute = $ts - ($ts % 60000)
+                    $minuteSamples = $byMinute[$minute]
+                    if (-not $minuteSamples) {
+                        $minuteSamples = New-Object 'System.Collections.Generic.List[int]'
+                        $byMinute[$minute] = $minuteSamples
+                    }
+                    $minuteSamples.Add($elapsed)
+                }
             }
 
             if ($BuildAggregate) {
@@ -244,7 +336,37 @@ function Parse-JmeterCsv {
         ByLabel      = $byLabel
         AllElapsed   = $allElapsed
         TotalErrors  = $totalErrors
+        ByMinute     = $byMinute
         MinTimestamp = if ($minTs -eq [long]::MaxValue) { $null } else { $minTs }
         MaxTimestamp = if ($maxTs -eq [long]::MinValue) { $null } else { $maxTs }
     }
+}
+
+# Per-minute client-side latency across all samplers, as LoadTestSeries_CL
+# points (same shape as the Azure Monitor series): latency_p50_ms,
+# latency_p95_ms and latency_max_ms per minute. Shows WHEN slow requests
+# happened - a run-wide stall (every sampler capped at the same max) shows as
+# a spike in one or two minutes, a uniformly slower build as a raised line.
+# $ByMinute is Parse-JmeterCsv -CollectPerMinute's ByMinute, merged across
+# engine files. The first and last minute are usually partial.
+function Get-PerMinuteLatencyPoints {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [hashtable]$ByMinute)
+    $points = New-Object System.Collections.Generic.List[object]
+    foreach ($minute in ($ByMinute.Keys | Sort-Object)) {
+        $sorted = [System.Collections.Generic.List[int]]::new($ByMinute[$minute])
+        if ($sorted.Count -eq 0) { continue }
+        $sorted.Sort()
+        $time = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$minute).UtcDateTime.ToString('o')
+        foreach ($stat in @(
+                @{ Name = 'latency_p50_ms'; Value = (Get-Pct $sorted 50) },
+                @{ Name = 'latency_p95_ms'; Value = (Get-Pct $sorted 95) },
+                @{ Name = 'latency_max_ms'; Value = $sorted[$sorted.Count - 1] })) {
+            $points.Add([pscustomobject]@{
+                TimeGenerated = $time
+                metric_name   = $stat.Name
+                value         = [double]$stat.Value
+            })
+        }
+    }
+    return $points
 }
