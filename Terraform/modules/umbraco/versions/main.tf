@@ -33,6 +33,27 @@ locals {
   scenario_overlay_hash = sha256(join("|", [
     for f in local.scenario_overlay_files : "${f}=${filesha256("${local.scenario_overlay_dir}/${f}")}"
   ]))
+
+  # azurerm validates application_stack.dotnet_version against a fixed list
+  # (internal/services/appservice/helpers/app_stack.go) that ends at v10.0 -
+  # in the pinned 4.x and, as of 10-11-2026, on main and in 5.13.0. The portal
+  # offers a ".NET 11 (STS) Preview" stack, but a Windows worker checked the
+  # same day had no 11.x runtime installed (newest Microsoft.AspNetCore.App was
+  # 10.0.14), so selecting it alone wouldn't let a net11.0 app start. The
+  # runtimes listed here therefore get the newest stack the provider accepts,
+  # and the install script publishes the app self-contained (it carries its own
+  # runtime). Listed explicitly rather than "anything the provider rejects" so
+  # a future runtime still fails loudly at plan instead of silently taking this
+  # path. Drop an entry once the provider accepts it AND App Service actually
+  # serves it.
+  self_contained_runtimes = ["v11.0"]
+  self_contained          = contains(local.self_contained_runtimes, var.dotnet_version)
+  stack_dotnet_version    = local.self_contained ? "v10.0" : var.dotnet_version
+  # The RID must match the worker's bitness. use_32_bit_worker isn't set in
+  # config, so the provider default (true in 4.x) applies and this is win-x86
+  # today - the same 32-bit worker v13-v18 run on. Read from the created site
+  # rather than assumed, so changing the bitness changes the RID with it.
+  self_contained_rid = local.self_contained ? (azurerm_windows_web_app.app_service.site_config[0].use_32_bit_worker ? "win-x86" : "win-x64") : ""
 }
 
 # Database - joins the per-tier Elastic Pool. The Cloud model is one shared
@@ -93,7 +114,7 @@ resource "azurerm_windows_web_app" "app_service" {
   site_config {
     application_stack {
       current_stack  = "dotnet"
-      dotnet_version = var.dotnet_version
+      dotnet_version = local.stack_dotnet_version
     }
   }
 
@@ -179,6 +200,9 @@ resource "null_resource" "deploy_umbraco" {
     # the new preset on a persisted backend (no-op under the ephemeral RG model,
     # where every run recreates this resource — but correct either way).
     seeder_preset = var.seeder_preset
+    # The RID decides what gets published; a bitness change on reused state
+    # must redeploy, or the site keeps an artifact built for the other one.
+    self_contained_rid = local.self_contained_rid
     # Same reasoning, for the appsettings overlay: a re-apply onto reused state
     # with a changed overlay must also re-run deploy/seed, or the app keeps the
     # stale settings until something else happens to retrigger it.
@@ -200,7 +224,7 @@ resource "null_resource" "deploy_umbraco" {
     # this file via the same path to surface seeder duration in the published metrics.
     # Module-relative: local-exec's cwd is Terraform's invocation dir, not this
     # module's, so a repo-relative path only works while the layout holds.
-    command     = "${path.module}/../scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\" -SeederResultPath \"${path.root}/../.seeder-results/${var.test_case_id}.json\""
+    command     = "${path.module}/../scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\" -SelfContainedRuntimeIdentifier \"${local.self_contained_rid}\" -SeederResultPath \"${path.root}/../.seeder-results/${var.test_case_id}.json\""
     interpreter = ["pwsh", "-Command"]
   }
 

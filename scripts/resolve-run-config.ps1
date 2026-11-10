@@ -105,8 +105,6 @@ $seederShippedMajors = @($seederPackageVersions.Keys | Where-Object { $_ -match 
 # runtime = App Service framework_version ('vX.0'), from which the UseDotNet@2
 # SDK selector ('X.x') is derived. previewSdk = let UseDotNet@2 pick a pre-GA
 # SDK for that selector - only for a major whose .NET hasn't GA'd yet.
-# blockedBy = a reason this major can't be provisioned yet even though it's
-# mapped; the run fails here with that reason instead of later in Terraform.
 $runtimeMaps = @{
     13 = @{ runtime = 'v8.0';  previewSdk = $false }
     14 = @{ runtime = 'v8.0';  previewSdk = $false }
@@ -117,19 +115,14 @@ $runtimeMaps = @{
     # Umbraco.Cms.* 19.0.0-beta1 targets net11.0 only (nuspec). .NET 11 was at
     # 11.0.0-rc.3 on 30-10-2026 (dotnet release index); GA is expected in
     # November 2026 per the usual .NET cadence - flip previewSdk to $false once
-    # 11.0.100 is GA. blockedBy: the azurerm provider validates
-    # azurerm_windows_web_app.application_stack.dotnet_version against a fixed
-    # list that ends at v10.0 - in the pinned release and, as of 30-10-2026, on
-    # main (internal/services/appservice/helpers/app_stack.go). Terraform/main.tf
-    # constrains azurerm to '~> 4.20' while the provider's current line is 5.x,
-    # so any release that adds 'v11.0' will need that constraint raised to 5.x
-    # (a provider major upgrade), not just a lock bump. Remove blockedBy once
-    # that's done; the rest of the v19 path is already wired.
-    19 = @{ runtime = 'v11.0'; previewSdk = $true
-            blockedBy = "the azurerm Terraform provider pinned in Terraform/.terraform.lock.hcl (currently {azurerm}) rejects dotnet_version 'v11.0' for a Windows App Service (see internal/services/appservice/helpers/app_stack.go in hashicorp/terraform-provider-azurerm). Any release that accepts it will be on the provider's 5.x line, which Terraform/main.tf's '~> 4.20' constraint excludes - raise that constraint (a provider major upgrade), re-init, then drop 'blockedBy' from the v19 entry in resolve-run-config.ps1" }
+    # 11.0.100 is GA. Neither azurerm nor App Service's Windows workers can
+    # provide .NET 11 yet, so Terraform creates the site on a stack it accepts
+    # and the install script publishes the app self-contained - see
+    # stack_dotnet_version in Terraform/modules/umbraco/versions/main.tf.
+    19 = @{ runtime = 'v11.0'; previewSdk = $true }
 }
-# What a queue can actually run today: mapped, not blocked, and with a seeder.
-$supportedMajors = @($runtimeMaps.Keys | Where-Object { -not $runtimeMaps[$_].blockedBy -and $_ -in $seederShippedMajors } | Sort-Object)
+# What a queue can actually run today: mapped, and with a seeder.
+$supportedMajors = @($runtimeMaps.Keys | Where-Object { $_ -in $seederShippedMajors } | Sort-Object)
 $supportedList   = ($supportedMajors | ForEach-Object { "v$_" }) -join ', '
 
 $umbracoMajor = Get-UmbracoMajor $UmbracoVersion
@@ -137,21 +130,6 @@ $runtimeMap = $runtimeMaps[$umbracoMajor]
 $dotnetVersion = $runtimeMap.runtime
 if (-not $dotnetVersion) {
     Write-PipelineError "Umbraco $UmbracoVersion is unsupported: no .NET runtime is mapped for major $umbracoMajor. This pipeline can run $supportedList today. Extend `$runtimeMaps in resolve-run-config.ps1 (and scripts/seeder-versions.json) when a new major is supported."
-}
-if ($runtimeMap.blockedBy) {
-    # Fail here rather than at terraform plan: the provision stage only runs
-    # after ensureHistoryInfra/ensureMonitoringInfra, so "plan fails" still
-    # costs several minutes of agent time and idempotent-infra churn per attempt.
-    # The pinned provider version is read from the lock file so the message
-    # can't go stale on a lock bump.
-    $azurermPinned = 'unknown'
-    $lockPath = Join-Path $WorkspaceRoot 'Terraform/.terraform.lock.hcl'
-    if (Test-Path -LiteralPath $lockPath) {
-        $lock = Get-Content -LiteralPath $lockPath -Raw
-        if ($lock -match 'provider "registry\.terraform\.io/hashicorp/azurerm" \{\s*version\s*=\s*"([^"]+)"') { $azurermPinned = $Matches[1] }
-    }
-    $reason = $runtimeMap.blockedBy.Replace('{azurerm}', $azurermPinned)
-    Write-PipelineError "Umbraco $UmbracoVersion (major $umbracoMajor, .NET $dotnetVersion) can't be provisioned yet: $reason. Runnable today: $supportedList."
 }
 $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
 $sdkIncludePreview = if ($runtimeMap.previewSdk) { 'true' } else { 'false' }

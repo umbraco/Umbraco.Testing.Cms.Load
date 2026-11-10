@@ -15,6 +15,12 @@ param (
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$Scenario,
     [Parameter(Mandatory = $true)] [string]$SeederPreset,
+    # Non-empty ('win-x64' / 'win-x86', matching the worker's bitness) publishes
+    # self-contained for that RID, so the app carries its own .NET runtime.
+    # Set by Terraform when the site's stack can't be the runtime the app
+    # targets (see stack_dotnet_version in versions/main.tf). Empty keeps the
+    # usual framework-dependent publish.
+    [string]$SelfContainedRuntimeIdentifier = '',
     # File the script writes once the seeder finishes — the load-test job
     # reads it to surface seeder_duration_seconds in the published metrics.
     # On Skipped/Failed seeder, duration_seconds is written as null.
@@ -188,13 +194,24 @@ try {
         Write-Host "Scenario '$Scenario' has no AdditionalSetup folder - skipping code overlay."
     }
 
+    # Build and publish share the RID args so the publish finds the build up to
+    # date instead of compiling a second time for the RID.
+    $ridArgs = @()
+    if ($SelfContainedRuntimeIdentifier) {
+        $ridArgs = @('--self-contained', '-r', $SelfContainedRuntimeIdentifier)
+    }
+
     Write-Host "Building project..."
-    dotnet build --configuration Release
+    dotnet build --configuration Release @ridArgs
 
     Set-Location -LiteralPath ..
 
-    Write-Host "Publishing application..."
-    dotnet publish $pathToApp -c Release -o $pathToApp/publish
+    if ($SelfContainedRuntimeIdentifier) {
+        Write-Host "Publishing application self-contained for $SelfContainedRuntimeIdentifier (App Service doesn't serve its runtime)..."
+    } else {
+        Write-Host "Publishing application..."
+    }
+    dotnet publish $pathToApp -c Release -o $pathToApp/publish @ridArgs
 
     Write-Host "Creating deployment package..."
     Compress-Archive -Path $pathToApp/publish/* -DestinationPath $pathToApp/publish.zip -Force
