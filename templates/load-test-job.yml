@@ -121,6 +121,13 @@ steps:
             Write-Host "No seeder result for $testCaseId in SEEDER_RESULTS - publishing without duration."
         }
         Write-Host "##vso[task.setvariable variable=seederDurationSeconds]$seederDurationSeconds"
+        # Seeder inventory counts are filled in by the warm-up step. Initialised
+        # empty here so the publish step gets a blank (-> null) rather than an
+        # unexpanded macro when warm-up is skipped or its inventory probe fails.
+        Write-Host "##vso[task.setvariable variable=seededContentTotal]"
+        Write-Host "##vso[task.setvariable variable=seededRootSections]"
+        Write-Host "##vso[task.setvariable variable=seededMediaImages]"
+        Write-Host "##vso[task.setvariable variable=seededMediaFiles]"
 
         Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s"
 
@@ -205,6 +212,20 @@ steps:
               # priming — spread on non-Homepage samplers may be wider on this run.
               Write-Host "##vso[task.logissue type=warning]Inventory probe failed ($($_.Exception.Message)); load test will run against a partially-warmed app."
               return
+          }
+
+          # Record what the seeder actually created, for the published rows.
+          # The seeder build differs per Umbraco major, so this is what lets a
+          # cross-version comparison confirm the sites held the same content.
+          $counts = $inventory.counts
+          if ($counts) {
+              Write-Host "  seeded: content=$($counts.totalContent) rootSections=$($counts.rootSections) mediaImages=$($counts.mediaImages) mediaFiles=$($counts.mediaFiles)"
+              Write-Host "##vso[task.setvariable variable=seededContentTotal]$($counts.totalContent)"
+              Write-Host "##vso[task.setvariable variable=seededRootSections]$($counts.rootSections)"
+              Write-Host "##vso[task.setvariable variable=seededMediaImages]$($counts.mediaImages)"
+              Write-Host "##vso[task.setvariable variable=seededMediaFiles]$($counts.mediaFiles)"
+          } else {
+              Write-Host "##vso[task.logissue type=warning]Seeder inventory has no 'counts' block; seeded_* fields will be empty for this run."
           }
 
           # Prime EVERY URL in every bucket. The load test picks via
@@ -563,6 +584,10 @@ steps:
           -AppServicePlanResourceId "$(appServicePlanId)"
           -SqlDatabaseResourceId "$(sqlDatabaseId)"
           -SeederDurationSeconds "$(seederDurationSeconds)"
+          -SeededContentTotal "$(seededContentTotal)"
+          -SeededRootSections "$(seededRootSections)"
+          -SeededMediaImages "$(seededMediaImages)"
+          -SeededMediaFiles "$(seededMediaFiles)"
           -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
           -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
           -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
@@ -721,6 +746,10 @@ steps:
             -AppServicePlanResourceId "$(appServicePlanId)"
             -SqlDatabaseResourceId "$(sqlDatabaseId)"
             -SeederDurationSeconds "$(seederDurationSeconds)"
+            -SeededContentTotal "$(seededContentTotal)"
+            -SeededRootSections "$(seededRootSections)"
+            -SeededMediaImages "$(seededMediaImages)"
+            -SeededMediaFiles "$(seededMediaFiles)"
             -JmeterTestName "${{ jmxName }}"
             -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
             -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"

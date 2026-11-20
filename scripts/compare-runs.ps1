@@ -18,8 +18,16 @@
 #       -HistoryResourceGroup umbraco-loadtest-history-rg `
 #       -StorageAccountName loadtesthistory -ContainerName loadtest-history
 #
+#   # several versions side by side on a fixed tier (first one is the reference)
+#   ./scripts/compare-runs.ps1 -Scenario Default -Tier Starter `
+#       -Versions 17.6.1,18.0.0,19.0.0-beta1 -Aggregate median5 `
+#       -HistoryResourceGroup umbraco-loadtest-history-rg `
+#       -StorageAccountName loadtesthistory -ContainerName loadtest-history
+#
 #   Aggregate mode: 'latest' (default) takes the most recent run per cell;
 #   'median5' takes the median across the last 5 runs (more stable on noisy tails).
+#   Either way a cell only counts runs that drove the same load as its newest
+#   run, and the report warns when the two sides drove different loads.
 #
 # CSV mode (for local Locust runs or offline analysis where history isn't
 # available - same shape as the original script):
@@ -48,6 +56,10 @@ param (
     [string]$Tier,
     [string]$BaselineVersion,
     [string]$CandidateVersion,
+
+    # multi-version: -Tier shared, two or more exact version strings. The first
+    # is the reference every other version's change is measured against.
+    [string[]]$Versions,
 
     # tier-vs-tier: -Version shared, -BaselineTier + -CandidateTier vary
     [string]$Version,
@@ -100,16 +112,24 @@ if ($isHistoryMode) {
     if (-not ($Scenario -and $StorageAccountName -and $ContainerName)) {
         Write-PipelineError "History mode requires -Scenario, -StorageAccountName, and -ContainerName."
     }
+    # `pwsh -File` hands "-Versions a,b,c" over as the single string 'a,b,c'
+    # rather than three elements, so split here to make both call styles work.
+    $Versions = @($Versions | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+
     $isVersionPair = $BaselineVersion -and $CandidateVersion
     $isTierPair    = $BaselineTier -and $CandidateTier
-    if ($isVersionPair -and $isTierPair) {
-        Write-PipelineError "History mode: choose ONE comparison axis - version-vs-version (with shared -Tier) OR tier-vs-tier (with shared -Version)."
+    $isVersionList = $Versions.Count -gt 0
+    if (@($isVersionPair, $isTierPair, $isVersionList | Where-Object { $_ }).Count -gt 1) {
+        Write-PipelineError "History mode: choose ONE comparison axis - version-vs-version (with shared -Tier), multi-version (-Versions with shared -Tier) OR tier-vs-tier (with shared -Version)."
     }
-    if (-not ($isVersionPair -or $isTierPair)) {
-        Write-PipelineError "History mode: provide either version-vs-version (-Tier + -BaselineVersion + -CandidateVersion) or tier-vs-tier (-Version + -BaselineTier + -CandidateTier)."
+    if (-not ($isVersionPair -or $isTierPair -or $isVersionList)) {
+        Write-PipelineError "History mode: provide version-vs-version (-Tier + -BaselineVersion + -CandidateVersion), multi-version (-Tier + -Versions) or tier-vs-tier (-Version + -BaselineTier + -CandidateTier)."
     }
-    if ($isVersionPair -and -not $Tier) {
-        Write-PipelineError "Version-vs-version comparison requires -Tier (the shared tier)."
+    if ($isVersionList -and $Versions.Count -lt 2) {
+        Write-PipelineError "-Versions needs at least two versions to compare (got '$($Versions -join ', ')')."
+    }
+    if (($isVersionPair -or $isVersionList) -and -not $Tier) {
+        Write-PipelineError "Version comparison requires -Tier (the shared tier)."
     }
     if ($isTierPair -and -not $Version) {
         Write-PipelineError "Tier-vs-tier comparison requires -Version (the shared version)."
@@ -175,14 +195,13 @@ function Get-HistoryStats {
 
     foreach ($cellKey in $relevantKeys) {
         $sampler = ($cellKey -split '__', 3)[2]
-        # Get-RunDate (from _history-helpers.ps1, dot-sourced before this function
-        # runs) tolerates unparseable timestamps so one corrupt history blob
-        # doesn't throw under $ErrorActionPreference="Stop". $null-valued sort
-        # keys sort to the end; downstream Take-N logic still picks valid rows.
-        $runs = @($Cells[$cellKey] | Sort-Object { Get-RunDate $_ } -Descending)
-        if ($runs.Count -eq 0) { continue }
-
-        $picked = if ($Aggregate -eq 'latest') { @($runs[0]) } else { @($runs | Select-Object -First 5) }
+        # Select-LikeForLikeRuns (from _history-helpers.ps1, dot-sourced before
+        # this function runs) sorts newest-first and keeps only runs that drove
+        # the same load as the newest one, so 'median5' can't fold a smoke or
+        # ramp run in with the standard runs around it.
+        $window = if ($Aggregate -eq 'latest') { 1 } else { 5 }
+        $picked = @(Select-LikeForLikeRuns -Runs @($Cells[$cellKey]) -First $window)
+        if ($picked.Count -eq 0) { continue }
 
         # Track unique runs (by run_id) for the report header.
         foreach ($r in $picked) { $matchedRuns[[string]$r.run_id] = $r }
@@ -198,6 +217,16 @@ function Get-HistoryStats {
             P95      = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.p95_ms }))), 0)
             P99      = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.p99_ms }))), 0)
             Max      = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.max_ms }))), 0)
+            # Fastest request per run: the latency floor (network + a cached
+            # response). It barely moves with the code under test, so a shift
+            # here points at the environment rather than the version.
+            Min      = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.min_ms }))), 0)
+            ErrPct   = [math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.error_rate }))) * 100, 2)
+            # Run-to-run spread of each latency median, for the multi-version table.
+            P50Std   = [int][math]::Round((Get-PopulationStdDev (@($picked | ForEach-Object { [double]$_.p50_ms }))), 0)
+            P95Std   = [int][math]::Round((Get-PopulationStdDev (@($picked | ForEach-Object { [double]$_.p95_ms }))), 0)
+            P99Std   = [int][math]::Round((Get-PopulationStdDev (@($picked | ForEach-Object { [double]$_.p99_ms }))), 0)
+            LoadKey  = Get-LoadKey $picked[0]
             RunCount = $picked.Count
         }
     }
@@ -230,6 +259,166 @@ function Format-Cell {
     $delta = [math]::Abs(($Candidate - $Baseline) / [double]$Baseline * 100)
     if ($delta -ge $ThresholdPct) { return "**$deltaStr**" }
     return $deltaStr
+}
+
+# Samplers whose picked runs drove different loads across the given sides.
+# A delta between e.g. 50-VU and 20-VU runs says nothing about the versions.
+function Get-LoadMismatches {
+    param([Parameter(Mandatory)] [object[]]$Sides, [Parameter(Mandatory)] [string[]]$Labels)
+    $samplers = @($Sides | ForEach-Object { $_.ByLabel.Keys } | Sort-Object -Unique)
+    foreach ($sampler in $samplers) {
+        $loads = for ($i = 0; $i -lt $Sides.Count; $i++) {
+            $s = $Sides[$i].ByLabel[$sampler]
+            if ($s) { [pscustomobject]@{ Label = $Labels[$i]; LoadKey = $s.LoadKey } }
+        }
+        if (@($loads | ForEach-Object { $_.LoadKey } | Sort-Object -Unique).Count -gt 1) {
+            [pscustomobject]@{
+                Sampler = $sampler
+                Detail  = (@($loads | ForEach-Object { "$($_.Label): $(Format-LoadKey $_.LoadKey)" }) -join '; ')
+            }
+        }
+    }
+}
+
+function Add-LoadMismatchWarning {
+    param([Parameter(Mandatory)] [System.Text.StringBuilder]$Out, [AllowEmptyCollection()] [object[]]$Mismatches)
+    if (-not $Mismatches -or $Mismatches.Count -eq 0) { return }
+    [void]$Out.AppendLine("> **Load mismatch - the rows below are not like-for-like.** The picked runs drove different loads, so their deltas reflect the load, not the version/tier. Re-run the odd side at the same profile before reading them.")
+    foreach ($m in $Mismatches) {
+        [void]$Out.AppendLine("> - ``$($m.Sampler)`` - $($m.Detail)")
+    }
+    [void]$Out.AppendLine()
+}
+
+function Write-Report([string]$Report) {
+    if ($OutputPath) {
+        $Report | Out-File -FilePath $OutputPath -Encoding utf8
+        Write-Host "Report written to $OutputPath"
+    } else {
+        Write-Output $Report
+    }
+}
+
+# --- Multi-version report (history mode, -Versions) ---
+
+if ($isHistoryMode -and $isVersionList) {
+    . "$PSScriptRoot/_history-helpers.ps1"
+
+    $cells = Get-HistoryCells `
+        -Scenario $Scenario `
+        -HistoryResourceGroup $HistoryResourceGroup `
+        -StorageAccountName $StorageAccountName `
+        -ContainerName $ContainerName `
+        -Major $Major
+
+    if ($cells.Count -eq 0) {
+        Write-PipelineError "No history rows found for scenario '$Scenario'$(if ($Major) { " (major $Major)" }). Nothing to compare."
+    }
+
+    $sides = @(foreach ($v in $Versions) {
+        $stats = Get-HistoryStats -Cells $cells -Version $v -Tier $Tier -Aggregate $Aggregate
+        if ($stats.ByLabel.Count -eq 0) {
+            Write-PipelineError "No history rows for cell ($v / $Tier / $Scenario). Version strings are matched exactly - has this combination ever run?$(if ($Major) { " -Major $Major also limits the search to that major; drop it when comparing across majors." })"
+        }
+        $stats
+    })
+
+    $reference  = $sides[0]
+    $mismatches = @(Get-LoadMismatches -Sides $sides -Labels $Versions)
+    $mismatched = @($mismatches | ForEach-Object { $_.Sampler })
+
+    $out = New-Object System.Text.StringBuilder
+    [void]$out.AppendLine("# Version comparison on ${Tier}: $($Versions -join ' / ')")
+    [void]$out.AppendLine()
+    [void]$out.AppendLine("- Source: history storage (``$StorageAccountName/$ContainerName``), scenario ``$Scenario``")
+    [void]$out.AppendLine("- Aggregate: $(if ($Aggregate -eq 'median5') { 'median across the last 5 like-for-like runs per sampler (fewer when fewer exist)' } else { 'latest run per sampler' })")
+    for ($i = 0; $i -lt $Versions.Count; $i++) {
+        $runs    = @($sides[$i].Runs)
+        $ids     = (@($runs | ForEach-Object { "#$($_.run_id)" }) -join ', ')
+        $loads   = (@($sides[$i].ByLabel.Values | ForEach-Object { $_.LoadKey } | Sort-Object -Unique | ForEach-Object { Format-LoadKey $_ }) -join ' / ')
+        $dotnet  = (@($runs | ForEach-Object { [string]$_.dotnet_version } | Where-Object { $_ } | Sort-Object -Unique) -join ', ')
+        $commits = (@($runs | ForEach-Object { $c = [string]$_.commit; if ($c.Length -gt 7) { $c.Substring(0, 7) } else { $c } } | Where-Object { $_ } | Sort-Object -Unique) -join ', ')
+        # Seeded content as the runs themselves reported it. More than one value
+        # per field means the runs behind this version did not hold the same content.
+        $seeded = (@(
+            @{ Label = 'content';      Field = 'seeded_content_total' },
+            @{ Label = 'media images'; Field = 'seeded_media_images' },
+            @{ Label = 'media files';  Field = 'seeded_media_files' }
+        ) | ForEach-Object {
+            $field  = $_.Field
+            $values = @($runs | ForEach-Object { $_.$field } | Where-Object { $null -ne $_ -and "$_" -ne '' } | Sort-Object -Unique)
+            if ($values.Count -gt 0) { "$($_.Label) $($values -join '/')" }
+        }) -join ', '
+        if (-not $seeded) { $seeded = 'not recorded' }
+        [void]$out.AppendLine("- **$($Versions[$i])**: $($runs.Count) run(s) ($ids); load: $loads; .NET $dotnet; harness commit(s) $commits; seeded: $seeded")
+    }
+    [void]$out.AppendLine("- Change columns are relative to **$($Versions[0])**; bold = at or above $SignificantDeltaPercent%. Negative = faster.")
+    [void]$out.AppendLine("- ``±`` is the run-to-run standard deviation of the value beside it (shown when a cell has 2+ runs). A change smaller than the spread is noise.")
+    [void]$out.AppendLine()
+    Add-LoadMismatchWarning -Out $out -Mismatches $mismatches
+
+    # Heaviest reference samplers first, then any the reference never ran.
+    $labels = @($reference.ByLabel.Keys | Sort-Object { -$reference.ByLabel[$_].Count }) +
+              @($sides | Select-Object -Skip 1 | ForEach-Object { $_.ByLabel.Keys } | Sort-Object -Unique | Where-Object { -not $reference.ByLabel.ContainsKey($_) })
+
+    $header = "| Sampler | $($Versions[0]) |" + ((@($Versions | Select-Object -Skip 1) | ForEach-Object { " $_ | Change |" }) -join '')
+    $sep    = "|---|---|" + ((@($Versions | Select-Object -Skip 1) | ForEach-Object { "---|---|" }) -join '')
+
+    foreach ($metric in @(
+        # p50 first: it is the steadiest statistic run to run, so it resolves
+        # version differences that p95/p99 need many more runs to show.
+        @{ Title = 'p50 (ms)'; Value = 'P50'; Spread = 'P50Std' },
+        @{ Title = 'p95 (ms)'; Value = 'P95'; Spread = 'P95Std' },
+        @{ Title = 'p99 (ms)'; Value = 'P99'; Spread = 'P99Std' },
+        @{ Title = 'Fastest request (ms)'; Value = 'Min'; Spread = $null
+           Note  = "The latency floor: network plus a cached response. It should be near-identical across versions. If it differs, the runs were not made under the same conditions (or every request got slower by a fixed amount) and the tables above carry that offset - re-run a version with known numbers as a control before drawing conclusions." }
+    )) {
+        [void]$out.AppendLine("## $($metric.Title)")
+        [void]$out.AppendLine()
+        if ($metric.Note) {
+            [void]$out.AppendLine("> *$($metric.Note)*")
+            [void]$out.AppendLine()
+        }
+        [void]$out.AppendLine($header)
+        [void]$out.AppendLine($sep)
+        foreach ($label in $labels) {
+            $name = if ($mismatched -contains $label) { "``$label`` (load differs)" } else { "``$label``" }
+            $row  = "| $name |"
+            $ref  = $reference.ByLabel[$label]
+            for ($i = 0; $i -lt $sides.Count; $i++) {
+                $s = $sides[$i].ByLabel[$label]
+                if (-not $s) {
+                    $row += $(if ($i -eq 0) { " - |" } else { " - | - |" })
+                    continue
+                }
+                $value = $s.($metric.Value)
+                $cell  = if ($metric.Spread -and $s.RunCount -gt 1) { "$value ±$($s.($metric.Spread))" } else { "$value" }
+                $row  += " $cell |"
+                if ($i -gt 0) {
+                    $row += $(if ($ref) { " $(Format-Cell $ref.($metric.Value) $value $SignificantDeltaPercent) |" } else { " - |" })
+                }
+            }
+            [void]$out.AppendLine($row)
+        }
+        [void]$out.AppendLine()
+    }
+
+    [void]$out.AppendLine("## Error rate (%) and runs counted")
+    [void]$out.AppendLine()
+    [void]$out.AppendLine("| Sampler | " + ($Versions -join ' | ') + " |")
+    [void]$out.AppendLine("|---|" + ((@($Versions) | ForEach-Object { "---|" }) -join ''))
+    foreach ($label in $labels) {
+        $rowCells = foreach ($side in $sides) {
+            $s = $side.ByLabel[$label]
+            if ($s) { "$($s.ErrPct)% (n=$($s.RunCount))" } else { '-' }
+        }
+        [void]$out.AppendLine("| ``$label`` | " + ($rowCells -join ' | ') + " |")
+    }
+    [void]$out.AppendLine()
+    [void]$out.AppendLine("> *Each cell is the median of that sampler's per-run value, so p95 here is a median of per-run p95s. No all-sampler aggregate row: true aggregate percentiles need raw samples, which the history summary doesn't keep. A fast sampler with a high error rate is not a win - read the error table before the latency ones.*")
+
+    Write-Report $out.ToString()
+    return
 }
 
 # --- Load + label ---
@@ -297,6 +486,9 @@ else {
 }
 [void]$out.AppendLine("- Significant-delta threshold: $SignificantDeltaPercent% (bold = at or above)")
 [void]$out.AppendLine()
+if ($isHistoryMode) {
+    Add-LoadMismatchWarning -Out $out -Mismatches @(Get-LoadMismatches -Sides @($baseline, $candidate) -Labels @($BaselineLabel, $CandidateLabel))
+}
 
 # Aggregate (CSV mode only - true aggregate percentiles need raw samples)
 if ($baseline.Aggregate -and $candidate.Aggregate) {
@@ -349,11 +541,4 @@ foreach ($label in ($candidate.ByLabel.Keys | Where-Object { -not $baseline.ByLa
 [void]$out.AppendLine("- **Cached paths (Homepage) and static assets (Media) won't differentiate tiers** because their hot path doesn't touch the SQL DTU budget.")
 [void]$out.AppendLine("- **Write paths (e.g. ContactFormSubmit) need enough volume to saturate the lower tier's Log IO.** If they barely move, increase the task weight on the write task.")
 
-$report = $out.ToString()
-
-if ($OutputPath) {
-    $report | Out-File -FilePath $OutputPath -Encoding utf8
-    Write-Host "Report written to $OutputPath"
-} else {
-    Write-Output $report
-}
+Write-Report $out.ToString()

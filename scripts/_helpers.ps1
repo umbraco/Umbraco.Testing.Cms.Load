@@ -166,6 +166,18 @@ function ConvertTo-DoubleOrNull([string] $Value) {
     return $null
 }
 
+# Same contract for whole numbers (counts). An unexpanded pipeline macro such
+# as '$(someVariable)' - what Azure DevOps passes when the variable was never
+# set - is malformed input here and so also comes back as $null.
+function ConvertTo-IntOrNull([string] $Value) {
+    $i = 0
+    if (-not [string]::IsNullOrWhiteSpace($Value) -and
+        [int]::TryParse($Value, [System.Globalization.NumberStyles]::Integer, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$i)) {
+        return $i
+    }
+    return $null
+}
+
 # Stream-parse one engine_results.csv (JMeter format). Memory-bounded: keeps
 # per-task sample lists, not the whole CSV. Returns:
 #   @{ ByLabel = @{ '<label>' = @{ Samples = List[int]; Errors = int } };

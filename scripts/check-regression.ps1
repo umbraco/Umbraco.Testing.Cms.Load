@@ -238,10 +238,10 @@ foreach ($cellKey in $cells.Keys) {
     #
     # "Prior" = later in the descending sort, so a pinned candidate compares only
     # against runs older than itself.
-    $candLoad      = "$($candidate.user_count)|$($candidate.spawn_rate)|$($candidate.duration_seconds)|$($candidate.methodology_version)"
+    $candLoad      = Get-LoadKey $candidate
     $older         = @($sorted | Select-Object -Skip ($candIndex + 1))
     $priorRuns     = @($older |
-        Where-Object { "$($_.user_count)|$($_.spawn_rate)|$($_.duration_seconds)|$($_.methodology_version)" -eq $candLoad } |
+        Where-Object { (Get-LoadKey $_) -eq $candLoad } |
         Select-Object -First $BaselineWindow)
     $priorRunCount = $priorRuns.Count
 

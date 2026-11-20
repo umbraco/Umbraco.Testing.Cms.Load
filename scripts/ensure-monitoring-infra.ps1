@@ -78,7 +78,15 @@ $columns = @(
     @{ name = "pool_dtu_max";                           type = "int"      }
     @{ name = "seeder_preset";                          type = "string"   }
     @{ name = "seeder_duration_seconds";                type = "real"     }
-    @{ name = "infra_tier";                             type = "string"   }
+    # What the seeder actually created, from /umbraco/api/seederstatus/inventory
+    # at warm-up. Lets a cross-version comparison check the sites held the same
+    # content instead of assuming each major's seeder build produced it. Null
+    # when warm-up was skipped or the inventory probe failed.
+    @{ name = "seeded_content_total";                   type = "int"      }
+    @{ name = "seeded_root_sections";                   type = "int"      }
+    @{ name = "seeded_media_images";                    type = "int"      }
+    @{ name = "seeded_media_files";                     type = "int"      }
+    @{ name = "infra_tier";                            type = "string"   }
     @{ name = "scenario";                               type = "string"   }
     @{ name = "scenario_name";                          type = "string"   }
     # Backoffice JMeter mode emits one publish per .jmx file (ViewHomePage,

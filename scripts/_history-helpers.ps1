@@ -1,7 +1,7 @@
 # Shared helpers for scripts that read summary.ndjson rows out of history storage.
 # Dot-source from a script:
 #   . "$PSScriptRoot/_history-helpers.ps1"
-# Then call Get-HistoryCells / Get-Median / Get-HistoryPrefix.
+# Then call Get-HistoryCells / Get-Median / Get-HistoryPrefix / Select-LikeForLikeRuns.
 #
 # The leading underscore signals "internal helper, not a top-level CLI" so it
 # stands apart in directory listings. Generic helpers (storage key, percentile,
@@ -48,6 +48,53 @@ function Get-Median([double[]] $values) {
     if ($n -eq 0) { return 0 }
     if ($n % 2 -eq 1) { return $sorted[[int](($n - 1) / 2)] }
     return ($sorted[[int]($n / 2 - 1)] + $sorted[[int]($n / 2)]) / 2
+}
+
+# Population stddev (divides by N): we're describing the spread of the K runs
+# we have, not estimating a population from a sample. Bessel-corrected sample
+# stddev would over-inflate the visible spread when N is small (3-5 runs).
+function Get-PopulationStdDev([double[]] $values) {
+    $n = $values.Count
+    if ($n -le 1) { return 0 }
+    $mean = ($values | Measure-Object -Average).Average
+    $sumSq = 0.0
+    foreach ($v in $values) { $sumSq += [math]::Pow($v - $mean, 2) }
+    return [math]::Sqrt($sumSq / $n)
+}
+
+# What makes two rows of one cell comparable: the load actually driven (VU
+# count, spawn rate, duration) and how the published stats were computed.
+# Profile isn't a stored column, so this matches the published load params,
+# which every metric row carries. Rows from before methodology_version existed
+# read as "" and form their own bucket.
+function Get-LoadKey {
+    param([Parameter(Mandatory)] $Row)
+    "$($Row.user_count)|$($Row.spawn_rate)|$($Row.duration_seconds)|$($Row.methodology_version)"
+}
+
+# Human-readable form of a Get-LoadKey value, for report headers and warnings.
+function Format-LoadKey([string] $LoadKey) {
+    $p = $LoadKey -split '\|'
+    $methodology = if ($p.Count -gt 3 -and $p[3]) { "methodology $($p[3])" } else { 'methodology unversioned' }
+    "$($p[0]) VUs, spawn $($p[1])/s, $($p[2]) s, $methodology"
+}
+
+# Newest-first runs of one cell that drove the same load as the newest run,
+# optionally capped at -First. Aggregating a cell without this folds a smoke or
+# ramp run into the same median as the standard runs around it. The newest run
+# decides which load counts, mirroring check-regression.ps1, where the
+# candidate does. Callers should wrap the result in @().
+function Select-LikeForLikeRuns {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Runs,
+        [int]$First = 0
+    )
+    $sorted = @($Runs | Sort-Object { Get-RunDate $_ } -Descending)
+    if ($sorted.Count -eq 0) { return }
+    $loadKey = Get-LoadKey $sorted[0]
+    $same = @($sorted | Where-Object { (Get-LoadKey $_) -eq $loadKey })
+    if ($First -gt 0) { $same = @($same | Select-Object -First $First) }
+    $same
 }
 
 # Loads every summary.ndjson under the scenario prefix and returns a hashtable

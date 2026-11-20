@@ -32,20 +32,13 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_history-helpers.ps1"
 
-# Population stddev (divides by N): we're describing the spread of the K runs
-# we have, not estimating a population from a sample. Bessel-corrected sample
-# stddev would over-inflate the visible spread when N is small (3-5 runs).
-function Get-PopulationStdDev([double[]] $values) {
-    $n = $values.Count
-    if ($n -le 1) { return 0 }
-    $mean = ($values | Measure-Object -Average).Average
-    $sumSq = 0.0
-    foreach ($v in $values) { $sumSq += [math]::Pow($v - $mean, 2) }
-    return [math]::Sqrt($sumSq / $n)
-}
+function Format-Cell($allRuns) {
+    if (-not $allRuns -or $allRuns.Count -eq 0) { return '-' }
 
-function Format-Cell($runs) {
-    if (-not $runs -or $runs.Count -eq 0) { return '-' }
+    # Only the runs that drove the same load as the cell's newest run: a smoke
+    # or ramp run in the same cell would otherwise move the median and inflate
+    # the stddev this matrix exists to show.
+    $runs = @(Select-LikeForLikeRuns -Runs @($allRuns))
 
     # Median, not mean, to match the p95/p99 statistic in the same cell - a mean
     # let one bad run skew the figure the latencies beside it are protected from.
@@ -110,6 +103,7 @@ $out = New-Object System.Text.StringBuilder
 [void]$out.AppendLine()
 [void]$out.AppendLine("Source: $StorageAccountName/$ContainerName/$prefix")
 [void]$out.AppendLine("Cells are 'p95 / p99 (err%)' in ms for single-run cells; 'median ±stddev / median ±stddev (err%) n=K' when 2+ runs exist. err% is the median across runs, matching the latency statistic beside it.")
+[void]$out.AppendLine("Each cell counts only the runs that drove the same load (VUs, spawn rate, duration, methodology) as its newest run, so n can be lower than the number of runs queued.")
 [void]$out.AppendLine("A small ±stddev across n>=3 runs is the green light to use those numbers as a regression baseline (see check-regression.ps1).")
 [void]$out.AppendLine()
 

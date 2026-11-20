@@ -190,9 +190,9 @@ The profile only encodes load intensity — the same profile can drive any combi
 | 16 | `v9.0` | `9.x` |
 | 17 | `v10.0` | `10.x` |
 | 18 | `v10.0` | `10.x` |
-| 19 | `v11.0` | `11.x` (preview SDKs allowed until .NET 11 GA, expected November 2026) |
+| 19 | `v11.0` | `11.x` |
 
-> **v19 caveat (as of 30-10-2026):** the `azurerm` provider pinned in `Terraform/.terraform.lock.hcl` (4.70.0 at the time of writing; the validator reads the live value) validates a Windows App Service's `dotnet_version` against a fixed list ending at `v10.0` — see [`internal/services/appservice/helpers/app_stack.go` at v4.70.0](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.70.0/internal/services/appservice/helpers/app_stack.go) — and the [same file on `main`](https://github.com/hashicorp/terraform-provider-azurerm/blob/main/internal/services/appservice/helpers/app_stack.go) hadn't added `v11.0` on that date. `resolve-run-config.ps1` therefore fails a v19 queue at validation with a pointer to this, rather than several minutes later at `terraform plan`. Note that `Terraform/main.tf` constrains `azurerm` to `~> 4.20` while the provider's current line is 5.x ([latest release](https://github.com/hashicorp/terraform-provider-azurerm/releases/latest) was 5.12.0 on that date), so a release that adds `v11.0` will be a 5.x one that the constraint excludes — editing the lock file alone won't get there. To enable v19: raise `required_providers.azurerm` to the 5.x release whose `app_stack.go` list includes `v11.0` (a provider major upgrade; review the 4.x→5.x upgrade guide for `azurerm_windows_web_app` and the other resources this module uses), re-run `terraform init -upgrade`, drop the `blockedBy` note from the v19 entry in `scripts/resolve-run-config.ps1`, and confirm Windows App Service serves the .NET 11 runtime (`az webapp list-runtimes --os windows`). Everything else on the v19 path (seeder map, SDK install, JMeter fallback) is already wired.
+> **v19 caveat (as of 20-11-2026):** the `azurerm` provider pinned in `Terraform/.terraform.lock.hcl` (5.14.0 at the time of writing; the validator reads the live value) validates a Windows App Service's `dotnet_version` against a fixed list ending at `v10.0` — see [`internal/services/appservice/helpers/app_stack.go` at v5.14.0](https://github.com/hashicorp/terraform-provider-azurerm/blob/v5.14.0/internal/services/appservice/helpers/app_stack.go). `v11.0` was merged to the provider's `main` on 17-11-2026 ([#33870](https://github.com/hashicorp/terraform-provider-azurerm/pull/33870)) but is not in a release yet. `resolve-run-config.ps1` therefore fails a v19 queue at validation with a pointer to this, rather than several minutes later at `terraform plan`. `Terraform/main.tf` is already on the provider's 5.x line (`~> 5.14`; the 4.70.0 → 5.14.0 upgrade planned identically for the resources this module uses, including the 32-bit worker default), so enabling v19 is a lock bump: once a release carries the change, run `terraform init -upgrade -backend=false` in `Terraform/` (keep the `null`/`random` pins — `-upgrade` moves them too), confirm with `terraform validate` on a `v11.0` test case, drop the `blockedBy` note from the v19 entry in `scripts/resolve-run-config.ps1` and its Pester expectation, and confirm Windows App Service serves the .NET 11 runtime (`az webapp list-runtimes --os windows` listed `dotnet:11` on 20-11-2026; that the workers have an 11.x runtime installed was not checked). Everything else on the v19 path (seeder map, SDK install, JMeter fallback) is already wired.
 
 **Multi-version comparisons:** queue the pipeline once per version. ALT's Compare runs view aggregates across pipeline runs (testId is per-scenario, not per-pipeline-run).
 
@@ -643,9 +643,21 @@ For the everyday "did this version/tier actually move the needle?" question, `sc
     -BaselineTier Starter -CandidateTier Pro `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history
+
+# Several versions side by side on a fixed tier (the first is the reference)
+./scripts/compare-runs.ps1 `
+    -Scenario Default -Tier Starter `
+    -Versions 17.6.1,18.0.0,19.0.0-beta1 -Aggregate median5 `
+    -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
+    -ContainerName loadtest-history `
+    -OutputPath versions.md
 ```
 
 `-Aggregate latest` (default) compares the most recent run for each cell; `-Aggregate median5` compares the median across the last 5 runs (more stable on noisy tails). Auth: `az login` + permission to list keys on the history storage account (Storage Account Contributor or higher).
+
+**Like-for-like only.** A cell counts only the runs that drove the same load (VU count, spawn rate, duration, methodology version) as its newest run — the same key `check-regression.ps1` baselines on — so a stray smoke or ramp run doesn't get folded into a `median5`. The newest run decides which load counts, so finish a series on the profile you want to report. If the sides still end up on different loads, the report opens with a **Load mismatch** warning naming the samplers. `show-trends.ps1` applies the same rule per cell.
+
+**`-Versions`** takes two or more exact version strings (they're matched literally: `19.0.0-beta1` and `19.0.0-rc1` are different cells) and emits one table per metric with the median ± run-to-run stddev per version and the change against the first version, plus an error-rate table with the run count behind each cell. p50 comes first because it is the steadiest statistic (within about ±1 ms run to run on the frontend workload, where p95 can vary 3x within one version on Starter); read p95/p99 changes as indicative unless each version has five or more runs. A **Fastest request** table follows: that latency floor should be near-identical across versions, so a difference there means the runs weren't made under the same conditions — the October 2026 runs sat on a floor of 11–13 ms against 3–4 ms before and after, on every version run that week — and the fix is to re-run a version with known numbers as a control in the same session. The header lists the run ids, load, .NET runtime, harness commit and seeded content counts behind every version. Leave `-Major` off when the versions span majors.
 
 The script emits a markdown report with:
 - **Per-sampler** breakdown (Detail, Page, Category, etc.) ordered by traffic share, with deltas bolded when they cross the significance threshold (default 10%)
@@ -837,6 +849,7 @@ Every per-case NDJSON row carries the metrics below (one row per Locust task, pl
 
 **Client-side (from Locust / `engine1_results.csv` → NDJSON):**
 - `request_count`, `failure_count`, `error_rate` — failure rate is the first thing to check; a fast-but-erroring run is not a successful run.
+- `seeded_content_total`, `seeded_root_sections`, `seeded_media_images`, `seeded_media_files` — what the seeder actually created, read from `/umbraco/api/seederstatus/inventory` during warm-up. Each Umbraco major uses its own seeder build (`scripts/seeder-versions.json`), so these are what confirm two versions were tested against the same content. Null when warm-up was skipped (the probe would warm a cold-start run) or the inventory call failed, and on rows published before the columns existed.
 - `avg_ms`, `p50_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `min_ms`, `max_ms` — `p95` and `p99` are the tier-discriminating metrics. `max` is single-sample noise.
 - `requests_per_sec` — throughput per task and aggregate. Denominator is the **observed sample window** (`max(timeStamp) - min(timeStamp)` across the kept rows), not the configured test duration: the two diverge whenever ALT autoStops early or the run fast-fails, and using the configured value understated throughput by exactly the fraction of the window that never ran — worst on the saturated runs where throughput is the number you care about. Falls back to the configured duration when the CSV has no usable timestamps. **`requests_per_sec` on rows published before this change is not comparable for truncated runs**; full-length runs are unaffected (observed span ≈ configured duration).
 

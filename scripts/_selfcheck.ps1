@@ -54,6 +54,25 @@ Assert-Equal 2.5 (Get-Median @(4, 1, 3, 2)) "unsorted input is sorted first"
 Assert-Equal 5   (Get-Median @(5))          "single sample"
 Assert-Equal 0   (Get-Median @())           "empty input = 0"
 
+Write-Host "Select-LikeForLikeRuns (newest run's load decides which runs count)"
+# Silent-wrong-numbers risk: a smoke or ramp run left in a cell shifts every
+# median compare-runs.ps1 and show-trends.ps1 report, with nothing to flag it.
+function New-LoadRow($Day, $Users, $Duration, $Methodology = 2) {
+    [pscustomobject]@{ run_id = "r$Day"; run_started_at = "2026-11-${Day}T10:00:00Z"
+        user_count = $Users; spawn_rate = 10; duration_seconds = $Duration; methodology_version = $Methodology }
+}
+$loadRows = @(
+    (New-LoadRow '10' 20 60),       # older smoke run
+    (New-LoadRow '13' 50 300),
+    (New-LoadRow '11' 50 300),
+    (New-LoadRow '12' 50 300 1),    # same load, older methodology
+    (New-LoadRow '09' 50 300)
+)
+Assert-Seq @('r13', 'r11', 'r09') (@(Select-LikeForLikeRuns -Runs $loadRows) | ForEach-Object { $_.run_id }) "other loads and methodologies dropped, newest first"
+Assert-Seq @('r13', 'r11')        (@(Select-LikeForLikeRuns -Runs $loadRows -First 2) | ForEach-Object { $_.run_id }) "-First caps after filtering"
+Assert-Equal 0 @(Select-LikeForLikeRuns -Runs @()).Count "empty input = no runs"
+Assert-Equal '50 VUs, spawn 10/s, 300 s, methodology 2' (Format-LoadKey (Get-LoadKey $loadRows[1])) "load key renders readably"
+
 Write-Host "Split-CsvLine (RFC-4180 quoting)"
 Assert-Seq @('a', 'b', 'c')      (Split-CsvLine 'a,b,c')        "plain fields"
 Assert-Seq @('a', 'b,c', 'd')    (Split-CsvLine 'a,"b,c",d')    "quoted comma is not a delimiter"
@@ -119,6 +138,12 @@ Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull ''))  "empty -> null (not 
 Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull '  ')) "whitespace -> null"
 Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull 'x')) "non-numeric -> null"
 Assert-Equal 12.5 (ConvertTo-DoubleOrNull '12.5' )         "invariant culture: dot decimal parses"
+
+Write-Host "ConvertTo-IntOrNull (blank/malformed/unexpanded macro -> null, never 0)"
+Assert-Equal 512  (ConvertTo-IntOrNull '512')                       "parses a count"
+Assert-Equal 0    (ConvertTo-IntOrNull '0')                         "literal '0' stays 0 (not null)"
+Assert-Equal $true ($null -eq (ConvertTo-IntOrNull ''))             "empty -> null (not 0)"
+Assert-Equal $true ($null -eq (ConvertTo-IntOrNull '$(seededContentTotal)')) "unexpanded pipeline macro -> null"
 
 Write-Host "ConvertTo-IsoUtc (normalize to ISO-8601 UTC; passthrough on bad input)"
 Assert-Equal '2026-06-15T13:45:30.0000000Z' (ConvertTo-IsoUtc '2026-06-15T13:45:30.0000000Z') "already-ISO input is idempotent"

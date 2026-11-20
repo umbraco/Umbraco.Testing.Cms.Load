@@ -56,6 +56,14 @@ param(
     # the field is then omitted from the row instead of being written as 0.
     [string]$SeederDurationSeconds = "",
 
+    # Counts from the seeder inventory (what the site actually holds), captured
+    # by the warm-up step in load-test-job.yml. Optional - blank when warm-up
+    # was skipped or the inventory probe failed; the fields are then null.
+    [string]$SeededContentTotal = "",
+    [string]$SeededRootSections = "",
+    [string]$SeededMediaImages = "",
+    [string]$SeededMediaFiles = "",
+
     # JMeter test plan stem (e.g. 'ViewHomePage', 'MemberLogin'). Empty for
     # frontend (Locust) runs and the single-.jmx legacy backoffice path. When
     # set, the publish step (a) suffixes the blob path with the .jmx stem so
@@ -128,6 +136,12 @@ $metadata = [ordered]@{
     # agent locale) degrades to $null instead of throwing under -ErrorAction Stop
     # and killing the publish before any row is written.
     seeder_duration_seconds = ConvertTo-DoubleOrNull $SeederDurationSeconds
+    # Null (not 0) when unknown, for the same reason as the duration above: a 0
+    # would read as "seeded nothing" rather than "not captured".
+    seeded_content_total = ConvertTo-IntOrNull $SeededContentTotal
+    seeded_root_sections = ConvertTo-IntOrNull $SeededRootSections
+    seeded_media_images  = ConvertTo-IntOrNull $SeededMediaImages
+    seeded_media_files   = ConvertTo-IntOrNull $SeededMediaFiles
     scenario         = $Scenario
     user_count       = $UserCount
     spawn_rate       = $SpawnRate
