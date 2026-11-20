@@ -86,7 +86,7 @@ $columns = @(
     @{ name = "seeded_root_sections";                   type = "int"      }
     @{ name = "seeded_media_images";                    type = "int"      }
     @{ name = "seeded_media_files";                     type = "int"      }
-    @{ name = "infra_tier";                            type = "string"   }
+    @{ name = "infra_tier";                             type = "string"   }
     @{ name = "scenario";                               type = "string"   }
     @{ name = "scenario_name";                          type = "string"   }
     # Backoffice JMeter mode emits one publish per .jmx file (ViewHomePage,

@@ -89,7 +89,13 @@ function Select-LikeForLikeRuns {
         [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Runs,
         [int]$First = 0
     )
-    $sorted = @($Runs | Sort-Object { Get-RunDate $_ } -Descending)
+    # Rows whose run_started_at doesn't parse can't be placed in time, so they
+    # can neither decide which load is newest nor take a slot in the window -
+    # check-regression.ps1 drops them the same way. They are only used when the
+    # cell has nothing else.
+    $dated  = @($Runs | Where-Object { $null -ne (Get-RunDate $_) })
+    $usable = if ($dated.Count -gt 0) { $dated } else { @($Runs) }
+    $sorted = @($usable | Sort-Object { Get-RunDate $_ } -Descending)
     if ($sorted.Count -eq 0) { return }
     $loadKey = Get-LoadKey $sorted[0]
     $same = @($sorted | Where-Object { (Get-LoadKey $_) -eq $loadKey })

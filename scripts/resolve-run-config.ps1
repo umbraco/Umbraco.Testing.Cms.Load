@@ -129,7 +129,7 @@ $runtimeMaps = @{
     # Terraform/ (keep the null/random pins), confirm with `terraform validate`
     # on a v11.0 test case, then remove blockedBy and its Pester expectation.
     19 = @{ runtime = 'v11.0'; previewSdk = $false
-            blockedBy = "the azurerm Terraform provider pinned in Terraform/.terraform.lock.hcl (currently {azurerm}) rejects dotnet_version 'v11.0' for a Windows App Service (see internal/services/appservice/helpers/app_stack.go in hashicorp/terraform-provider-azurerm). Support was merged upstream in PR #33870 but 5.14.0 predates it - once a newer 5.x release is out, run 'terraform init -upgrade -backend=false' in Terraform/, then drop 'blockedBy' from the v19 entry in resolve-run-config.ps1" }
+            blockedBy = "the azurerm Terraform provider pinned in Terraform/.terraform.lock.hcl (currently {azurerm}) rejects dotnet_version 'v11.0' for a Windows App Service (see internal/services/appservice/helpers/app_stack.go in hashicorp/terraform-provider-azurerm). Support was merged upstream in PR #33870 on 17-11-2026 and the pinned release does not carry it - once a 5.x release that does is out, run 'terraform init -upgrade -backend=false' in Terraform/, restore the hashicorp/null and hashicorp/random pins in the lock file (-upgrade moves them too), then drop 'blockedBy' from the v19 entry in resolve-run-config.ps1" }
 }
 # What a queue can actually run today: mapped, not blocked, and with a seeder.
 $supportedMajors = @($runtimeMaps.Keys | Where-Object { -not $runtimeMaps[$_].blockedBy -and $_ -in $seederShippedMajors } | Sort-Object)

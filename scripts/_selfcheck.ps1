@@ -139,11 +139,11 @@ Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull '  ')) "whitespace -> null
 Assert-Equal $true ($null -eq (ConvertTo-DoubleOrNull 'x')) "non-numeric -> null"
 Assert-Equal 12.5 (ConvertTo-DoubleOrNull '12.5' )         "invariant culture: dot decimal parses"
 
-Write-Host "ConvertTo-IntOrNull (blank/malformed/unexpanded macro -> null, never 0)"
+Write-Host "ConvertTo-IntOrNull (blank/malformed -> null, never 0)"
 Assert-Equal 512  (ConvertTo-IntOrNull '512')                       "parses a count"
 Assert-Equal 0    (ConvertTo-IntOrNull '0')                         "literal '0' stays 0 (not null)"
 Assert-Equal $true ($null -eq (ConvertTo-IntOrNull ''))             "empty -> null (not 0)"
-Assert-Equal $true ($null -eq (ConvertTo-IntOrNull '$(seededContentTotal)')) "unexpanded pipeline macro -> null"
+Assert-Equal $true ($null -eq (ConvertTo-IntOrNull '12.5'))         "non-integer -> null"
 
 Write-Host "ConvertTo-IsoUtc (normalize to ISO-8601 UTC; passthrough on bad input)"
 Assert-Equal '2026-06-15T13:45:30.0000000Z' (ConvertTo-IsoUtc '2026-06-15T13:45:30.0000000Z') "already-ISO input is idempotent"

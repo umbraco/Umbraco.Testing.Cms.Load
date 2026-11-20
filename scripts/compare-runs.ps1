@@ -1,6 +1,7 @@
 #requires -Version 7.3
 
-# Compare two Locust runs and emit a markdown report with per-sampler deltas.
+# Compare two runs - or, in history mode, two or more versions - and emit a
+# markdown report with per-sampler deltas.
 # Two modes:
 #
 # History mode (preferred for "did this regress?" questions - pulls aggregated
@@ -94,10 +95,10 @@ $isCsvMode     = $BaselinePath -or $CandidatePath
 $isHistoryMode = $Scenario -or $HistoryResourceGroup -or $StorageAccountName -or $ContainerName
 
 if ($isCsvMode -and $isHistoryMode) {
-    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-StorageAccountName/-ContainerName) - not both."
+    Write-PipelineError "Specify EITHER CSV mode (-BaselinePath/-CandidatePath) OR history mode (-Scenario/-HistoryResourceGroup/-StorageAccountName/-ContainerName) - not both."
 }
 if (-not ($isCsvMode -or $isHistoryMode)) {
-    Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -StorageAccountName + -ContainerName + version/tier coordinates)."
+    Write-PipelineError "Specify either CSV mode (-BaselinePath + -CandidatePath) or history mode (-Scenario + -HistoryResourceGroup + -StorageAccountName + -ContainerName, plus -Tier with -BaselineVersion/-CandidateVersion or -Versions, or -Version with -BaselineTier/-CandidateTier)."
 }
 
 if ($isCsvMode) {
@@ -109,8 +110,10 @@ if ($isCsvMode) {
 }
 
 if ($isHistoryMode) {
-    if (-not ($Scenario -and $StorageAccountName -and $ContainerName)) {
-        Write-PipelineError "History mode requires -Scenario, -StorageAccountName, and -ContainerName."
+    # -HistoryResourceGroup included: the storage key lookup needs it, and
+    # without this check its absence surfaces as a parameter-binding error.
+    if (-not ($Scenario -and $HistoryResourceGroup -and $StorageAccountName -and $ContainerName)) {
+        Write-PipelineError "History mode requires -Scenario, -HistoryResourceGroup, -StorageAccountName, and -ContainerName."
     }
     # `pwsh -File` hands "-Versions a,b,c" over as the single string 'a,b,c'
     # rather than three elements, so split here to make both call styles work.
@@ -226,6 +229,7 @@ function Get-HistoryStats {
             P50Std   = [int][math]::Round((Get-PopulationStdDev (@($picked | ForEach-Object { [double]$_.p50_ms }))), 0)
             P95Std   = [int][math]::Round((Get-PopulationStdDev (@($picked | ForEach-Object { [double]$_.p95_ms }))), 0)
             P99Std   = [int][math]::Round((Get-PopulationStdDev (@($picked | ForEach-Object { [double]$_.p99_ms }))), 0)
+            MinStd   = [int][math]::Round((Get-PopulationStdDev (@($picked | ForEach-Object { [double]$_.min_ms }))), 0)
             LoadKey  = Get-LoadKey $picked[0]
             RunCount = $picked.Count
         }
@@ -283,11 +287,27 @@ function Get-LoadMismatches {
 function Add-LoadMismatchWarning {
     param([Parameter(Mandatory)] [System.Text.StringBuilder]$Out, [AllowEmptyCollection()] [object[]]$Mismatches)
     if (-not $Mismatches -or $Mismatches.Count -eq 0) { return }
-    [void]$Out.AppendLine("> **Load mismatch - the rows below are not like-for-like.** The picked runs drove different loads, so their deltas reflect the load, not the version/tier. Re-run the odd side at the same profile before reading them.")
+    [void]$Out.AppendLine("> **Not like-for-like - the samplers below were measured differently on each side.** Either the runs drove different loads (VUs, spawn rate, duration) or their stats were computed under different methodology versions; the lines below show which. Their deltas reflect that difference, not the version/tier. Re-run the odd side at the same profile on the current harness before reading them.")
     foreach ($m in $Mismatches) {
         [void]$Out.AppendLine("> - ``$($m.Sampler)`` - $($m.Detail)")
     }
     [void]$Out.AppendLine()
+}
+
+# Change cell for the multi-version tables. Values are whole milliseconds, so
+# on a 4 ms p50 a single millisecond is +25%: bolding on percentage alone would
+# flag integer granularity. A change is only bold when it also exceeds 1 ms and
+# the larger of the two run-to-run spreads.
+function Format-VersionChange {
+    param ([int]$Reference, [int]$Value, [int]$ReferenceSpread, [int]$ValueSpread, [int]$ThresholdPct)
+    $text     = Format-Delta $Reference $Value
+    $absolute = [math]::Abs($Value - $Reference)
+    $noise    = [math]::Max(1, [math]::Max($ReferenceSpread, $ValueSpread))
+    # No percentage exists against a zero reference; the absolute test still applies.
+    if ($Reference -le 0) { return $(if ($absolute -gt $noise) { "**$text**" } else { $text }) }
+    $percent  = $absolute / [double]$Reference * 100
+    if ($percent -ge $ThresholdPct -and $absolute -gt $noise) { return "**$text**" }
+    return $text
 }
 
 function Write-Report([string]$Report) {
@@ -325,13 +345,33 @@ if ($isHistoryMode -and $isVersionList) {
 
     $reference  = $sides[0]
     $mismatches = @(Get-LoadMismatches -Sides $sides -Labels $Versions)
-    $mismatched = @($mismatches | ForEach-Object { $_.Sampler })
 
     $out = New-Object System.Text.StringBuilder
     [void]$out.AppendLine("# Version comparison on ${Tier}: $($Versions -join ' / ')")
     [void]$out.AppendLine()
     [void]$out.AppendLine("- Source: history storage (``$StorageAccountName/$ContainerName``), scenario ``$Scenario``")
     [void]$out.AppendLine("- Aggregate: $(if ($Aggregate -eq 'median5') { 'median across the last 5 like-for-like runs per sampler (fewer when fewer exist)' } else { 'latest run per sampler' })")
+    $seededFields = @(
+        @{ Label = 'content';       Field = 'seeded_content_total' },
+        @{ Label = 'root sections'; Field = 'seeded_root_sections' },
+        @{ Label = 'media images';  Field = 'seeded_media_images' },
+        @{ Label = 'media files';   Field = 'seeded_media_files' }
+    )
+    # Every value seen per field across all versions, to flag a content mismatch below.
+    $seededSeen = @{}
+    foreach ($f in $seededFields) { $seededSeen[$f.Field] = @() }
+    # Versions with at least one picked run that recorded no content count.
+    $seededUnverified = @()
+    # The queue-time overrides (seederPresetOverride / appSkuOverride /
+    # poolDtuOverride) change what a run measured without changing its cell or
+    # its load key, so they are listed per version and checked here instead.
+    $infraFields = @(
+        @{ Label = 'seeder preset'; Field = 'seeder_preset' },
+        @{ Label = 'app SKU';       Field = 'app_service_sku' },
+        @{ Label = 'DTU cap';       Field = 'pool_dtu_max' }
+    )
+    $infraSeen = @{}
+    foreach ($f in $infraFields) { $infraSeen[$f.Field] = @() }
     for ($i = 0; $i -lt $Versions.Count; $i++) {
         $runs    = @($sides[$i].Runs)
         $ids     = (@($runs | ForEach-Object { "#$($_.run_id)" }) -join ', ')
@@ -340,22 +380,55 @@ if ($isHistoryMode -and $isVersionList) {
         $commits = (@($runs | ForEach-Object { $c = [string]$_.commit; if ($c.Length -gt 7) { $c.Substring(0, 7) } else { $c } } | Where-Object { $_ } | Sort-Object -Unique) -join ', ')
         # Seeded content as the runs themselves reported it. More than one value
         # per field means the runs behind this version did not hold the same content.
-        $seeded = (@(
-            @{ Label = 'content';      Field = 'seeded_content_total' },
-            @{ Label = 'media images'; Field = 'seeded_media_images' },
-            @{ Label = 'media files';  Field = 'seeded_media_files' }
-        ) | ForEach-Object {
+        $seeded = (@($seededFields | ForEach-Object {
             $field  = $_.Field
             $values = @($runs | ForEach-Object { $_.$field } | Where-Object { $null -ne $_ -and "$_" -ne '' } | Sort-Object -Unique)
-            if ($values.Count -gt 0) { "$($_.Label) $($values -join '/')" }
-        }) -join ', '
+            if ($values.Count -gt 0) {
+                $seededSeen[$field] += @($values)
+                "$($_.Label) $($values -join '/')"
+            }
+        }) -join ', ')
         if (-not $seeded) { $seeded = 'not recorded' }
-        [void]$out.AppendLine("- **$($Versions[$i])**: $($runs.Count) run(s) ($ids); load: $loads; .NET $dotnet; harness commit(s) $commits; seeded: $seeded")
+        if (@($runs | Where-Object { $null -eq $_.seeded_content_total -or "$($_.seeded_content_total)" -eq '' }).Count -gt 0) {
+            $seededUnverified += $Versions[$i]
+        }
+        $infra = (@($infraFields | ForEach-Object {
+            $field  = $_.Field
+            $values = @($runs | ForEach-Object { $_.$field } | Where-Object { $null -ne $_ -and "$_" -ne '' } | ForEach-Object { "$_" } | Sort-Object -Unique)
+            if ($values.Count -gt 0) {
+                $infraSeen[$field] += @($values)
+                "$($_.Label) $($values -join '/')"
+            }
+        }) -join ', ')
+        if (-not $infra) { $infra = 'setup not recorded' }
+        [void]$out.AppendLine("- **$($Versions[$i])**: $($runs.Count) run(s) ($ids); load: $loads; .NET $dotnet; harness commit(s) $commits; $infra; seeded: $seeded")
     }
-    [void]$out.AppendLine("- Change columns are relative to **$($Versions[0])**; bold = at or above $SignificantDeltaPercent%. Negative = faster.")
+    [void]$out.AppendLine("- Change columns are relative to **$($Versions[0])**; bold = at or above $SignificantDeltaPercent% and larger than both 1 ms and the run-to-run spread. Negative = faster.")
     [void]$out.AppendLine("- ``±`` is the run-to-run standard deviation of the value beside it (shown when a cell has 2+ runs). A change smaller than the spread is noise.")
+    if ($mismatches.Count -gt 0) {
+        [void]$out.AppendLine("- ``*`` marks a value measured under a different load or methodology version than **$($Versions[0])**; no change is computed for it (``n/c``).")
+    }
     [void]$out.AppendLine()
     Add-LoadMismatchWarning -Out $out -Mismatches $mismatches
+
+    $infraDiffers = @($infraFields | Where-Object { @($infraSeen[$_.Field] | Sort-Object -Unique).Count -gt 1 } | ForEach-Object { $_.Label })
+    if ($infraDiffers.Count -gt 0) {
+        [void]$out.AppendLine("> **The runs compared were not on the same setup** ($($infraDiffers -join ', ') differ - see the per-version lines above). A queue-time override was probably used on some of them; changes below may come from that rather than the version.")
+        [void]$out.AppendLine()
+    }
+
+    # The counts are recorded so this can be checked rather than assumed: each
+    # major uses its own seeder build, and different content is a different test.
+    $seededDiffers = @($seededFields | Where-Object { @($seededSeen[$_.Field] | Sort-Object -Unique).Count -gt 1 } | ForEach-Object { $_.Label })
+    if ($seededDiffers.Count -gt 0) {
+        [void]$out.AppendLine("> **Seeded content differs between the runs compared** ($($seededDiffers -join ', ') - see the per-version lines above). The sites did not hold the same content, so part of any change below may come from the content rather than the version.")
+        [void]$out.AppendLine()
+    }
+    elseif ($seededUnverified.Count -gt 0) {
+        # Absent counts are not agreement: say the check could not be made.
+        [void]$out.AppendLine("> *Seeded content not verified for $($seededUnverified -join ', '): at least one of the runs counted has no recorded content counts (run before the counts were captured, or with warm-up skipped). Equal content across versions is assumed there, not checked.*")
+        [void]$out.AppendLine()
+    }
 
     # Heaviest reference samplers first, then any the reference never ran.
     $labels = @($reference.ByLabel.Keys | Sort-Object { -$reference.ByLabel[$_].Count }) +
@@ -370,8 +443,8 @@ if ($isHistoryMode -and $isVersionList) {
         @{ Title = 'p50 (ms)'; Value = 'P50'; Spread = 'P50Std' },
         @{ Title = 'p95 (ms)'; Value = 'P95'; Spread = 'P95Std' },
         @{ Title = 'p99 (ms)'; Value = 'P99'; Spread = 'P99Std' },
-        @{ Title = 'Fastest request (ms)'; Value = 'Min'; Spread = $null
-           Note  = "The latency floor: network plus a cached response. It should be near-identical across versions. If it differs, the runs were not made under the same conditions (or every request got slower by a fixed amount) and the tables above carry that offset - re-run a version with known numbers as a control before drawing conclusions." }
+        @{ Title = 'Fastest request (ms)'; Value = 'Min'; Spread = 'MinStd'
+           Note  = "The latency floor: network plus a cached response. It should be near-identical across versions. If it differs, either the runs were not made under the same conditions or every request got slower by a fixed amount, and the tables above carry that offset - re-run a version with known numbers as a control before drawing conclusions. The floor counts failed requests too, so a sampler with errors can show an unusually low value from an instant failure; check the error table first." }
     )) {
         [void]$out.AppendLine("## $($metric.Title)")
         [void]$out.AppendLine()
@@ -382,8 +455,7 @@ if ($isHistoryMode -and $isVersionList) {
         [void]$out.AppendLine($header)
         [void]$out.AppendLine($sep)
         foreach ($label in $labels) {
-            $name = if ($mismatched -contains $label) { "``$label`` (load differs)" } else { "``$label``" }
-            $row  = "| $name |"
+            $row  = "| ``$label`` |"
             $ref  = $reference.ByLabel[$label]
             for ($i = 0; $i -lt $sides.Count; $i++) {
                 $s = $sides[$i].ByLabel[$label]
@@ -392,10 +464,16 @@ if ($isHistoryMode -and $isVersionList) {
                     continue
                 }
                 $value = $s.($metric.Value)
-                $cell  = if ($metric.Spread -and $s.RunCount -gt 1) { "$value ±$($s.($metric.Spread))" } else { "$value" }
+                $cell  = if ($s.RunCount -gt 1) { "$value ±$($s.($metric.Spread))" } else { "$value" }
+                # Judged per cell against the reference, so a version on the
+                # same load keeps its change and only the odd one loses it.
+                $otherLoad = $i -gt 0 -and $ref -and $s.LoadKey -ne $ref.LoadKey
+                if ($otherLoad) { $cell += " *" }
                 $row  += " $cell |"
                 if ($i -gt 0) {
-                    $row += $(if ($ref) { " $(Format-Cell $ref.($metric.Value) $value $SignificantDeltaPercent) |" } else { " - |" })
+                    $row += $(if (-not $ref) { " - |" }
+                              elseif ($otherLoad) { " n/c |" }
+                              else { " $(Format-VersionChange $ref.($metric.Value) $value $ref.($metric.Spread) $s.($metric.Spread) $SignificantDeltaPercent) |" })
                 }
             }
             [void]$out.AppendLine($row)
@@ -408,9 +486,12 @@ if ($isHistoryMode -and $isVersionList) {
     [void]$out.AppendLine("| Sampler | " + ($Versions -join ' | ') + " |")
     [void]$out.AppendLine("|---|" + ((@($Versions) | ForEach-Object { "---|" }) -join ''))
     foreach ($label in $labels) {
+        $ref = $reference.ByLabel[$label]
         $rowCells = foreach ($side in $sides) {
             $s = $side.ByLabel[$label]
-            if ($s) { "$($s.ErrPct)% (n=$($s.RunCount))" } else { '-' }
+            if (-not $s) { '-' }
+            elseif ($ref -and $s.LoadKey -ne $ref.LoadKey) { "$($s.ErrPct)% (n=$($s.RunCount)) *" }
+            else { "$($s.ErrPct)% (n=$($s.RunCount))" }
         }
         [void]$out.AppendLine("| ``$label`` | " + ($rowCells -join ' | ') + " |")
     }

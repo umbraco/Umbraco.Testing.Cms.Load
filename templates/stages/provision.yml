@@ -255,8 +255,8 @@ stages:
             inputs:
               packageType: sdk
               version: '$(resolvedSdkVersion)'
-              # 'true' only for majors whose .NET is still pre-GA (v19 / .NET 11,
-              # GA expected November 2026) - see resolve-run-config.ps1.
+              # 'true' only for a major whose .NET is still pre-GA. None today: .NET 11
+              # (v19) went GA on 10-11-2026 - see previewSdk in resolve-run-config.ps1.
               includePreviewVersions: $(resolvedSdkIncludePreview)
 
           - task: PowerShell@2

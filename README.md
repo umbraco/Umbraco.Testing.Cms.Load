@@ -87,7 +87,7 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 │   ├── generate-loadtest-config.ps1    # Per-case ALT YAML config (testId, appComponents, failureCriteria)
 │   ├── stop-all-app-services.ps1       # Pre-test and end-of-run sweep: stop App Services in the case set
 │   ├── publish-load-test-results.ps1   # Exports per-test NDJSON + raw artifacts to history storage
-│   ├── compare-runs.ps1                # Markdown delta report between two runs (CSV or history)
+│   ├── compare-runs.ps1                # Markdown delta report: two runs (CSV/history) or several versions
 │   ├── show-trends.ps1                 # (version × tier) p95/p99/error% matrix from history NDJSON
 │   ├── check-regression.ps1            # Compare latest run vs baseline-median; non-zero exit on regression (gate)
 │   ├── publish-client-results.ps1      # Client measurement NDJSON → history blob (client/ prefix) + ClientMeasurement_CL
@@ -633,6 +633,7 @@ For the everyday "did this version/tier actually move the needle?" question, `sc
 ./scripts/compare-runs.ps1 `
     -Scenario Default -Tier Standard `
     -BaselineVersion 17.0.0 -CandidateVersion 17.0.1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history `
     -OutputPath compare.md
@@ -641,6 +642,7 @@ For the everyday "did this version/tier actually move the needle?" question, `sc
 ./scripts/compare-runs.ps1 `
     -Scenario Default -Version 17.0.0 `
     -BaselineTier Starter -CandidateTier Pro `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history
 
@@ -648,6 +650,7 @@ For the everyday "did this version/tier actually move the needle?" question, `sc
 ./scripts/compare-runs.ps1 `
     -Scenario Default -Tier Starter `
     -Versions 17.6.1,18.0.0,19.0.0-beta1 -Aggregate median5 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history `
     -OutputPath versions.md
@@ -884,6 +887,7 @@ Wait for all 3 to finish, then approve cleanup on each.
 ```powershell
 ./scripts/show-trends.ps1 `
     -Scenario Default -Major 17 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history
 ```
@@ -909,6 +913,7 @@ Pipeline parameters for the candidate:
 ./scripts/compare-runs.ps1 `
     -Scenario Default -Tier Starter `
     -BaselineVersion 17.0.0 -CandidateVersion 17.0.1 `
+    -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history `
     -Aggregate median5 -OutputPath compare.md

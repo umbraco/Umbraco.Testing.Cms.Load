@@ -166,9 +166,11 @@ function ConvertTo-DoubleOrNull([string] $Value) {
     return $null
 }
 
-# Same contract for whole numbers (counts). An unexpanded pipeline macro such
-# as '$(someVariable)' - what Azure DevOps passes when the variable was never
-# set - is malformed input here and so also comes back as $null.
+# Same contract for whole numbers (counts). This does NOT protect a caller from
+# an unset pipeline variable: Azure DevOps leaves '$(someVariable)' in the
+# script arguments as-is, and PowerShell evaluates that as a subexpression and
+# fails before this function runs. The variable must be initialised (blank is
+# fine) wherever the value is passed - see load-test-job.yml.
 function ConvertTo-IntOrNull([string] $Value) {
     $i = 0
     if (-not [string]::IsNullOrWhiteSpace($Value) -and

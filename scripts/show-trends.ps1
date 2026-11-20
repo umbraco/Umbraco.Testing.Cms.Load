@@ -32,13 +32,24 @@ $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_history-helpers.ps1"
 
-function Format-Cell($allRuns) {
+# Load label for a cell, shown only when the cells of one table were measured
+# under different loads. The full load key, not just VUs and duration: stress
+# and ramp share both (300 VUs, 600 s) and differ only in spawn rate, and a
+# methodology change shifts the numbers without changing the load at all.
+function Get-CellLoad($allRuns) {
+    $runs = @(Select-LikeForLikeRuns -Runs @($allRuns))
+    if ($runs.Count -eq 0) { return $null }
+    Format-LoadKey (Get-LoadKey $runs[0])
+}
+
+function Format-Cell($allRuns, [bool]$ShowLoad) {
     if (-not $allRuns -or $allRuns.Count -eq 0) { return '-' }
 
     # Only the runs that drove the same load as the cell's newest run: a smoke
     # or ramp run in the same cell would otherwise move the median and inflate
     # the stddev this matrix exists to show.
     $runs = @(Select-LikeForLikeRuns -Runs @($allRuns))
+    $load = if ($ShowLoad) { " [$(Get-CellLoad $allRuns)]" } else { '' }
 
     # Median, not mean, to match the p95/p99 statistic in the same cell - a mean
     # let one bad run skew the figure the latencies beside it are protected from.
@@ -47,7 +58,7 @@ function Format-Cell($allRuns) {
     if ($runs.Count -eq 1) {
         $p95 = [int][math]::Round([double]$runs[0].p95_ms, 0)
         $p99 = [int][math]::Round([double]$runs[0].p99_ms, 0)
-        return "$p95 / $p99 ($errPct%)"
+        return "$p95 / $p99 ($errPct%)$load"
     }
 
     $p95s = @($runs | ForEach-Object { [double]$_.p95_ms })
@@ -58,7 +69,7 @@ function Format-Cell($allRuns) {
     $p95Std = [int][math]::Round((Get-PopulationStdDev $p95s), 0)
     $p99Std = [int][math]::Round((Get-PopulationStdDev $p99s), 0)
 
-    return "$p95Med ±$p95Std / $p99Med ±$p99Std ($errPct%) n=$($runs.Count)"
+    return "$p95Med ±$p95Std / $p99Med ±$p99Std ($errPct%) n=$($runs.Count)$load"
 }
 
 # --- Load history ---
@@ -111,6 +122,21 @@ foreach ($samplerName in $samplers) {
     [void]$out.AppendLine("## Sampler: $samplerName")
     [void]$out.AppendLine()
 
+    # Each cell follows its own newest run, so one smoke run queued last puts
+    # that cell on a different load from its neighbours. When that happens,
+    # say so and label every cell rather than let the rows read as comparable.
+    $tableLoads = @(foreach ($version in $versions) {
+        foreach ($tier in $tiers) {
+            $cellKey = "${version}__${tier}__${samplerName}"
+            if ($cells.ContainsKey($cellKey)) { Get-CellLoad $cells[$cellKey] }
+        }
+    }) | Where-Object { $_ } | Sort-Object -Unique
+    $mixedLoads = @($tableLoads).Count -gt 1
+    if ($mixedLoads) {
+        [void]$out.AppendLine("> **Mixed loads in this table** - each cell shows its load and methodology version in brackets. Cells that differ in either are not comparable.")
+        [void]$out.AppendLine()
+    }
+
     $header = "| Version | " + ($tiers -join ' | ') + " |"
     $sep    = "|---|" + (($tiers | ForEach-Object { '---' }) -join '|') + "|"
     [void]$out.AppendLine($header)
@@ -120,7 +146,7 @@ foreach ($samplerName in $samplers) {
         $rowCells = foreach ($tier in $tiers) {
             $cellKey = "${version}__${tier}__${samplerName}"
             if (-not $cells.ContainsKey($cellKey)) { '-'; continue }
-            Format-Cell $cells[$cellKey]
+            Format-Cell $cells[$cellKey] $mixedLoads
         }
         [void]$out.AppendLine("| $version | " + ($rowCells -join ' | ') + " |")
     }
