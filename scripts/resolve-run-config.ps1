@@ -114,19 +114,22 @@ $runtimeMaps = @{
     16 = @{ runtime = 'v9.0';  previewSdk = $false }
     17 = @{ runtime = 'v10.0'; previewSdk = $false }
     18 = @{ runtime = 'v10.0'; previewSdk = $false }   # verify against v18 release notes
-    # Umbraco.Cms.* 19.0.0-beta1 targets net11.0 only (nuspec). .NET 11 was at
-    # 11.0.0-rc.3 on 30-10-2026 (dotnet release index); GA is expected in
-    # November 2026 per the usual .NET cadence - flip previewSdk to $false once
-    # 11.0.100 is GA. blockedBy: the azurerm provider validates
+    # Umbraco.Cms.* 19.0.0-beta1 targets net11.0 only (nuspec). .NET 11 went GA
+    # on 10-11-2026 (11.0.0 / SDK 11.0.100, dotnet release index), so previewSdk
+    # is off: a preview SDK would otherwise let two v19 runs build against
+    # different runtimes with nothing in history to tell them apart.
+    # blockedBy: the azurerm provider validates
     # azurerm_windows_web_app.application_stack.dotnet_version against a fixed
-    # list that ends at v10.0 - in the pinned release and, as of 30-10-2026, on
-    # main (internal/services/appservice/helpers/app_stack.go). Terraform/main.tf
-    # constrains azurerm to '~> 4.20' while the provider's current line is 5.x,
-    # so any release that adds 'v11.0' will need that constraint raised to 5.x
-    # (a provider major upgrade), not just a lock bump. Remove blockedBy once
-    # that's done; the rest of the v19 path is already wired.
-    19 = @{ runtime = 'v11.0'; previewSdk = $true
-            blockedBy = "the azurerm Terraform provider pinned in Terraform/.terraform.lock.hcl (currently {azurerm}) rejects dotnet_version 'v11.0' for a Windows App Service (see internal/services/appservice/helpers/app_stack.go in hashicorp/terraform-provider-azurerm). Any release that accepts it will be on the provider's 5.x line, which Terraform/main.tf's '~> 4.20' constraint excludes - raise that constraint (a provider major upgrade), re-init, then drop 'blockedBy' from the v19 entry in resolve-run-config.ps1" }
+    # list (internal/services/appservice/helpers/app_stack.go). As of 20-11-2026
+    # the newest release, 5.14.0, still ends that list at v10.0 (confirmed with
+    # terraform validate); 'v11.0' was merged to the provider's main on
+    # 17-11-2026 (hashicorp/terraform-provider-azurerm#33870) and is not in a
+    # release yet. Terraform/main.tf is already on the 5.x line ('~> 5.14'), so
+    # once a release carries it: `terraform init -upgrade -backend=false` in
+    # Terraform/ (keep the null/random pins), confirm with `terraform validate`
+    # on a v11.0 test case, then remove blockedBy and its Pester expectation.
+    19 = @{ runtime = 'v11.0'; previewSdk = $false
+            blockedBy = "the azurerm Terraform provider pinned in Terraform/.terraform.lock.hcl (currently {azurerm}) rejects dotnet_version 'v11.0' for a Windows App Service (see internal/services/appservice/helpers/app_stack.go in hashicorp/terraform-provider-azurerm). Support was merged upstream in PR #33870 but 5.14.0 predates it - once a newer 5.x release is out, run 'terraform init -upgrade -backend=false' in Terraform/, then drop 'blockedBy' from the v19 entry in resolve-run-config.ps1" }
 }
 # What a queue can actually run today: mapped, not blocked, and with a seeder.
 $supportedMajors = @($runtimeMaps.Keys | Where-Object { -not $runtimeMaps[$_].blockedBy -and $_ -in $seederShippedMajors } | Sort-Object)

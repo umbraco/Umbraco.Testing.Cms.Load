@@ -29,7 +29,7 @@ Describe 'resolve-run-config Umbraco major -> .NET runtime map' {
         Remove-Item -LiteralPath $script:ws -Recurse -Force -ErrorAction SilentlyContinue
     }
     It 'blocks v19 at queue time while the azurerm provider rejects the .NET 11 runtime' {
-        # v19 is fully mapped (v11.0 / 11.x / preview SDKs) but carries a
+        # v19 is fully mapped (v11.0 / 11.x / GA SDKs) but carries a
         # blockedBy note; drop this test's expectation together with that note
         # once the provider lock accepts v11.0.
         $out = (& $run '19.0.0-beta1') -join "`n"

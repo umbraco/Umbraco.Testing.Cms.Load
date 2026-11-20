@@ -2,7 +2,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 4.20"
+      version = "~> 5.14"
     }
     # Used for SQL admin login/password generation (modules/umbraco/main.tf).
     random = {
