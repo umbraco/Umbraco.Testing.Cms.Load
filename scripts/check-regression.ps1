@@ -89,6 +89,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 # --- Load history ---
 
 $attemptedVersionTiers = @{}
+$attemptedPlans = @{}
 $cells = Get-HistoryCells `
     -Scenario $Scenario `
     -HistoryResourceGroup $HistoryResourceGroup `
@@ -97,7 +98,8 @@ $cells = Get-HistoryCells `
     -Major $Major `
     -Sampler $Sampler `
     -RunId $RunId `
-    -AttemptedVersionTiers ([ref]$attemptedVersionTiers)
+    -AttemptedVersionTiers ([ref]$attemptedVersionTiers) `
+    -AttemptedPlans ([ref]$attemptedPlans)
 
 # Cross-check Log Analytics for (version, tier) combos this run touched but
 # blob storage never saw — the "no_results_dir" branch of
@@ -407,7 +409,9 @@ foreach ($k in $candidateByCell.Keys) {
     $p = $k -split '__', 3
     $publishedVersionTiers["$($p[0])__$($p[1])"] = $true
 }
-$deadVersionTiers = @($attemptedVersionTiers.Keys | Where-Object { -not $publishedVersionTiers.ContainsKey($_) } | Sort-Object)
+# Not with -Sampler: $attemptedVersionTiers ignores that filter while the cells
+# honour it, so every tier that simply lacks the sampler would read as dead.
+$deadVersionTiers = if ($Sampler) { @() } else { @($attemptedVersionTiers.Keys | Where-Object { -not $publishedVersionTiers.ContainsKey($_) } | Sort-Object) }
 $deadSet = @{}
 foreach ($vt in $deadVersionTiers) { $deadSet[$vt] = $true }
 
@@ -450,6 +454,16 @@ if ($missing.Count -gt 0 -or $deadVersionTiers.Count -gt 0) {
     foreach ($grp in ($liveMissing | Group-Object Plan | Sort-Object Name)) {
         $total     = $cellsPerPlan[$grp.Name]
         $wholePlan = ($grp.Count -ge $total)
+        # A plan this run left a row for (its placeholder, since no metric row
+        # made it) was queued and ran: absent cells there are a failure, not a
+        # plan trimmed from backofficePlans, however many of them are absent.
+        $failedOn = @($grp.Group | Where-Object { $attemptedPlans.ContainsKey("$($_.Version)__$($_.Tier)__$($grp.Name)") } |
+            ForEach-Object { "$($_.Version) / $($_.Tier)" } | Sort-Object -Unique)
+        if ($failedOn.Count -gt 0) {
+            $missingPartialPlans += $grp.Name
+            [void]$out.AppendLine("- **$($grp.Name)**: attempted on $($failedOn -join ', ') but published no metric rows there - the plan fast-failed or every row was filtered. Check its Load Test and publish steps.")
+            continue
+        }
         if ($wholePlan -and -not $publishedNone) {
             [void]$out.AppendLine("- **$($grp.Name)**: all $total cell(s) absent - this plan didn't run (trimmed from ``backofficePlans``, or no .jmx for this major). Expected.")
             continue

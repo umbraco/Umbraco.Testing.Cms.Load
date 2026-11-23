@@ -233,6 +233,11 @@ function Get-HistoryCells {
         # distinction, since a fully-failed tier has zero ok rows either way.
         [string]$RunId,
         [ref]$AttemptedVersionTiers,
+        # Same bookkeeping one level down, for backoffice: "version__tier__plan"
+        # for every row of -RunId that names a jmeter_test_name, placeholder
+        # rows included. Lets a caller tell a plan that ran and published
+        # nothing from one that was never queued.
+        [ref]$AttemptedPlans,
 
         # Optional scope for "these runs exactly": only rows whose run_id is in
         # -OnlyRunIds and/or that started at or after -Since count. Applied after
@@ -286,6 +291,9 @@ function Get-HistoryCells {
             try { $row = $line | ConvertFrom-Json } catch { continue }
             if ($AttemptedVersionTiers -and $RunId -and [string]$row.run_id -eq $RunId -and $row.umbraco_version -and $row.infra_tier) {
                 $AttemptedVersionTiers.Value["$($row.umbraco_version)__$($row.infra_tier)"] = $true
+            }
+            if ($AttemptedPlans -and $RunId -and [string]$row.run_id -eq $RunId -and $row.umbraco_version -and $row.infra_tier -and $row.jmeter_test_name) {
+                $AttemptedPlans.Value["$($row.umbraco_version)__$($row.infra_tier)__$($row.jmeter_test_name)"] = $true
             }
             if (-not $row.scenario_name) { continue }
             if ($OnlyRunIds.Count -gt 0 -and [string]$row.run_id -notin $OnlyRunIds) { continue }

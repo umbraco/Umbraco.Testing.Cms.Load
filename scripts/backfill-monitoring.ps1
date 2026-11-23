@@ -71,13 +71,15 @@ if ([string]::IsNullOrWhiteSpace($dcrImmutableId)) {
 # 2. Optionally collect existing run_ids so we can skip blobs we've already
 #    ingested. The Logs Ingestion API doesn't dedupe — re-running without this
 #    check creates duplicate rows.
-# Keyed on (run_id, jmeter_test_name): a backoffice run publishes one blob per
-# .jmx, all sharing a run_id, so run_id alone would skip five of six on a replay.
-# Client rows have no jmeter_test_name, so the key degrades to run_id there.
+# Keyed on (run_id, version, tier, jmeter_test_name) - what one blob holds. A
+# run publishes one blob per version x tier (and per .jmx on backoffice), all
+# sharing a run_id, so a narrower key skips every blob of a run after its first:
+# a run whose Standard ingestion failed could never be replayed once Starter
+# was in. Client rows have no jmeter_test_name, so that part is empty there.
 $existingKeys = @{}
 function Get-DedupKey($row) {
     $jmx = if ($row.PSObject.Properties.Name -contains 'jmeter_test_name') { [string]$row.jmeter_test_name } else { '' }
-    return "$([string]$row.run_id)|$jmx"
+    return "$([string]$row.run_id)|$([string]$row.umbraco_version)|$([string]$row.infra_tier)|$jmx"
 }
 $isClientTable = $TableName -eq "ClientMeasurement_CL"
 if (-not $Force) {
@@ -88,16 +90,19 @@ if (-not $Force) {
     }
     # Referencing a column the table lacks is a KQL error, not an empty result.
     $dedupQuery = if ($isClientTable) {
-        "$TableName | where isnotempty(run_id) | distinct run_id"
+        "$TableName | where isnotempty(run_id) | distinct run_id, umbraco_version, infra_tier"
     } else {
-        "$TableName | where isnotempty(run_id) | distinct run_id, jmeter_test_name"
+        # Not the regression_check status rows check-regression.ps1 posts: they
+        # carry a run's id, version and tier without being one of its blobs,
+        # and would mark a frontend blob as ingested when it never was.
+        "$TableName | where isnotempty(run_id) and parse_status != 'regression_check' | distinct run_id, umbraco_version, infra_tier, jmeter_test_name"
     }
     try {
         $queryResult = Invoke-LogAnalyticsQuery -WorkspaceCustomerId $workspaceCustomerId -Query $dedupQuery
         foreach ($row in @($queryResult)) {
             if ($row.run_id) { $existingKeys[(Get-DedupKey $row)] = $true }
         }
-        Write-Host "   $($existingKeys.Count) (run_id, jmeter_test_name) pair(s) already ingested"
+        Write-Host "   $($existingKeys.Count) blob key(s) (run_id, version, tier, jmeter_test_name) already ingested"
     }
     catch {
         Write-Warning "Couldn't query existing run_ids: $($_.Exception.Message). Pass -Force to skip this check (re-ingests everything; creates duplicates if anything is already there)."
