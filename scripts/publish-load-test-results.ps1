@@ -495,9 +495,12 @@ if ($windowSec -ge $minWindowSec) {
     # not emit cannot take the Http5xx/Http4xx columns above down with it.
     # Names and aggregations as listed for Microsoft.Web/sites:
     # https://learn.microsoft.com/azure/azure-monitor/reference/supported-metrics/microsoft-web-sites-metrics
+    # Gen0/1/2Collections are deliberately not collected: build 305676 reported
+    # 0 for every minute under ~1,400 requests a minute on both tiers, so they
+    # say nothing about this app.
     foreach ($diag in @(
             @{ Aggregation = 'Average'; Metrics = @('HttpResponseTime', 'PrivateBytes', 'Threads', 'RequestsInApplicationQueue') },
-            @{ Aggregation = 'Total';   Metrics = @('Gen0Collections', 'Gen1Collections', 'Gen2Collections', 'CpuTime', 'Requests') })) {
+            @{ Aggregation = 'Total';   Metrics = @('CpuTime', 'Requests') })) {
         $diagResult = Get-MetricSummary `
             -ResourceId $AppServiceResourceId `
             -Metrics $diag.Metrics `
