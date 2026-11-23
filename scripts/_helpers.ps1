@@ -331,7 +331,7 @@ function Parse-JmeterCsv {
                 if ($CollectPerMinute) {
                     $minute = $ts - ($ts % 60000)
                     $minuteSamples = $byMinute[$minute]
-                    if (-not $minuteSamples) {
+                    if ($null -eq $minuteSamples) {
                         $minuteSamples = New-Object 'System.Collections.Generic.List[int]'
                         $byMinute[$minute] = $minuteSamples
                     }

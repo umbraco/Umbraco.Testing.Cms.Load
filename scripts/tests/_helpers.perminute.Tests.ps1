@@ -37,6 +37,16 @@ Describe 'Parse-JmeterCsv -CollectPerMinute' {
         $r.ByMinute.Count | Should -Be 1
         @($r.ByMinute[$m0 + 60000]) | Should -Be @(40)
     }
+    It 'keeps a 0 ms sample that opens a minute' {
+        # A List[int] holding only 0 is falsy in PowerShell, so a truthiness
+        # test for "bucket exists" replaced the bucket and lost the sample.
+        $path = New-Csv @(
+            "$($m0 + 1000),0,Homepage,200,OK,t1,text,true",
+            "$($m0 + 2000),40,Homepage,200,OK,t1,text,true"
+        )
+        $r = Parse-JmeterCsv -Path $path -CollectPerMinute
+        @($r.ByMinute[$m0]) | Should -Be @(0, 40)
+    }
     It 'returns no buckets without the switch' {
         $path = New-Csv @("$($m0 + 1000),20,Homepage,200,OK,t1,text,true")
         (Parse-JmeterCsv -Path $path).ByMinute | Should -BeNullOrEmpty

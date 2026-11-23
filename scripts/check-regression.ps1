@@ -137,16 +137,34 @@ if ($RunId -and $WorkspaceName) {
 
 if ($cells.Count -eq 0) {
     Write-Warning "No metric rows matched the filter - nothing to check."
+    # No metric rows at all, yet this run left placeholder rows: every tier it
+    # attempted fast-failed. On the first run of a scenario or major there is
+    # no history to make that show up as "Candidate missing" further down, so
+    # it is said here - otherwise the report reads "expected on the first run"
+    # for a run that produced nothing. Warn, don't fail: same posture as the
+    # dead-tier report below (a publish-side problem, not a perf verdict).
+    # Not with -Sampler: an empty result then only says the filter matched nothing.
+    $deadOnFirstRun = if ($RunId -and -not $Sampler) { @($attemptedVersionTiers.Keys | Sort-Object) } else { @() }
+    $firstRunBody = if ($deadOnFirstRun.Count -gt 0) {
+        $lines = @($deadOnFirstRun | ForEach-Object {
+            $p = $_ -split '__', 2
+            "- **$($p[0]) / $($p[1])**: attempted but published no metric rows - the tier fast-failed before Azure Load Testing produced results, or every row was filtered (a ``skipWarmup`` run is excluded as ``cold_start``). Check the loadTest and publish steps."
+        })
+        "**Candidate run:** ``$RunId```n`nNo metric rows in history for this scenario, and this run did not add any:`n`n$($lines -join "`n")"
+    } else {
+        "No history found for this scenario yet — nothing to compare against. This is`nexpected on the first run for a fresh scenario; subsequent runs will populate`nhistory and the gate will activate per cell as baselines accrue."
+    }
     if ($OutputPath) {
         # Always write the file so the pipeline's PublishBuildArtifacts step has
         # something to upload — first-ever runs have no history to compare against.
         @"
 # Regression check - scenario: $Scenario$(if ($Major) { " (major $Major)" })
 
-No history found for this scenario yet — nothing to compare against. This is
-expected on the first run for a fresh scenario; subsequent runs will populate
-history and the gate will activate per cell as baselines accrue.
+$firstRunBody
 "@ | Out-File -FilePath $OutputPath -Encoding utf8
+    }
+    if ($deadOnFirstRun.Count -gt 0) {
+        Write-Host "##vso[task.logissue type=warning]Run '$RunId' published no metric rows for: $(($deadOnFirstRun | ForEach-Object { $_ -replace '__', '/' }) -join ', '). There is no history yet either, so nothing was graded. See the regression report."
     }
     exit 0
 }
@@ -238,10 +256,12 @@ foreach ($cellKey in $cells.Keys) {
     #
     # "Prior" = later in the descending sort, so a pinned candidate compares only
     # against runs older than itself.
-    $candLoad      = Get-LoadKey $candidate
+    # Get-ComparisonKey = load + methodology + setup (SKU, DTU cap, seeder
+    # preset and build): an override run is a different test, not a data point.
+    $candKey       = Get-ComparisonKey $candidate
     $older         = @($sorted | Select-Object -Skip ($candIndex + 1))
     $priorRuns     = @($older |
-        Where-Object { (Get-LoadKey $_) -eq $candLoad } |
+        Where-Object { (Get-ComparisonKey $_) -eq $candKey } |
         Select-Object -First $BaselineWindow)
     $priorRunCount = $priorRuns.Count
 

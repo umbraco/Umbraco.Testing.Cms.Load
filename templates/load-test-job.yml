@@ -56,6 +56,28 @@ parameters:
     default: ''
 
 steps:
+  # Every tier of a run shares this job, its variables and its working
+  # directory. The publish steps below run on succeededOrFailed(), so without
+  # this a tier that never reached its own load test (warm-up failed, or an
+  # earlier tier failed and this one was skipped) would publish the PREVIOUS
+  # tier's results.zip and window under this tier's name, as parse_status=ok -
+  # a wrong row that then sits in every median and regression baseline.
+  # Runs even after a failure so it always clears what the last tier left.
+  - task: PowerShell@2
+    displayName: 'Reset per-tier state [${{ parameters.testCaseId }}]'
+    condition: succeededOrFailed()
+    inputs:
+      targetType: 'inline'
+      script: |
+        foreach ($name in 'activeTestCaseId', 'tierPlanStarted', 'loadTestConfigPath', 'appServiceResourceId', 'safeTestCaseId', 'loadTestStartTime', 'loadTestEndTime') {
+            Write-Host "##vso[task.setvariable variable=$name]"
+        }
+        $dir = "$(System.DefaultWorkingDirectory)/loadTest"
+        if (Test-Path -LiteralPath $dir) {
+            Remove-Item -LiteralPath $dir -Recurse -Force
+            Write-Host "Removed the previous tier's loadTest dir: $dir"
+        }
+
   - task: PowerShell@2
     displayName: 'Read terraform outputs [${{ parameters.testCaseId }}]'
     env:
@@ -130,6 +152,12 @@ steps:
         Write-Host "##vso[task.setvariable variable=seededMediaFiles]"
 
         Write-Host "Case $testCaseId | host=$($tfOut.hostname) users=$($myCase.userAmount) duration=$($myCase.testDuration)s"
+
+        # Marks this tier as attempted. The frontend publish steps only run when
+        # it matches, so a tier skipped because an earlier one failed publishes
+        # nothing, while a tier that fails its own warm-up still publishes a
+        # no_results_dir placeholder (its state was cleared by the reset step).
+        Write-Host "##vso[task.setvariable variable=activeTestCaseId]$testCaseId"
 
   # Stop every other case's App Service before starting this one. Defensive
   # sweep instead of a chain-of-pairs: same-tier siblings share an App Service
@@ -427,19 +455,8 @@ steps:
   # Compile-time gated so backoffice runs don't carry an inert frontend block
   # through the pipeline log.
   - ${{ if eq(parameters.workload, 'frontend') }}:
-    # Wipe results from a prior tier's frontend run in this same job - same
-    # hazard the backoffice per-.jmx cleanup below guards against.
-    - task: PowerShell@2
-      displayName: 'Clean prior loadTest dir [${{ parameters.testCaseId }}]'
-      condition: succeeded()
-      inputs:
-        targetType: 'inline'
-        script: |
-          $dir = "$(System.DefaultWorkingDirectory)/loadTest"
-          if (Test-Path -LiteralPath $dir) {
-              Remove-Item -LiteralPath $dir -Recurse -Force
-              Write-Host "Removed prior loadTest dir: $dir"
-          }
+    # (A prior tier's loadTest dir is already gone: 'Reset per-tier state' at
+    # the top of this template clears it, even after a failure.)
 
     # Load test config is per-case so runs stay distinguishable in the portal.
     # Generation lives in scripts/generate-loadtest-config.ps1 so it's locally
@@ -523,7 +540,7 @@ steps:
 
     - task: PowerShell@2
       displayName: 'Capture load test end time [${{ parameters.testCaseId }}]'
-      condition: succeededOrFailed()
+      condition: and(succeededOrFailed(), eq(variables['activeTestCaseId'], '${{ parameters.testCaseId }}'))
       inputs:
         targetType: 'inline'
         script: |
@@ -536,7 +553,9 @@ steps:
     # long-lived copy.
     - task: PublishBuildArtifacts@1
       displayName: 'Publish run artifacts [${{ parameters.testCaseId }}]'
-      condition: succeededOrFailed()
+      # safeTestCaseId is only set once config generation ran; before that
+      # there's no loadTest dir to upload.
+      condition: and(succeededOrFailed(), eq(variables['activeTestCaseId'], '${{ parameters.testCaseId }}'), ne(variables['safeTestCaseId'], ''))
       continueOnError: true
       inputs:
         PathtoPublish: '$(System.DefaultWorkingDirectory)/loadTest'
@@ -548,7 +567,7 @@ steps:
     # data is already in Azure Load Testing and the build artifact); investigate via the step log.
     - task: AzureCLI@2
       displayName: 'Publish to history [${{ parameters.testCaseId }}]'
-      condition: succeededOrFailed()
+      condition: and(succeededOrFailed(), eq(variables['activeTestCaseId'], '${{ parameters.testCaseId }}'))
       continueOnError: true
       inputs:
         azureSubscription: '$(serviceConnection)'
@@ -605,6 +624,29 @@ steps:
   # ne(loadTestConfigPath, '') condition that generate-config sets to empty.
   - ${{ if eq(parameters.workload, 'backoffice') }}:
     - ${{ each jmxName in parameters.jmxNames }}:
+      # Same hazard as 'Reset per-tier state', one level down: 'Generate config'
+      # below only runs while the job is succeeding, but the publish steps run
+      # after a failure whenever loadTestConfigPath is set. Without this, a hard
+      # failure partway through the plans would leave every later plan holding
+      # the previous plan's config path, window and results.zip, and publish
+      # them under its own name. Runs even after a failure, and also wipes the
+      # previous plan's results: publish-load-test-results.ps1 scans loadTest/
+      # recursively and skips re-extraction when results-extracted/ exists.
+      - task: PowerShell@2
+        displayName: 'Reset per-plan state [${{ jmxName }}]'
+        condition: succeededOrFailed()
+        inputs:
+          targetType: 'inline'
+          script: |
+            foreach ($name in 'loadTestConfigPath', 'appServiceResourceId', 'safeTestCaseId', 'jmeterTestName', 'loadTestStartTime', 'loadTestEndTime') {
+                Write-Host "##vso[task.setvariable variable=$name]"
+            }
+            $dir = "$(System.DefaultWorkingDirectory)/loadTest"
+            if (Test-Path -LiteralPath $dir) {
+                Remove-Item -LiteralPath $dir -Recurse -Force
+                Write-Host "Removed the previous plan's loadTest dir: $dir"
+            }
+
       # continueOnError so a single .jmx failing config generation (e.g. an
       # unforeseen testId-length / scenario combo) doesn't cascade-skip every
       # remaining .jmx via the succeeded() condition. generate-config clears
@@ -641,24 +683,8 @@ steps:
             -SeededMemberPassword "$(seededMemberPassword)"
             -OutputDir "$(System.DefaultWorkingDirectory)"
 
-      # Wipe any results from a previous .jmx iteration before ALT writes new
-      # ones. AzureLoadTest@1 downloads to $(System.DefaultWorkingDirectory)/loadTest;
-      # publish-load-test-results.ps1 recursively scans for engine*_results.csv
-      # AND skips re-extraction when results-extracted/ already exists, so without
-      # this cleanup iteration N+1 would publish iteration N's CSV with iteration
-      # N+1's metadata (window, jmeter_test_name). Silent data corruption.
-      - task: PowerShell@2
-        displayName: 'Clean prior loadTest dir [${{ jmxName }}]'
-        condition: and(succeeded(), ne(variables['loadTestConfigPath'], ''))
-        inputs:
-          targetType: 'inline'
-          script: |
-            $dir = "$(System.DefaultWorkingDirectory)/loadTest"
-            if (Test-Path -LiteralPath $dir) {
-                Remove-Item -LiteralPath $dir -Recurse -Force
-                Write-Host "Removed prior loadTest dir: $dir"
-            }
-
+      # (The previous plan's loadTest dir is already gone - 'Reset per-plan
+      # state' above removes it, even after a failure.)
       - task: PowerShell@2
         displayName: 'Capture start [${{ jmxName }}]'
         condition: and(succeeded(), ne(variables['loadTestConfigPath'], ''))
@@ -668,6 +694,9 @@ steps:
             $start = (Get-Date).ToUniversalTime().ToString("o")
             Write-Host "##vso[task.setvariable variable=loadTestStartTime]$start"
             Write-Host "Load test window starts at: $start"
+            # From here this plan's own publish steps report for the tier; see
+            # 'Publish placeholder' after the plans for the case where none got this far.
+            Write-Host "##vso[task.setvariable variable=tierPlanStarted]true"
 
             . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
             # Same 50/100-char AzureLoadTest@1 caps as the frontend path - see the
@@ -755,3 +784,58 @@ steps:
             -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
             -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
             -LogAnalyticsSeriesStreamName "${{ parameters.logAnalyticsSeriesStreamName }}"
+
+    # A backoffice tier that fails before any plan starts (warm-up, stopping the
+    # other App Services) never sets loadTestConfigPath, so none of the per-plan
+    # publish steps above run and the tier would leave no trace: no row in
+    # history, nothing for check-regression.ps1 to call a dead tier. This writes
+    # the same no_results_dir placeholder the frontend path gets from its own
+    # publish step ('Reset per-plan state' has removed loadTest/, and the window
+    # and resource id are empty). failed() only: a tier whose plans simply have
+    # no .jmx for this major did not fail and must not read as dead.
+    - task: AzureCLI@2
+      displayName: 'Publish placeholder [${{ parameters.testCaseId }}]'
+      condition: and(failed(), eq(variables['activeTestCaseId'], '${{ parameters.testCaseId }}'), ne(variables['tierPlanStarted'], 'true'))
+      continueOnError: true
+      inputs:
+        azureSubscription: '$(serviceConnection)'
+        scriptType: 'pscore'
+        scriptLocation: 'scriptPath'
+        scriptPath: '$(System.DefaultWorkingDirectory)/scripts/publish-load-test-results.ps1'
+        arguments: >
+          -ResultsDir "$(System.DefaultWorkingDirectory)/loadTest"
+          -HistoryResourceGroup "$(historyResourceGroup)"
+          -StorageAccountName "$(historyStorageAccount)"
+          -ContainerName "$(historyContainer)"
+          -BuildId "$(Build.BuildId)"
+          -Commit "$(Build.SourceVersion)"
+          -Branch "$(Build.SourceBranchName)"
+          -RunStartedAt "$(System.PipelineStartTime)"
+          -UmbracoVersion "${{ parameters.umbracoVersion }}"
+          -DotNetVersion "$(resolvedDotnetVersion)"
+          -AppServiceSku "$(appServiceSku)"
+          -PoolDtuMax $(poolDtuMax)
+          -SeederPreset "$(resolvedSeederPreset)"
+          -Tier "${{ parameters.tier }}"
+          -Scenario "${{ parameters.scenario }}"
+          -UserCount $(userAmount)
+          -SpawnRate $(spawnRate)
+          -DurationSeconds $(testDuration)
+          -SkipWarmup "${{ parameters.skipWarmup }}"
+          -TestCaseId "${{ parameters.testCaseId }}"
+          -RampTimeSeconds $(rampTime)
+          -LoadProfile "$(loadProfile)"
+          -LoadTestStartTime "$(loadTestStartTime)"
+          -LoadTestEndTime "$(loadTestEndTime)"
+          -AppServiceResourceId "$(appServiceResourceId)"
+          -AppServicePlanResourceId "$(appServicePlanId)"
+          -SqlDatabaseResourceId "$(sqlDatabaseId)"
+          -SeederDurationSeconds "$(seederDurationSeconds)"
+          -SeededContentTotal "$(seededContentTotal)"
+          -SeededRootSections "$(seededRootSections)"
+          -SeededMediaImages "$(seededMediaImages)"
+          -SeededMediaFiles "$(seededMediaFiles)"
+          -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
+          -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
+          -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
+          -LogAnalyticsSeriesStreamName "${{ parameters.logAnalyticsSeriesStreamName }}"

@@ -73,6 +73,84 @@ Assert-Seq @('r13', 'r11')        (@(Select-LikeForLikeRuns -Runs $loadRows -Fir
 Assert-Equal 0 @(Select-LikeForLikeRuns -Runs @()).Count "empty input = no runs"
 Assert-Equal '50 VUs, spawn 10/s, 300 s, methodology 2' (Format-LoadKey (Get-LoadKey $loadRows[1])) "load key renders readably"
 
+Write-Host "Select-LikeForLikeRuns (newest run's setup decides too: SKU, DTU cap, preset, seeder build)"
+# Same silent risk as above: an override run (bigger SKU, higher DTU cap) or a
+# run on another seeder build drove the same load on a different system, and
+# without this it lands in the same median with nothing to flag it.
+function New-SetupRow($Day, $Sku = 'P0v3', $Dtu = 20, $Seeder = '18.0.0-beta.1') {
+    $r = New-LoadRow $Day 50 300
+    $r | Add-Member app_service_sku $Sku
+    $r | Add-Member pool_dtu_max $Dtu
+    $r | Add-Member seeder_preset 'Medium'
+    $r | Add-Member seeder_package_version $Seeder
+    $r
+}
+$setupRows = @(
+    (New-SetupRow '20'),
+    (New-SetupRow '19' 'P3v3'),                       # appSkuOverride run
+    (New-SetupRow '18' 'P0v3' 200),                   # poolDtuOverride run
+    (New-SetupRow '17' 'P0v3' 20 '17.0.0-beta.2'),    # older seeder build
+    (New-SetupRow '16'),
+    (New-SetupRow '15')
+)
+Assert-Seq @('r20', 'r16', 'r15') (@(Select-LikeForLikeRuns -Runs $setupRows) | ForEach-Object { $_.run_id }) "override and other-seeder runs dropped"
+Assert-Seq @('r20', 'r16')        (@(Select-LikeForLikeRuns -Runs $setupRows -First 2) | ForEach-Object { $_.run_id }) "-First counts only same-setup runs"
+Assert-Equal 'SKU P0v3, 20 DTU, preset Medium, seeder 18.0.0-beta.1' (Format-SetupKey (Get-SetupKey $setupRows[0])) "setup key renders readably"
+Assert-Equal 'SKU ,  DTU, preset , seeder build not recorded' (Format-SetupKey (Get-SetupKey $loadRows[1])) "rows without the setup fields read as their own bucket"
+Assert-Equal 0 @(@($setupRows[0], $loadRows[1]) | Where-Object { (Get-ComparisonKey $_) -eq (Get-ComparisonKey $setupRows[0]) } | Select-Object -Skip 1).Count "a row without any setup fields never shares a median with one that has them"
+
+# Rows from before seeder_package_version existed: taken as the build mapped
+# for their major when the column was added, so a regression baseline survives
+# the column's arrival - but only for that build, and only for known majors.
+function New-LegacyRow($Version, $Seeder, $Started = '2026-11-14T10:00:00Z') {
+    $r = New-SetupRow '14' 'P0v3' 20 $Seeder
+    $r | Add-Member umbraco_version $Version
+    $r.run_started_at = $Started
+    $r
+}
+# Major 18 borrowed the v17 seeder until 05-09-2026 12:39 UTC.
+Assert-Equal (Get-SetupKey (New-LegacyRow '18.1.0' '17.0.0-beta.2')) (Get-SetupKey (New-LegacyRow '18.1.0' '' '2026-08-20T10:00:00Z')) "an 18.x row from before 18 had its own seeder is taken as the borrowed v17 build"
+Assert-Equal $false ((Get-SetupKey (New-LegacyRow '18.1.0' '18.0.0-beta.1')) -eq (Get-SetupKey (New-LegacyRow '18.1.0' '' '2026-08-20T10:00:00Z'))) "...so it never baselines a run on the v18 build"
+Assert-Equal (Get-SetupKey (New-LegacyRow '17.2.0' '17.0.0-beta.2')) (Get-SetupKey (New-LegacyRow '17.2.0' '' '2026-08-20T10:00:00Z')) "a 17.x row is not affected by the v18 cut"
+Assert-Equal '2026-11-22 09:00 Utc' ('{0:yyyy-MM-dd HH:mm} {1}' -f (ConvertTo-SinceUtc ([datetime]'2026-11-22T09:00:00')), (ConvertTo-SinceUtc ([datetime]'2026-11-22T09:00:00')).Kind) "-Since with no zone is read as UTC"
+Assert-Equal '2026-11-22 09:00 Utc' ('{0:yyyy-MM-dd HH:mm} {1}' -f (ConvertTo-SinceUtc ([datetime]'2026-11-22T09:00:00Z')), (ConvertTo-SinceUtc ([datetime]'2026-11-22T09:00:00Z')).Kind) "-Since with a Z is the same instant, not the local clock time"
+Assert-Equal (Get-SetupKey (New-LegacyRow '18.3.2' '18.0.0-beta.1')) (Get-SetupKey (New-LegacyRow '18.3.2' '')) "an 18.x row with no seeder build matches the build 18 used when the column was added"
+Assert-Equal $false ((Get-SetupKey (New-LegacyRow '18.3.2' '18.0.0-beta.2')) -eq (Get-SetupKey (New-LegacyRow '18.3.2' ''))) "...and does not match a later seeder build"
+Assert-Equal 'SKU P0v3, 20 DTU, preset Medium, seeder build not recorded' (Format-SetupKey (Get-SetupKey (New-LegacyRow '19.0.0-rc1' ''))) "a major with no legacy mapping keeps its own bucket"
+
+Write-Host "Get-RunDate (always UTC, whatever the machine's time zone)"
+# Silent-wrong-numbers risk: a run time shifted by the local offset moves the
+# -Since cut, dropping (or admitting) runs near it with nothing to flag it.
+$utc0930 = [datetime]::new(2026, 11, 20, 9, 30, 0, [DateTimeKind]::Utc)
+foreach ($case in @(
+    @{ Name = 'ISO string with Z';             Value = '2026-11-20T09:30:00Z' },
+    @{ Name = 'string with an offset';         Value = '2026-11-20T10:30:00+01:00' },
+    @{ Name = 'string with no zone';           Value = '2026-11-20 09:30:00' },
+    @{ Name = 'DateTime from ConvertFrom-Json'; Value = ('{"t":"2026-11-20T09:30:00Z"}' | ConvertFrom-Json).t },
+    @{ Name = 'local DateTime';                Value = $utc0930.ToLocalTime() }
+)) {
+    $d = Get-RunDate ([pscustomobject]@{ run_started_at = $case.Value })
+    Assert-Equal "$($utc0930.Ticks)/Utc" "$($d.Ticks)/$($d.Kind)" "$($case.Name) -> 09:30 UTC"
+}
+Assert-Equal $true ($null -eq (Get-RunDate ([pscustomobject]@{ run_started_at = 'not a date' }))) "unparseable -> null, not a throw"
+
+Write-Host "Split-ByErrorLimit (failing runs leave latency only, and are always reported)"
+# Silent-wrong-numbers risk: instant failures are fast, so a failing run left
+# in drags the latency median DOWN and makes the worse version look better.
+function New-ErrRow($Id, $ErrorRate) { [pscustomobject]@{ run_id = $Id; error_rate = $ErrorRate; p95_ms = 100 } }
+$errRows = @((New-ErrRow 'a' 0.0), (New-ErrRow 'b' 0.38), (New-ErrRow 'c' 0.05), (New-ErrRow 'd' 0.051))
+$split = Split-ByErrorLimit -Runs $errRows -MaxErrorRate 5
+Assert-Seq @('a', 'c') ($split.Latency | ForEach-Object { $_.run_id }) "runs at or under the limit keep their latency (5% is not over 5%)"
+Assert-Seq @('b', 'd') ($split.Over    | ForEach-Object { $_.run_id }) "runs over the limit are returned, not dropped silently"
+Assert-Equal $false $split.AllOver "some runs under the limit = not all over"
+$off = Split-ByErrorLimit -Runs $errRows
+Assert-Equal 4 @($off.Latency).Count "off by default: every run counts"
+Assert-Equal 0 @($off.Over).Count    "off by default: nothing reported as over"
+$allBad = Split-ByErrorLimit -Runs @((New-ErrRow 'x' 0.9), (New-ErrRow 'y' 1.0)) -MaxErrorRate 5
+Assert-Equal $true $allBad.AllOver "every run over the limit is flagged"
+Assert-Equal 2 @($allBad.Latency).Count "all over: falls back to all runs instead of an empty cell"
+Assert-Equal $false (Split-ByErrorLimit -Runs @() -MaxErrorRate 5).AllOver "no runs = nothing to flag"
+
 Write-Host "Split-CsvLine (RFC-4180 quoting)"
 Assert-Seq @('a', 'b', 'c')      (Split-CsvLine 'a,b,c')        "plain fields"
 Assert-Seq @('a', 'b,c', 'd')    (Split-CsvLine 'a,"b,c",d')    "quoted comma is not a delimiter"

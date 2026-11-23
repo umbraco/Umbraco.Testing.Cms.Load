@@ -44,9 +44,13 @@ param(
 
     # Server-side metric query window + resource IDs. Queried via Azure Monitor
     # and injected into row metadata alongside the client-side latencies.
-    [Parameter(Mandatory = $true)] [string]$LoadTestStartTime,
-    [Parameter(Mandatory = $true)] [string]$LoadTestEndTime,
-    [Parameter(Mandatory = $true)] [string]$AppServiceResourceId,
+    # Empty is allowed for these three: a tier that failed before its load
+    # test ran (warm-up, config generation) has no window and no resource id
+    # yet, and still needs its no_results_dir placeholder row published - the
+    # window guard below skips the metric queries when they're empty.
+    [Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$LoadTestStartTime,
+    [Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$LoadTestEndTime,
+    [Parameter(Mandatory = $true)] [AllowEmptyString()] [string]$AppServiceResourceId,
     [Parameter(Mandatory = $true)] [string]$AppServicePlanResourceId,
     [Parameter(Mandatory = $true)] [string]$SqlDatabaseResourceId,
 
@@ -115,6 +119,19 @@ $MethodologyVersion = if ($JmeterTestName) { 1 } else { 2 }
 # parse below tolerates ISO too.)
 $RunStartedAt = ConvertTo-IsoUtc $RunStartedAt
 
+# The seeder build this run installed: the same map, from the same commit, that
+# install-umbraco-cms-on-appservice.ps1 read at provision time. Best-effort - a
+# missing or unreadable map leaves it null rather than losing the run's rows.
+$seederPackageVersion = $null
+try {
+    $seederMap = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'seeder-versions.json') -Raw | ConvertFrom-Json -AsHashtable
+    # Plain split, not Get-UmbracoMajor: that one ends the script on a bad
+    # version string, and this lookup must never cost the run its rows.
+    $seederPackageVersion = $seederMap[($UmbracoVersion -split '\.')[0]]
+} catch {
+    Write-Warning "Couldn't read the seeder build from seeder-versions.json: $($_.Exception.Message). seeder_package_version will be empty."
+}
+
 # Carried into every row so cross-run queries don't need joins.
 $metadata = [ordered]@{
     run_id               = $BuildId
@@ -128,6 +145,7 @@ $metadata = [ordered]@{
     app_service_sku  = $AppServiceSku
     pool_dtu_max     = $PoolDtuMax
     seeder_preset    = $SeederPreset
+    seeder_package_version = $seederPackageVersion
     infra_tier       = $Tier
     # Null (rather than 0) when the seeder didn't complete (Skipped, Failed,
     # TimedOut, or pre-feature run) — KQL percentile/avg ignore nulls, so
@@ -329,8 +347,12 @@ function Get-MetricSummary {
 # the caller's "window unusable" branch, not a hard throw.
 function Get-WindowSeconds {
     param(
-        [Parameter(Mandatory)] [string]$StartTime,
-        [Parameter(Mandatory)] [string]$EndTime
+        # AllowEmptyString: PowerShell rejects "" for a mandatory string before
+        # the body runs, so without it the "tolerant by design" try/catch below
+        # was never reached for the very case it documents - an empty timestamp
+        # threw a binding error and took the placeholder row with it.
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$StartTime,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string]$EndTime
     )
     try {
         $start = [datetime]::Parse($StartTime, [System.Globalization.CultureInfo]::InvariantCulture)

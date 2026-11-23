@@ -649,16 +649,22 @@ For the everyday "did this version/tier actually move the needle?" question, `sc
 # Several versions side by side on a fixed tier (the first is the reference)
 ./scripts/compare-runs.ps1 `
     -Scenario Default -Tier Starter `
-    -Versions 17.6.1,18.0.0,19.0.0-beta1 -Aggregate median5 `
+    -Versions 17.6.1,18.0.0,19.0.0-beta1 -Aggregate median `
     -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history `
     -OutputPath versions.md
 ```
 
-`-Aggregate latest` (default) compares the most recent run for each cell; `-Aggregate median5` compares the median across the last 5 runs (more stable on noisy tails). Auth: `az login` + permission to list keys on the history storage account (Storage Account Contributor or higher).
+`-Aggregate latest` (default) compares the most recent run for each cell; `-Aggregate median` compares the median across the last `-Window` runs (default 5; more stable on noisy tails). `median5` still works and means `median -Window 5`. Auth: `az login` + permission to list keys on the history storage account (Storage Account Contributor or higher).
 
-**Like-for-like only.** A cell counts only the runs that drove the same load (VU count, spawn rate, duration, methodology version) as its newest run — the same key `check-regression.ps1` baselines on — so a stray smoke or ramp run doesn't get folded into a `median5`. The newest run decides which load counts, so finish a series on the profile you want to report. If the sides still end up on different loads, the report opens with a **Load mismatch** warning naming the samplers. `show-trends.ps1` applies the same rule per cell.
+**Like-for-like only.** A cell counts only the runs that drove the same load (VU count, spawn rate, duration, methodology version) on the same setup (App Service SKU, DTU cap, seeder preset and seeder package build) as its newest run — the same key `check-regression.ps1` baselines on — so a stray smoke, ramp or override run doesn't get folded into a median. The newest run decides which load and setup count, so finish a series on the profile you want to report - or, better, pin the median to the runs you queued with `-RunIds <build ids>` and/or `-Since <date>` (read as UTC unless given with an offset; both also on `show-trends.ps1`, which additionally takes `-Window`). Runs published before the seeder build was recorded are assumed to have used the build mapped for their major at that point (`$LegacySeederBuilds` in `scripts/_history-helpers.ps1`; v18 runs from before 05-09-2026 count as the borrowed v17 build), so existing regression baselines carry over. When a median rests on fewer runs than `-Window`, the report says so and shows the count per sampler. If the sides still end up on different loads, the report opens with a **Load mismatch** warning naming the samplers; if they ran on a different SKU, DTU cap or seeder preset, it says so too. `show-trends.ps1` applies the same rule per cell.
+
+**Leaving runs out** (both scripts; nothing is dropped without being named in the report):
+
+- `-ExcludeRunIds <build ids>` drops runs you know were invalid — an Azure hiccup, a wrong override. It applies before `-Window`, so the next older like-for-like run takes the excluded run's place.
+- `-MaxErrorRate <percent>` (off by default) leaves a run's sampler out of the **latency** medians when its error rate is above the limit. Instant failures are fast, so a failing run drags p50/p95 *down* and makes the worse version look quicker. The run still counts in the error rate, it is listed in the report, and it is not replaced by an older run — a failing run is a result. A version where most rows go over the limit is called out as failing; where every run does, the latency shown is marked `!`.
+- The error table shows the **worst** single run next to the median whenever it is higher: a median hides failures in fewer than half the runs (two of five runs at 40% errors still reads 0%).
 
 **`-Versions`** takes two or more exact version strings (they're matched literally: `19.0.0-beta1` and `19.0.0-rc1` are different cells) and emits one table per metric with the median ± run-to-run stddev per version and the change against the first version, plus an error-rate table with the run count behind each cell. p50 comes first because it is the steadiest statistic (within about ±1 ms run to run on the frontend workload, where p95 can vary 3x within one version on Starter); read p95/p99 changes as indicative unless each version has five or more runs. A **Fastest request** table follows: that latency floor should be near-identical across versions, so a difference there means the runs weren't made under the same conditions — the October 2026 runs sat on a floor of 11–13 ms against 3–4 ms before and after, on every version run that week — and the fix is to re-run a version with known numbers as a control in the same session. The header lists the run ids, load, .NET runtime, harness commit and seeded content counts behind every version. Leave `-Major` off when the versions span majors.
 
@@ -916,10 +922,10 @@ Pipeline parameters for the candidate:
     -HistoryResourceGroup umbraco-loadtest-history-rg `
     -StorageAccountName $env:HISTORY_STORAGE_ACCOUNT `
     -ContainerName loadtest-history `
-    -Aggregate median5 -OutputPath compare.md
+    -Aggregate median -OutputPath compare.md
 ```
 
-`-Aggregate median5` compares medians across 5 runs each side — the right call when you have stable baselines and want to filter out single-run noise.
+`-Aggregate median` compares medians across 5 runs each side (`-Window` to change that) — the right call when you have stable baselines and want to filter out single-run noise.
 
 **Step 6 — Interpret deltas.** The report bolds cells crossing the significance threshold (default 10%). Skim the bold cells. Common patterns:
 
@@ -937,7 +943,7 @@ The `regression-report` artifact + the per-sampler table from `compare-runs.ps1`
 
 - **Trends** — chronological per-run chart of the chosen metric (p95 / p99 / avg / error rate / RPS / server CPU peak / DB load peak), one line per `(scenario × version × tier)`; side-by-side latency + resource-pressure charts share a run-indexed x-axis for direct visual correlation of code-bound vs infra-bound symptoms; matrix table below with median ±stddev and a plain-language **Stability** label per cell (*stable / moderate / noisy / few runs*) flagging cells where a small regression threshold would be lost in run-to-run noise. Sampler filter is multi-select.
 - **Tiers** — pick scenario + version, see latest run per tier as a bar chart + a Capacity-verdict table with **Headroom** and a **Bottleneck** column naming the hottest resource and its peak (e.g. `Database load 92%`). Tier rows sort by capacity rank (Starter → Standard → Pro → Enterprise). Answers "what do I get for upgrading the tier — and what saturated first?"
-- **Versions** — pick scenario + tier, see per-sampler median latency grouped by Umbraco version. Answers "did this version regress on this tier?"
+- **Versions** — pick scenario + tier, see per-sampler median latency grouped by Umbraco version. Answers "did this version regress on this tier?" Like-for-like by default, with the same rules as `compare-runs.ps1`: **Conditions** (load + methodology + SKU, DTU cap and seeder preset, newest preselected - the seeder build is left out here because each major has its own, and is listed per version instead), **Runs** (`-RunIds`), **Exclude runs** (`-ExcludeRunIds`), **Median over** (`-Window`) and **Error limit for latency** (`-MaxErrorRate`). The **Runs behind each version** table lists the run ids, conditions, .NET, seeder build and seeded content behind every median, names every run that was left out, and flags anything that isn't like-for-like.
 - **Compare** — pick two runs + Δ% threshold; per-sampler delta table with red/green conditional formatting; server-side delta block with a **Note** column distinguishing "no change" from "no data". Failed runs (`no_metrics`) are excluded from the run pickers.
 - **Runs** — filtered run list with **Bottleneck** + regression-verdict columns; pick a run from the drill dropdown to see the regression breakdown (which specific samplers flagged), per-sampler latency detail, **and per-minute charts per tier** (% metrics, HTTP error counts, client latency p50/p95, and the slowest request per minute, each on its own axis) sourced from a companion `LoadTestSeries_CL` table — answers "when *in* the run were requests slow (p95/max)?" / "did SQL DTU saturate before App CPU?" — the questions the summary scalars can't.
 - **Glossary** — vocabulary reference for every column / verdict / metric used in the other tabs.

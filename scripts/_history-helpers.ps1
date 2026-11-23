@@ -24,10 +24,23 @@ function Get-HistoryPrefix {
 # $ErrorActionPreference="Stop" and brick the whole analysis script.
 # _history-helpers tolerates bad JSON lines at load-time; this closes the
 # equivalent gap for parse-after-load.
+#
+# Always returns UTC. ConvertFrom-Json has usually turned the value into a
+# DateTime already; casting that back to a string drops the zone, and parsing
+# the result gave Kind=Unspecified, which a later ToUniversalTime() shifted by
+# the local offset - -Since then cut an hour off on a UTC+1 machine. A value
+# with no zone at all is taken as UTC, which is what the pipeline writes.
 function Get-RunDate {
     param([Parameter(Mandatory)] $Row)
     try {
-        return [datetime]::Parse([string]$Row.run_started_at, [System.Globalization.CultureInfo]::InvariantCulture)
+        $value = $Row.run_started_at
+        if ($value -is [datetime]) {
+            if ($value.Kind -eq [DateTimeKind]::Unspecified) { return [datetime]::SpecifyKind($value, [DateTimeKind]::Utc) }
+            return $value.ToUniversalTime()
+        }
+        if ($value -is [DateTimeOffset]) { return $value.UtcDateTime }
+        $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        return [datetime]::Parse([string]$value, [System.Globalization.CultureInfo]::InvariantCulture, $styles)
     } catch {
         return $null
     }
@@ -72,11 +85,72 @@ function Get-LoadKey {
     "$($Row.user_count)|$($Row.spawn_rate)|$($Row.duration_seconds)|$($Row.methodology_version)"
 }
 
+# The -Since cut as Get-HistoryCells applies it: UTC. A value with no zone is
+# read as UTC (same cut on a laptop and on the build agent); one given with an
+# offset or a Z is bound by PowerShell as local time and converted back.
+function ConvertTo-SinceUtc([datetime] $Since) {
+    if ($Since.Kind -eq [DateTimeKind]::Unspecified) { return [datetime]::SpecifyKind($Since, [DateTimeKind]::Utc) }
+    $Since.ToUniversalTime()
+}
+
 # Human-readable form of a Get-LoadKey value, for report headers and warnings.
 function Format-LoadKey([string] $LoadKey) {
     $p = $LoadKey -split '\|'
     $methodology = if ($p.Count -gt 3 -and $p[3]) { "methodology $($p[3])" } else { 'methodology unversioned' }
     "$($p[0]) VUs, spawn $($p[1])/s, $($p[2]) s, $methodology"
+}
+
+# What the run was measured ON, as opposed to the load it drove: the App
+# Service SKU, the per-DB DTU cap, the seeder preset and the seeder package
+# build. The queue-time overrides change the first three without changing a
+# run's cell or its load key, and each Umbraco major has used more than one
+# seeder build over time - a run on different hardware or different content is
+# a different test, so it must not share a median with the others.
+#
+# Rows published before seeder_package_version existed read as "" there. They
+# are taken to have used the build that was mapped for their major when the
+# column was added ($LegacySeederBuilds), so the first run that records its
+# build still has its older runs as a regression baseline instead of starting
+# from "insufficient baseline". This is an ASSUMPTION about those rows, not a
+# recorded fact, and the table is frozen on purpose: it must not follow
+# seeder-versions.json, or a later seeder bump would make the old rows match
+# the new build. A major not listed here keeps "" and forms its own bucket.
+#
+# Major 18 borrowed the v17 build until commit d30c0e0 (05-09-2026 12:39 UTC)
+# pointed it at its own, so its unrecorded rows are split at that moment. The
+# cut is the commit time, the closest thing on record; a run queued from a
+# branch that had not picked the commit up yet would land on the wrong side.
+$script:LegacySeederBuilds = @{
+    '13' = '13.0.0-beta.1'
+    '17' = '17.0.0-beta.2'
+    '18' = '18.0.0-beta.1'
+}
+$script:Legacy18OwnSeederFrom = [datetime]::new(2026, 9, 5, 12, 39, 45, [DateTimeKind]::Utc)
+function Get-SetupKey {
+    param([Parameter(Mandatory)] $Row)
+    $seeder = [string]$Row.seeder_package_version
+    if (-not $seeder) {
+        $major = ([string]$Row.umbraco_version -split '\.')[0]
+        if ($major -and $script:LegacySeederBuilds.ContainsKey($major)) { $seeder = $script:LegacySeederBuilds[$major] }
+        if ($major -eq '18') {
+            $started = Get-RunDate $Row
+            if ($null -eq $started -or $started -lt $script:Legacy18OwnSeederFrom) { $seeder = $script:LegacySeederBuilds['17'] }
+        }
+    }
+    "$($Row.app_service_sku)|$($Row.pool_dtu_max)|$($Row.seeder_preset)|$seeder"
+}
+
+function Format-SetupKey([string] $SetupKey) {
+    $p = $SetupKey -split '\|'
+    $seeder = if ($p.Count -gt 3 -and $p[3]) { "seeder $($p[3])" } else { 'seeder build not recorded' }
+    "SKU $($p[0]), $($p[1]) DTU, preset $($p[2]), $seeder"
+}
+
+# The full "same conditions" key a median or a regression baseline groups by:
+# same load, same methodology, same setup.
+function Get-ComparisonKey {
+    param([Parameter(Mandatory)] $Row)
+    "$(Get-LoadKey $Row)#$(Get-SetupKey $Row)"
 }
 
 # Newest-first runs of one cell that drove the same load as the newest run,
@@ -97,10 +171,37 @@ function Select-LikeForLikeRuns {
     $usable = if ($dated.Count -gt 0) { $dated } else { @($Runs) }
     $sorted = @($usable | Sort-Object { Get-RunDate $_ } -Descending)
     if ($sorted.Count -eq 0) { return }
-    $loadKey = Get-LoadKey $sorted[0]
-    $same = @($sorted | Where-Object { (Get-LoadKey $_) -eq $loadKey })
+    # Load AND setup (Get-ComparisonKey): a run on an overridden SKU/DTU cap or
+    # another seeder build drove the same load on different conditions, and
+    # folding it in would move the median with nothing in the report to say so.
+    $key  = Get-ComparisonKey $sorted[0]
+    $same = @($sorted | Where-Object { (Get-ComparisonKey $_) -eq $key })
     if ($First -gt 0) { $same = @($same | Select-Object -First $First) }
     $same
+}
+
+# Splits one cell's picked runs by an error-rate limit (percent; negative =
+# off). Rows over the limit leave the LATENCY statistics only: an instant
+# failure is fast, so it drags p50/p95 down and flatters the version. They
+# stay in the error rate and request counts, so a version that fails is still
+# reported as failing - callers must name what they leave out.
+#   Latency  - the runs latency figures should be computed over
+#   Over     - the runs that went over the limit
+#   AllOver  - every run went over it: there is no clean latency, so Latency
+#              falls back to all runs rather than leaving the cell empty, and
+#              the caller flags it (the errors are the finding there)
+function Split-ByErrorLimit {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Runs,
+        [double]$MaxErrorRate = -1
+    )
+    if ($MaxErrorRate -lt 0) {
+        return [pscustomobject]@{ Latency = @($Runs); Over = @(); AllOver = $false }
+    }
+    $ok   = @($Runs | Where-Object { [double]$_.error_rate * 100 -le $MaxErrorRate })
+    $over = @($Runs | Where-Object { [double]$_.error_rate * 100 -gt $MaxErrorRate })
+    $allOver = $Runs.Count -gt 0 -and $ok.Count -eq 0
+    [pscustomobject]@{ Latency = $(if ($allOver) { @($Runs) } else { $ok }); Over = $over; AllOver = $allOver }
 }
 
 # Loads every summary.ndjson under the scenario prefix and returns a hashtable
@@ -131,8 +232,18 @@ function Get-HistoryCells {
         # from "this run never touched this tier" — $cells alone can't make that
         # distinction, since a fully-failed tier has zero ok rows either way.
         [string]$RunId,
-        [ref]$AttemptedVersionTiers
+        [ref]$AttemptedVersionTiers,
+
+        # Optional scope for "these runs exactly": only rows whose run_id is in
+        # -OnlyRunIds and/or that started at or after -Since count. Applied after
+        # the attempted-tier bookkeeping above, so it never hides a failure.
+        [string[]]$OnlyRunIds,
+        [Nullable[datetime]]$Since,
+        # Runs known to be invalid, dropped entirely (same placement as above).
+        [string[]]$ExcludeRunIds
     )
+    $OnlyRunIds    = @($OnlyRunIds    | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim().TrimStart('#') } | Where-Object { $_ })
+    $ExcludeRunIds = @($ExcludeRunIds | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim().TrimStart('#') } | Where-Object { $_ })
 
     $prefix = Get-HistoryPrefix -Scenario $Scenario -Major $Major
 
@@ -173,6 +284,14 @@ function Get-HistoryCells {
                 $AttemptedVersionTiers.Value["$($row.umbraco_version)__$($row.infra_tier)"] = $true
             }
             if (-not $row.scenario_name) { continue }
+            if ($OnlyRunIds.Count -gt 0 -and [string]$row.run_id -notin $OnlyRunIds) { continue }
+            if ($ExcludeRunIds.Count -gt 0 -and [string]$row.run_id -in $ExcludeRunIds) { continue }
+            if ($Since) {
+                $started = Get-RunDate $row
+                # PowerShell unwraps Nullable[datetime], so $Since is the DateTime itself.
+                # Get-RunDate is UTC, and so is the cut (ConvertTo-SinceUtc).
+                if ($null -eq $started -or $started -lt (ConvertTo-SinceUtc ([datetime]$Since))) { continue }
+            }
             # Match the Workbook's filters so every Get-HistoryCells consumer
             # (regression gate, compare-runs, show-trends) works over the same
             # population the dashboard shows: warm, ok rows. Without this the
@@ -194,6 +313,11 @@ function Get-HistoryCells {
             # no false positives, and it self-maintains if prefixing ever
             # regresses. Frontend rows have no jmeter_test_name, so they're exempt.
             if ($row.jmeter_test_name -and -not $row.scenario_name.StartsWith("$($row.jmeter_test_name) / ")) { continue }
+            # The structural rule above can't see rows from before jmeter_test_name
+            # was published at all. The rule it replaced caught those by path, so
+            # it stays for them: a raw management-API request is never a Locust
+            # task name or a Transaction Controller label.
+            if (-not $row.jmeter_test_name -and $row.scenario_name -match '^(GET|POST|PUT|DELETE|PATCH) /umbraco/management/api/') { continue }
             # Backoffice rows are published as "$JmeterTestName / $label" (e.g.
             # 'SaveContent / 01. Save content'), so a bare-label -Sampler value
             # (the style used across every -Sampler example in this repo) must
