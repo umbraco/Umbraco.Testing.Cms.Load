@@ -90,6 +90,10 @@ $columns = @(
     @{ name = "seeded_root_sections";                   type = "int"      }
     @{ name = "seeded_media_images";                    type = "int"      }
     @{ name = "seeded_media_files";                     type = "int"      }
+    # Whole-site pauses in the run (Get-StallWindows): how many, and their
+    # total length. Run-level, repeated on every row of the run.
+    @{ name = "stall_count";                            type = "int"      }
+    @{ name = "stall_seconds";                          type = "real"     }
     @{ name = "infra_tier";                             type = "string"   }
     @{ name = "scenario";                               type = "string"   }
     @{ name = "scenario_name";                          type = "string"   }

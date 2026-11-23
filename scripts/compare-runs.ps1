@@ -513,6 +513,7 @@ if ($isHistoryMode -and $isVersionList) {
     )
     $infraSeen = @{}
     foreach ($f in $infraFields) { $infraSeen[$f.Field] = @() }
+    $pausedVersions = @()
     for ($i = 0; $i -lt $Versions.Count; $i++) {
         $runs    = @($sides[$i].Runs)
         $ids     = (@($runs | ForEach-Object { "#$($_.run_id)" }) -join ', ')
@@ -542,7 +543,15 @@ if ($isHistoryMode -and $isVersionList) {
             }
         }) -join ', ')
         if (-not $infra) { $infra = 'setup not recorded' }
-        [void]$out.AppendLine("- **$($Versions[$i])**: $($runs.Count) run(s) ($ids); load: $loads; .NET $dotnet; harness commit(s) $commits; $infra; seeded: $seeded")
+        # Runs with a whole-site pause (stall_count, from the publish step).
+        # Absent on runs published before it was recorded - not the same as 0.
+        $paused = @($runs | Where-Object { "$($_.stall_count)" -ne '' -and [int]$_.stall_count -gt 0 } |
+            ForEach-Object { "#$($_.run_id) x$([int]$_.stall_count) ($([math]::Round([double]$_.stall_seconds, 0)) s)" })
+        $pauses = if ($paused.Count -gt 0) { $pausedVersions += $Versions[$i]; "; whole-site pauses: $($paused -join ', ')" } else { '' }
+        [void]$out.AppendLine("- **$($Versions[$i])**: $($runs.Count) run(s) ($ids); load: $loads; .NET $dotnet; harness commit(s) $commits; $infra; seeded: $seeded$pauses")
+    }
+    if ($pausedVersions.Count -gt 0) {
+        [void]$out.AppendLine("- Whole-site pauses: stretches where the site answered nothing and then released every request at once. They decide p99 and max for that run and are not a property of the version; p50 and p95 are barely affected. Consider re-running with ``-ExcludeRunIds`` for those runs before reading p99.")
     }
     [void]$out.AppendLine("- Change columns are relative to **$($Versions[0])**; bold = at or above $SignificantDeltaPercent% and larger than both 1 ms and the run-to-run spread. Negative = faster.")
     [void]$out.AppendLine("- ``±`` is the run-to-run standard deviation of the value beside it (shown when a cell has 2+ runs). A change smaller than the spread is noise.")

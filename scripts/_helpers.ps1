@@ -229,6 +229,16 @@ function Parse-JmeterCsv {
         # if left in. 0 (default) disables the filter - the caller skips it
         # entirely for the 'ramp' profile, where the climb itself is the point.
         [long]$RampCutoffMs = 0,
+        # The file's timeStamp is when the request ENDED, not when it started.
+        # True for the files Azure Load Testing writes for Locust runs (checked on
+        # run 305559: per user, consecutive requests are never closer than the
+        # script's 1 s minimum wait only when read that way). The start is then
+        # timeStamp - elapsed, and that is what the ramp cutoff, the sample window
+        # and the per-minute buckets use. Not set for JMeter (.jmx) files.
+        [switch]$TimestampIsEnd,
+        # Also return every kept sample's start (epoch ms) and elapsed, as two
+        # parallel lists, for Get-StallWindows.
+        [switch]$CollectTimeline,
         # Also bucket the kept samples by the minute they started in (epoch ms of
         # the minute -> elapsed list), for the per-minute latency series. Off by
         # default: only the history publish needs it.
@@ -238,6 +248,8 @@ function Parse-JmeterCsv {
     $byLabel = @{}
     $allElapsed = if ($BuildAggregate) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
     $byMinute   = if ($CollectPerMinute) { @{} } else { $null }
+    $timelineStart   = if ($CollectTimeline) { New-Object 'System.Collections.Generic.List[long]' } else { $null }
+    $timelineElapsed = if ($CollectTimeline) { New-Object 'System.Collections.Generic.List[int]' } else { $null }
     $totalErrors = 0
     # Sample window (JMeter timeStamp is epoch ms), so callers can derive
     # throughput from the span covered rather than the configured duration.
@@ -299,12 +311,13 @@ function Parse-JmeterCsv {
             # with an unparseable timestamp can't be judged against the cutoff, so
             # it's let through rather than dropped - same tolerant posture as the
             # min/max tracking a few lines down.
-            $ts = [long]0
-            $tsOk = [long]::TryParse($cols[$idxTimestamp], [ref]$ts)
-            if ($RampCutoffMs -gt 0 -and $tsOk -and $ts -lt $RampCutoffMs) { continue }
-
             $elapsed = 0
             if (-not [int]::TryParse($cols[$idxElapsed], [ref]$elapsed)) { continue }
+            # $ts is the request's START from here on.
+            $ts = [long]0
+            $tsOk = [long]::TryParse($cols[$idxTimestamp], [ref]$ts)
+            if ($tsOk -and $TimestampIsEnd) { $ts -= $elapsed }
+            if ($RampCutoffMs -gt 0 -and $tsOk -and $ts -lt $RampCutoffMs) { continue }
             $label   = $cols[$idxLabel]
             if ($OnlyTransactionControllers) {
                 if ($label -notmatch $tcLabelPattern) { continue }
@@ -328,6 +341,7 @@ function Parse-JmeterCsv {
             if ($tsOk) {
                 if ($ts -lt $minTs) { $minTs = $ts }
                 if ($ts -gt $maxTs) { $maxTs = $ts }
+                if ($CollectTimeline) { $timelineStart.Add($ts); $timelineElapsed.Add($elapsed) }
                 if ($CollectPerMinute) {
                     $minute = $ts - ($ts % 60000)
                     $minuteSamples = $byMinute[$minute]
@@ -351,9 +365,67 @@ function Parse-JmeterCsv {
         AllElapsed   = $allElapsed
         TotalErrors  = $totalErrors
         ByMinute     = $byMinute
+        TimelineStart   = $timelineStart
+        TimelineElapsed = $timelineElapsed
         MinTimestamp = if ($minTs -eq [long]::MaxValue) { $null } else { $minTs }
         MaxTimestamp = if ($maxTs -eq [long]::MinValue) { $null } else { $maxTs }
     }
+}
+
+# Whole-site pauses in a run: stretches where the site answered (almost)
+# nothing, as opposed to one slow page. Seen on run 305559 (Standard): three
+# times, every request started over ~10 s hung and all were released within
+# the same second, which put p99 at 8-9 s while p95 stayed under 350 ms.
+# A candidate window is the merged span of requests that took >= $StallMs. It
+# counts as a pause only if nearly everything that started inside it was slow
+# too (>= $SlowShare of >= $MinRequests requests took >= $FastMs): one slow
+# endpoint among fast ones leaves the fast ones in the window and is not a
+# pause. The last $FastMs of a window is left out of that test - a request
+# started just before the release is legitimately quick.
+# $Start (epoch ms) and $Elapsed are Parse-JmeterCsv -CollectTimeline's lists.
+function Get-StallWindows {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [long[]]$Start,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [int[]]$Elapsed,
+        [int]$StallMs = 5000,
+        [int]$FastMs = 1000,
+        [int]$MinRequests = 10,
+        [double]$SlowShare = 0.9
+    )
+    $windows = New-Object System.Collections.Generic.List[object]
+    if ($Start.Count -eq 0) { return , $windows }
+    $order = [int[]](0..($Start.Count - 1))
+    [array]::Sort([long[]]$Start.Clone(), $order)
+
+    # Merge the slow requests' [start, end] spans, in start order.
+    $candidates = New-Object System.Collections.Generic.List[object]
+    $curStart = [long]-1; $curEnd = [long]-1
+    foreach ($i in $order) {
+        if ($Elapsed[$i] -lt $StallMs) { continue }
+        $s = $Start[$i]; $e = $s + $Elapsed[$i]
+        if ($curEnd -ge 0 -and $s -le $curEnd) { if ($e -gt $curEnd) { $curEnd = $e } }
+        else {
+            if ($curEnd -ge 0) { $candidates.Add(@($curStart, $curEnd)) }
+            $curStart = $s; $curEnd = $e
+        }
+    }
+    if ($curEnd -ge 0) { $candidates.Add(@($curStart, $curEnd)) }
+
+    foreach ($c in $candidates) {
+        $wStart = [long]$c[0]; $wEnd = [long]$c[1]
+        $n = 0; $slow = 0
+        foreach ($i in $order) {
+            $s = $Start[$i]
+            if ($s -lt $wStart) { continue }
+            if ($s -ge $wEnd - $FastMs) { break }
+            $n++
+            if ($Elapsed[$i] -ge $FastMs) { $slow++ }
+        }
+        if ($n -ge $MinRequests -and ($slow / [double]$n) -ge $SlowShare) {
+            $windows.Add([pscustomobject]@{ StartMs = $wStart; EndMs = $wEnd; Seconds = [math]::Round(($wEnd - $wStart) / 1000.0, 1); Requests = $n })
+        }
+    }
+    return , $windows
 }
 
 # Per-minute client-side latency across all samplers, as LoadTestSeries_CL

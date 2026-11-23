@@ -108,10 +108,13 @@ $PSNativeCommandUseErrorActionPreference = $true
 #   1 - VU ramp-up window excluded from percentile/error/throughput stats.
 #   2 - frontend ramp derived from users/spawn (Locust's real ramp) instead of
 #       rampTime, which is JMeter-only and up to 50x longer.
-# Scoped per workload: 2 only changed how frontend numbers are computed, so
-# backoffice rows stay on 1 and keep their baselines instead of reporting
+#   3 - frontend only: the settle-in period after the ramp is excluded too (the
+#       first 60 s of the run, at most a quarter of it), and the result file's
+#       timeStamp is read as the request's end, which it is for Locust runs.
+# Scoped per workload: 2 and 3 only changed how frontend numbers are computed,
+# so backoffice rows stay on 1 and keep their baselines instead of reporting
 # "insufficient history" for a change that never touched them.
-$MethodologyVersion = if ($JmeterTestName) { 1 } else { 2 }
+$MethodologyVersion = if ($JmeterTestName) { 1 } else { 3 }
 
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize
@@ -204,6 +207,9 @@ function Get-MetricSummary {
         # $_.$aggProp rather than a hardcoded .average.
         [ValidateSet('Average', 'Total', 'Maximum', 'Minimum', 'Count')]
         [string]$Aggregation = 'Average',
+        # For diagnostics nothing else depends on: an empty or failed query is
+        # written to the log but does not raise a pipeline warning.
+        [switch]$Optional,
         # PT1M by default (SQL DTU/CPU and HTTP error counts publish at that
         # resolution). Pass '' to omit --interval and let Azure Monitor pick the
         # metric's native granularity instead - needed for metrics whose native
@@ -260,8 +266,11 @@ function Get-MetricSummary {
                 $errorCode = if ($metric.errorCode) { [string]$metric.errorCode } else { "n/a" }
                 $errorDetail = if ($metric.errormessage) { " errormessage=`"$($metric.errormessage)`"" } else { "" }
                 $msg = "Azure Monitor returned 0 datapoints for $name on $ResourceId over [$StartTime, $EndTime] - column will be null. errorCode=$errorCode$errorDetail timeseries=$rawTimeseriesCount rawDataPoints=$rawDataPointCount (aggregation=$Aggregation)."
-                Write-Warning $msg
-                Write-Host "##vso[task.logissue type=warning]$msg"
+                if ($Optional) { Write-Host "(optional metric) $msg" }
+                else {
+                    Write-Warning $msg
+                    Write-Host "##vso[task.logissue type=warning]$msg"
+                }
                 continue
             }
             # Per-minute points retained for LoadTestSeries_CL. The summary
@@ -284,8 +293,11 @@ function Get-MetricSummary {
         # plan_* missing while sql_*/app_* populate) drifts unnoticed for
         # multiple runs.
         $msg = "Azure Monitor query failed for $ResourceId : $($_.Exception.Message)"
-        Write-Warning $msg
-        Write-Host "##vso[task.logissue type=warning]$msg"
+        if ($Optional) { Write-Host "(optional metric) $msg" }
+        else {
+            Write-Warning $msg
+            Write-Host "##vso[task.logissue type=warning]$msg"
+        }
     }
     return @{ Summary = $summary; Series = $series }
 }
@@ -475,6 +487,27 @@ if ($windowSec -ge $minWindowSec) {
     foreach ($k in $appResult.Summary.Keys) { $metadata["app_$k"] = $appResult.Summary[$k] }
     foreach ($p in $appResult.Series) { $seriesPoints.Add($p) }
 
+    # Per-minute diagnostics of the worker process, for the series table only
+    # (no summary columns): what the server was doing in a minute where the
+    # client saw a stall. A whole-site pause of ~10 s was seen on Standard (run
+    # 305559) with nothing recorded that could tell garbage collection from
+    # queueing from the network. Separate queries, so a metric this app does
+    # not emit cannot take the Http5xx/Http4xx columns above down with it.
+    # Names and aggregations as listed for Microsoft.Web/sites:
+    # https://learn.microsoft.com/azure/azure-monitor/reference/supported-metrics/microsoft-web-sites-metrics
+    foreach ($diag in @(
+            @{ Aggregation = 'Average'; Metrics = @('HttpResponseTime', 'PrivateBytes', 'Threads', 'RequestsInApplicationQueue') },
+            @{ Aggregation = 'Total';   Metrics = @('Gen0Collections', 'Gen1Collections', 'Gen2Collections', 'CpuTime', 'Requests') })) {
+        $diagResult = Get-MetricSummary `
+            -ResourceId $AppServiceResourceId `
+            -Metrics $diag.Metrics `
+            -StartTime $LoadTestStartTime -EndTime $LoadTestEndTime `
+            -Prefix 'app' `
+            -Aggregation $diag.Aggregation `
+            -Optional
+        foreach ($p in $diagResult.Series) { $seriesPoints.Add($p) }
+    }
+
 }
 else {
     Write-Warning "Test window unusable ($([int]$windowSec)s; start='$LoadTestStartTime', end='$LoadTestEndTime') - skipping Azure Monitor metric query. Most likely cause: AzureLoadTest@1 fast-failed (e.g. engine provisioning, auth)."
@@ -540,25 +573,37 @@ if ($engineFiles.Count -gt 0) {
         $RampTimeSeconds
     }
 
+    # Locust result files carry each request's end time (see -TimestampIsEnd).
+    $timestampIsEnd = -not $JmeterTestName
+
+    # Frontend only: also leave out the settle-in period after the ramp. Every
+    # frontend run looked at had a slow spell 20-40 s in (about 100 requests
+    # taking up to 5-8.5 s, on a warmed-up site), which moved p95/p99 from run
+    # to run without saying anything about the version. 60 s covers it; capped
+    # at a quarter of the run so a 60 s smoke run keeps most of its samples.
+    $settleSec = if ($JmeterTestName) { 0 } else { [int][math]::Min(60, [math]::Floor($DurationSeconds * 0.25)) }
+    $excludeSec = [int][math]::Max($effectiveRampSec, $settleSec)
+
     $rampCutoffMs = 0
     if ($LoadProfile -ne 'ramp') {
         $discoveryMinTs = [long]::MaxValue
         foreach ($file in $engineFiles) {
             try {
-                $probe = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC
+                $probe = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -TimestampIsEnd:$timestampIsEnd
             } catch {
                 continue  # Surfaced properly by the real parse pass below.
             }
             if ($null -ne $probe.MinTimestamp -and $probe.MinTimestamp -lt $discoveryMinTs) { $discoveryMinTs = $probe.MinTimestamp }
         }
         if ($discoveryMinTs -ne [long]::MaxValue) {
-            $rampCutoffMs = $discoveryMinTs + ([long]$effectiveRampSec * 1000)
+            $rampCutoffMs = $discoveryMinTs + ([long]$excludeSec * 1000)
         }
     }
 
     if ($rampCutoffMs -gt 0) {
         $rampBasis = if ($JmeterTestName) { "JMeter ramp_time" } else { "$UserCount VUs / $SpawnRate per s" }
-        Write-Host "Excluding the first ${effectiveRampSec}s (VU ramp-up: $rampBasis, anchored to the engines' first request) from latency/error/throughput stats."
+        $settleNote = if ($excludeSec -gt $effectiveRampSec) { " plus settle-in up to ${excludeSec}s" } else { '' }
+        Write-Host "Excluding the first ${excludeSec}s (VU ramp-up ${effectiveRampSec}s: $rampBasis$settleNote, anchored to the engines' first request) from latency/error/throughput stats."
     } elseif ($LoadProfile -eq 'ramp') {
         Write-Host "LoadProfile=ramp - not excluding any ramp-up window (the climb is what this profile measures)."
     } else {
@@ -571,6 +616,10 @@ if ($engineFiles.Count -gt 0) {
     $byLabel = @{}
     # Per-minute samples across every engine file, for the latency series.
     $byMinute = @{}
+    # Every kept sample's start and elapsed across every engine file, for the
+    # whole-site pause count.
+    $timelineStart   = New-Object 'System.Collections.Generic.List[long]'
+    $timelineElapsed = New-Object 'System.Collections.Generic.List[int]'
     # Sample window across every engine file, for the throughput denominator.
     $spanMinTs = [long]::MaxValue
     $spanMaxTs = [long]::MinValue
@@ -578,7 +627,7 @@ if ($engineFiles.Count -gt 0) {
         # One unreadable/corrupt engine file (e.g. truncated mid-write) must not
         # abort the whole publish - skip it and keep the other engines' data.
         try {
-            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs -CollectPerMinute
+            $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs -CollectPerMinute -CollectTimeline -TimestampIsEnd:$timestampIsEnd
         } catch {
             Write-Warning "Couldn't parse $($file.FullName): $($_.Exception.Message) - skipping this file."
             continue
@@ -601,15 +650,34 @@ if ($engineFiles.Count -gt 0) {
             }
             $byMinute[$kv.Key].AddRange($kv.Value)
         }
+        $timelineStart.AddRange($parsed.TimelineStart)
+        $timelineElapsed.AddRange($parsed.TimelineElapsed)
         if ($null -ne $parsed.MinTimestamp -and $parsed.MinTimestamp -lt $spanMinTs) { $spanMinTs = $parsed.MinTimestamp }
         if ($null -ne $parsed.MaxTimestamp -and $parsed.MaxTimestamp -gt $spanMaxTs) { $spanMaxTs = $parsed.MaxTimestamp }
+    }
+
+    # Whole-site pauses (Get-StallWindows in _helpers.ps1), recorded on every
+    # row of the run so the reports can say which runs had them: they decide
+    # p99 without being a property of the version. The published percentiles
+    # still include them - this only counts.
+    $stalls = Get-StallWindows -Start $timelineStart.ToArray() -Elapsed $timelineElapsed.ToArray()
+    $metadata.stall_count   = $stalls.Count
+    $metadata.stall_seconds = [math]::Round((($stalls | Measure-Object -Property Seconds -Sum).Sum), 1)
+    if ($stalls.Count -gt 0) {
+        $detail = (@($stalls | ForEach-Object { "$($_.Seconds)s at $([DateTimeOffset]::FromUnixTimeMilliseconds($_.StartMs).UtcDateTime.ToString('HH:mm:ss')) UTC ($($_.Requests) requests)" }) -join '; ')
+        $msg = "$($stalls.Count) whole-site pause(s) in this run, $($metadata.stall_seconds)s in total: $detail. p99 and max mostly reflect these; see the per-minute server table on the workbook's Runs tab."
+        Write-Warning $msg
+        Write-Host "##vso[task.logissue type=warning]$msg"
+    } else {
+        Write-Host "No whole-site pauses detected."
     }
 
     # Throughput denominator: the span the samples cover, not the configured
     # duration - they diverge when ALT autoStops early or the run fast-fails,
     # and the configured value then understates the rate. Floored at 1s; falls
-    # back to $DurationSeconds when no timestamp parsed. timeStamp is the sample
-    # START, so the last sample's own latency is deliberately not added.
+    # back to $DurationSeconds when no timestamp parsed. The span runs from the
+    # first sample's START to the last one's, so the last sample's own latency
+    # is deliberately not added.
     # > 0 (not >= 1s) is the real "did we get data" test - the old 1s floor
     # discarded genuinely valid short spans (e.g. a fast smoke run).
     $observedSpanSec = 0.0

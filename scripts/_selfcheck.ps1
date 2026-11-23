@@ -278,6 +278,52 @@ finally {
     Remove-Item -LiteralPath $tmpRamp.FullName -Force -ErrorAction SilentlyContinue
 }
 
+Write-Host "Parse-JmeterCsv -TimestampIsEnd (Locust files stamp the request's end)"
+# A 9 s request that ENDED at 65 s started at 56 s: it belongs to the first
+# minute and to a 60 s settle-in window, and reading the stamp as its start
+# would put it in the second minute and keep it.
+$csvEnd = @(
+    'timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage'
+    '10100,100,Homepage,200,OK,t1,text,true,'
+    '65000,9000,Homepage,200,OK,t1,text,true,'
+    '70050,50,Homepage,200,OK,t1,text,true,'
+) -join "`n"
+$tmpEnd = New-TemporaryFile
+try {
+    Set-Content -LiteralPath $tmpEnd.FullName -Value $csvEnd -Encoding utf8
+    $rEnd = Parse-JmeterCsv -Path $tmpEnd.FullName -TimestampIsEnd -CollectPerMinute
+    Assert-Equal 10000 $rEnd.MinTimestamp          "end stamps -> the window starts at the first request's start"
+    Assert-Equal 70000 $rEnd.MaxTimestamp          "end stamps -> the window ends at the last request's start"
+    Assert-Equal 2 $rEnd.ByMinute[[long]0].Count   "end stamps -> the 9 s request is bucketed in the minute it started in"
+    $rEndCut = Parse-JmeterCsv -Path $tmpEnd.FullName -TimestampIsEnd -RampCutoffMs 60000
+    Assert-Equal 1 $rEndCut.ByLabel['Homepage'].Samples.Count "end stamps -> a request started before the cutoff is excluded although it ended after it"
+    $rStart = Parse-JmeterCsv -Path $tmpEnd.FullName -RampCutoffMs 60000
+    Assert-Equal 2 $rStart.ByLabel['Homepage'].Samples.Count  "without the switch the stamp is still read as the start (JMeter files)"
+}
+finally {
+    Remove-Item -LiteralPath $tmpEnd.FullName -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host "Get-StallWindows (whole-site pauses)"
+# 30 users, one request every 100 ms, each 20 ms - except a 10 s pause at
+# t=60 s: everything started in [60 s, 62 s) is released at 70 s.
+$stStart = New-Object 'System.Collections.Generic.List[long]'; $stElapsed = New-Object 'System.Collections.Generic.List[int]'
+for ($ms = 0; $ms -lt 120000; $ms += 100) {
+    if ($ms -ge 60000 -and $ms -lt 62000) { $stStart.Add($ms); $stElapsed.Add(70000 - $ms) }
+    elseif ($ms -ge 62000 -and $ms -lt 70000) { continue }   # every user is stuck: nothing starts
+    else { $stStart.Add($ms); $stElapsed.Add(20) }
+}
+$sw = Get-StallWindows -Start $stStart.ToArray() -Elapsed $stElapsed.ToArray()
+Assert-Equal 1 $sw.Count          "one pause found"
+Assert-Equal 10.0 $sw[0].Seconds  "pause length is first hung start to release"
+Assert-Equal 20 $sw[0].Requests   "every request started in the pause is counted"
+
+# One slow endpoint (a 7 s request every 2 s) among fast ones is not a pause.
+$epStart = New-Object 'System.Collections.Generic.List[long]'; $epElapsed = New-Object 'System.Collections.Generic.List[int]'
+for ($ms = 0; $ms -lt 120000; $ms += 100) { $epStart.Add($ms); $epElapsed.Add($(if ($ms % 2000 -eq 0) { 7000 } else { 20 })) }
+Assert-Equal 0 (Get-StallWindows -Start $epStart.ToArray() -Elapsed $epElapsed.ToArray()).Count "a slow endpoint among fast requests is not a pause"
+Assert-Equal 0 (Get-StallWindows -Start @() -Elapsed @()).Count "no samples -> no pauses"
+
 Write-Host ""
 if ($script:failures -gt 0) {
     Write-Host "$($script:failures) of $($script:checks) checks FAILED." -ForegroundColor Red
