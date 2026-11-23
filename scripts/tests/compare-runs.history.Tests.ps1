@@ -30,6 +30,10 @@ Describe 'compare-runs history mode: which runs a median rests on' {
         # 19.0.0-rc1: five queued runs; two fail fast (40% errors, tiny p95).
         $p19 = 180, 20, 185, 25, 182; $e19 = 0, 0.4, 0, 0.4, 0
         for ($i = 0; $i -lt 5; $i++) { $rows += New-Row (202 + $i * 2) '19.0.0-rc1' "2$i" $p19[$i] $e19[$i] }
+        # The same version on another tier: bigger SKU and DTU cap, as tiers have.
+        $pro = (New-Row 301 '18.3.2' '24' 150 0 'Homepage' 'P2v3' | ConvertFrom-Json)
+        $pro.infra_tier = 'Pro'; $pro.pool_dtu_max = 100
+        $rows += ($pro | ConvertTo-Json -Compress)
         # A row from before jmeter_test_name was published: a raw backoffice
         # request, not a sampler. It must not come back as a cell.
         $rows += New-Row 150 '18.3.2' '05' 9999 0 'GET /umbraco/management/api/v1/language'
@@ -149,6 +153,21 @@ Describe 'compare-runs history mode: which runs a median rests on' {
         # Same hardware on both sides: no warning.
         $out = (& "$PSScriptRoot/../compare-runs.ps1" @common -BaselineVersion 18.3.2 -CandidateVersion 19.0.0-rc1 -Aggregate median -ExcludeRunIds 211 6>$null) -join "`n"
         $out | Should -Not -Match 'not on the same setup'
+    }
+
+    It 'does not blame an override for the SKU and DTU cap two tiers differ on by design' {
+        $common = @{ Scenario = 'Default'; HistoryResourceGroup = 'rg'; StorageAccountName = 'sa'; ContainerName = 'c' }
+        $out = (& "$PSScriptRoot/../compare-runs.ps1" @common -Version 18.3.2 -BaselineTier Starter -CandidateTier Pro -Aggregate median -ExcludeRunIds 211 6>$null) -join "`n"
+        $out | Should -Match 'Candidate: 18\.3\.2 / Pro - median across 1 run\(s\) \(#301\)'
+        $out | Should -Not -Match 'not on the same setup'
+    }
+
+    It 'computes no change in pair mode against a side whose every run is over the limit' {
+        $common = @{ Scenario = 'Default'; Tier = 'Starter'; HistoryResourceGroup = 'rg'; StorageAccountName = 'sa'; ContainerName = 'c' }
+        $out = (& "$PSScriptRoot/../compare-runs.ps1" @common -BaselineVersion 18.3.2 -CandidateVersion 19.0.0-rc1 `
+                    -Aggregate median -RunIds '201,203,204,208' -MaxErrorRate 5 6>$null) -join "`n"
+        $out | Should -Match '\| `Homepage` \| \d+ \| \d+ ! \| n/c \| n/c \| n/c \|'
+        $out | Should -Not -Match '\*\*-\d+%\*\*'
     }
 
     It 'honours -Since (and the legacy median5 spelling)' {

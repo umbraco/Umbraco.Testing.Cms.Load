@@ -249,11 +249,15 @@ function Get-HistoryCells {
 
     $storageKey = Get-StorageAccountKey -StorageAccountName $StorageAccountName -ResourceGroupName $HistoryResourceGroup
 
+    # --num-results '*': the default stops at 5000 blobs, counted BEFORE the
+    # --query filter runs client-side, and the raw artifacts share the prefix.
+    # Past that the listing is cut silently, newest major last.
     Write-Host "Listing blobs under $prefix..."
     $listJson = az storage blob list `
         --account-name $StorageAccountName --account-key $storageKey `
         --container-name $ContainerName `
         --prefix $prefix `
+        --num-results '*' `
         --query "[?ends_with(name, 'summary.ndjson')].name" `
         -o json
 

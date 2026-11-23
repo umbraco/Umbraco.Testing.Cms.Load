@@ -74,6 +74,7 @@ Write-Host "Listing client summary blobs under $prefix..."
 $listJson = az storage blob list `
     --account-name $StorageAccountName --account-key $storageKey `
     --container-name $ContainerName --prefix $prefix `
+    --num-results '*' `
     --query "[?ends_with(name, 'summary.ndjson')].name" -o json
 $blobNames = @($listJson | ConvertFrom-Json)
 

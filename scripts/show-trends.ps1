@@ -141,7 +141,7 @@ $out = New-Object System.Text.StringBuilder
 $scope = @()
 if ($Window -gt 0)    { $scope += "newest $Window like-for-like run(s) per cell" }
 if ($RunIds)          { $scope += "only runs $((@($RunIds | ForEach-Object { "$_" -split ',' } | ForEach-Object { "#$($_.Trim().TrimStart('#'))" })) -join ', ')" }
-if ($Since)           { $scope += "runs started on or after $((ConvertTo-SinceUtc ([datetime]$Since)).ToString('dd-MM-yyyy HH:mm')) UTC" }
+if ($Since)           { $scope += "runs started on or after $((ConvertTo-SinceUtc ([datetime]$Since)).ToString('dd-MM-yyyy HH:mm', [cultureinfo]::InvariantCulture)) UTC" }
 if ($ExcludeRunIds)   { $scope += "excluded by you: $((@($ExcludeRunIds | ForEach-Object { "$_" -split ',' } | ForEach-Object { "#$($_.Trim().TrimStart('#'))" })) -join ', ')" }
 if ($MaxErrorRate -ge 0) { $scope += "runs over $MaxErrorRate% errors left out of the latency medians only ('K over limit' in the cell; '!' = every run was over it, so the latency shown is that of failing runs)" }
 if ($scope.Count -gt 0) { [void]$out.AppendLine("Scope: $($scope -join '; ').") }

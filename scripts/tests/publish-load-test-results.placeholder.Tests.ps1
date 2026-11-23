@@ -34,6 +34,10 @@ Describe 'publish-load-test-results: tier that failed before its load test' {
                 -LogAnalyticsDceUri '' -LogAnalyticsDcrImmutableId '' -LogAnalyticsStreamName '' -LogAnalyticsSeriesStreamName '' `
                 6>$null 3>$null
         }
+        # Once, here: every It below asserts on what this one publish left
+        # behind, so each still passes when run on its own.
+        $script:publishError = $null
+        try { & $publish } catch { $script:publishError = $_ }
     }
     AfterAll {
         Remove-Item -Path Function:\az -ErrorAction SilentlyContinue
@@ -42,7 +46,7 @@ Describe 'publish-load-test-results: tier that failed before its load test' {
     }
 
     It 'publishes one no_results_dir placeholder row instead of throwing on the empty inputs' {
-        { & $publish } | Should -Not -Throw
+        $script:publishError | Should -BeNullOrEmpty
         $global:PublishTestUploaded | Should -Exist
         $rows = @(Get-Content -LiteralPath $global:PublishTestUploaded | ForEach-Object { $_ | ConvertFrom-Json })
         $rows.Count | Should -Be 1

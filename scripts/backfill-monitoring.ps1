@@ -114,6 +114,7 @@ $allBlobs = @(az storage blob list `
     --account-name $StorageAccountName `
     --account-key $storageKey `
     --container-name $ContainerName `
+    --num-results '*' `
     --query "[?ends_with(name, 'summary.ndjson')].{name:name}" `
     -o json | ConvertFrom-Json)
 

@@ -90,6 +90,16 @@ Write-Host "##vso[task.setvariable variable=loadTestConfigPath]"
 Write-Host "##vso[task.setvariable variable=appServiceResourceId]"
 Write-Host "##vso[task.setvariable variable=jmeterTestName]"
 
+# Raised here and put back at the two clean exits below (config written, or no
+# .jmx for this major), so it stays 'true' only when this script died on the
+# way. The backoffice 'Generate config' step has continueOnError, which leaves
+# the job merely "succeeded with issues": without this flag nothing downstream
+# can tell a plan that errored from one that was skipped on purpose, and a tier
+# whose every plan errored would publish no row at all. Pipeline variables
+# reach the script as environment variables, hence $env:.
+$tierConfigFailedBefore = $env:TIERCONFIGFAILED
+Write-Host "##vso[task.setvariable variable=tierConfigFailed]true"
+
 # The backoffice loop in load-test-job.yml invokes this script once per .jmx
 # (up to 6x per case), each as a fresh process - cache the subscription ID
 # (constant for the whole pipeline run) in a file next to the generated
@@ -277,6 +287,7 @@ if ($Workload -eq 'backoffice') {
         Write-Host "##vso[task.setvariable variable=loadTestConfigPath]"
         Write-Host "##vso[task.setvariable variable=appServiceResourceId]"
         Write-Host "##vso[task.setvariable variable=jmeterTestName]"
+        Write-Host "##vso[task.setvariable variable=tierConfigFailed]$tierConfigFailedBefore"
         exit 0
     }
 
@@ -371,6 +382,7 @@ Write-Host "##vso[task.setvariable variable=safeTestCaseId]$safeKey"
 Write-Host "##vso[task.setvariable variable=loadTestConfigPath]$configPath"
 Write-Host "##vso[task.setvariable variable=appServiceResourceId]$appServiceResourceId"
 Write-Host "##vso[task.setvariable variable=jmeterTestName]$JmxName"
+Write-Host "##vso[task.setvariable variable=tierConfigFailed]$tierConfigFailedBefore"
 
 Write-Host "Generated load test config at: $configPath"
 Write-Host "App Service:      $appServiceResourceId"

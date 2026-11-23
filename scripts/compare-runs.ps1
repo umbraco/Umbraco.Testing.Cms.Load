@@ -367,14 +367,16 @@ function Add-LoadMismatchWarning {
 # each side's median is like-for-like within itself, but the two sides can
 # still have run on different hardware (a queue-time override on one of them).
 # The seeder build is left out for the same reason as there - it differs per
-# major by design.
+# major by design. -PresetOnly is for tier-vs-tier: the SKU and DTU cap are
+# what a tier IS (loadtests/tiers.json), so only the seeder preset can be off.
 function Add-SetupMismatchWarning {
-    param([System.Text.StringBuilder] $Out, [object[]] $Sides, [string[]] $Labels)
+    param([System.Text.StringBuilder] $Out, [object[]] $Sides, [string[]] $Labels, [switch] $PresetOnly)
     $fields = @(
         @{ Label = 'app SKU';       Field = 'app_service_sku' },
         @{ Label = 'DTU cap';       Field = 'pool_dtu_max' },
         @{ Label = 'seeder preset'; Field = 'seeder_preset' }
     )
+    if ($PresetOnly) { $fields = @($fields | Where-Object { $_.Field -eq 'seeder_preset' }) }
     $differs = @()
     foreach ($f in $fields) {
         $field   = $f.Field
@@ -487,7 +489,7 @@ if ($isHistoryMode -and $isVersionList) {
     [void]$out.AppendLine("- Source: history storage (``$StorageAccountName/$ContainerName``), scenario ``$Scenario``")
     $aggText = if ($Aggregate -eq 'median') { "median across the last $Window like-for-like runs per sampler (same load and setup; fewer when fewer exist)" } else { 'latest run per sampler' }
     if ($RunIds) { $aggText += "; limited to runs $((@($RunIds) | ForEach-Object { "#$_" }) -join ', ')" }
-    if ($Since)  { $aggText += "; runs started on or after $((ConvertTo-SinceUtc ([datetime]$Since)).ToString('dd-MM-yyyy HH:mm')) UTC" }
+    if ($Since)  { $aggText += "; runs started on or after $((ConvertTo-SinceUtc ([datetime]$Since)).ToString('dd-MM-yyyy HH:mm', [cultureinfo]::InvariantCulture)) UTC" }
     [void]$out.AppendLine("- Aggregate: $aggText")
     $seededFields = @(
         @{ Label = 'content';       Field = 'seeded_content_total' },
@@ -746,7 +748,7 @@ else {
 [void]$out.AppendLine()
 if ($isHistoryMode) {
     Add-LoadMismatchWarning -Out $out -Mismatches @(Get-LoadMismatches -Sides @($baseline, $candidate) -Labels @($BaselineLabel, $CandidateLabel))
-    Add-SetupMismatchWarning -Out $out -Sides @($baseline, $candidate) -Labels @($BaselineLabel, $CandidateLabel)
+    Add-SetupMismatchWarning -Out $out -Sides @($baseline, $candidate) -Labels @($BaselineLabel, $CandidateLabel) -PresetOnly:([bool]$isTierPair)
     Add-ExclusionNotes -Out $out -Sides @($baseline, $candidate) -Labels @($BaselineLabel, $CandidateLabel)
 }
 
@@ -784,7 +786,22 @@ foreach ($label in $labels) {
         [void]$out.AppendLine("| ``$label`` | $($b.Count) | (missing) | - | - | - |")
         continue
     }
+    # Every run of this sampler went over -MaxErrorRate on one side: its latency
+    # is that of failing requests, which are fast, so a change would read as a
+    # speed-up for the side that broke. Same rule as the -Versions tables.
+    # (CSV-mode stats carry no AllOverLimit, so this is never true there.)
+    if ($b.AllOverLimit -or $c.AllOverLimit) {
+        $bCount = "$($b.Count)$(if ($b.AllOverLimit) { ' !' })"
+        $cCount = "$($c.Count)$(if ($c.AllOverLimit) { ' !' })"
+        [void]$out.AppendLine("| ``$label`` | $bCount | $cCount | n/c | n/c | n/c |")
+        $anyFailingSampler = $true
+        continue
+    }
     [void]$out.AppendLine("| ``$label`` | $($b.Count) | $($c.Count) | $(Format-Cell $b.Avg $c.Avg $SignificantDeltaPercent) | $(Format-Cell $b.P95 $c.P95 $SignificantDeltaPercent) | $(Format-Cell $b.P99 $c.P99 $SignificantDeltaPercent) |")
+}
+if ($anyFailingSampler) {
+    [void]$out.AppendLine()
+    [void]$out.AppendLine("``!`` = every run of that sampler went over the $MaxErrorRate% error limit on that side, so no latency change is computed (``n/c``). The errors are the result there.")
 }
 
 foreach ($label in ($candidate.ByLabel.Keys | Where-Object { -not $baseline.ByLabel.ContainsKey($_) })) {

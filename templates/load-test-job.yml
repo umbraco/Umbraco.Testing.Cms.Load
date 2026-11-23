@@ -69,7 +69,7 @@ steps:
     inputs:
       targetType: 'inline'
       script: |
-        foreach ($name in 'activeTestCaseId', 'tierPlanStarted', 'loadTestConfigPath', 'appServiceResourceId', 'safeTestCaseId', 'loadTestStartTime', 'loadTestEndTime') {
+        foreach ($name in 'activeTestCaseId', 'tierPlanStarted', 'tierConfigFailed', 'loadTestConfigPath', 'appServiceResourceId', 'safeTestCaseId', 'loadTestStartTime', 'loadTestEndTime') {
             Write-Host "##vso[task.setvariable variable=$name]"
         }
         $dir = "$(System.DefaultWorkingDirectory)/loadTest"
@@ -791,11 +791,15 @@ steps:
     # history, nothing for check-regression.ps1 to call a dead tier. This writes
     # the same no_results_dir placeholder the frontend path gets from its own
     # publish step ('Reset per-plan state' has removed loadTest/, and the window
-    # and resource id are empty). failed() only: a tier whose plans simply have
-    # no .jmx for this major did not fail and must not read as dead.
+    # and resource id are empty). It runs when the job has failed, or when
+    # config generation errored for a plan (tierConfigFailed, set by
+    # generate-loadtest-config.ps1): that step has continueOnError, so a tier
+    # whose every plan errored there is only "succeeded with issues". A tier
+    # whose plans simply have no .jmx for this major did neither and must not
+    # read as dead.
     - task: AzureCLI@2
       displayName: 'Publish placeholder [${{ parameters.testCaseId }}]'
-      condition: and(failed(), eq(variables['activeTestCaseId'], '${{ parameters.testCaseId }}'), ne(variables['tierPlanStarted'], 'true'))
+      condition: and(succeededOrFailed(), eq(variables['activeTestCaseId'], '${{ parameters.testCaseId }}'), ne(variables['tierPlanStarted'], 'true'), or(failed(), eq(variables['tierConfigFailed'], 'true')))
       continueOnError: true
       inputs:
         azureSubscription: '$(serviceConnection)'
