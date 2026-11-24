@@ -613,7 +613,7 @@ steps:
               }
               $target = Join-Path $resultsDir 'umbraco-logs'
               New-Item -ItemType Directory -Path $target -Force | Out-Null
-              $files = @(Invoke-RestMethod -Uri $logsUrl -Headers $headers -TimeoutSec 60 | Where-Object { $_.name -like 'UmbracoTraceLog*.json' })
+              $files = @((Invoke-RestMethod -Uri $logsUrl -Headers $headers -TimeoutSec 60) | Where-Object { $_.name -like 'UmbracoTraceLog*.json' })
               foreach ($file in $files) {
                   Invoke-WebRequest -Uri ($logsUrl + $file.name) -Headers $headers -TimeoutSec 180 -OutFile (Join-Path $target $file.name)
                   Write-Host "Saved $($file.name) ($($file.size) bytes)"
@@ -626,7 +626,7 @@ steps:
               # the last minute or so of the test can be missing from it.
               $httpUrl = "https://$(appServiceName).scm.azurewebsites.net/api/vfs/LogFiles/http/RawLogs/"
               try {
-                  $httpFiles = @(Invoke-RestMethod -Uri $httpUrl -Headers $headers -TimeoutSec 60 | Where-Object { $_.name -like '*.log' })
+                  $httpFiles = @((Invoke-RestMethod -Uri $httpUrl -Headers $headers -TimeoutSec 60) | Where-Object { $_.name -like '*.log' })
               } catch {
                   $httpFiles = @()
               }
