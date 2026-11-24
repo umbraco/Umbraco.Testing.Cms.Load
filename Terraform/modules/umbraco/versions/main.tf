@@ -91,11 +91,13 @@ resource "azurerm_windows_web_app" "app_service" {
   client_affinity_enabled                        = false
 
   site_config {
-    # 64-bit worker. The provider's default is 32-bit, which caps the process at
-    # 4 GB of address space (Umbraco's startup log on build 305770: "4095 MB is
-    # available to the process") on plans with 8-32 GB, so the larger tiers
-    # could not use their memory and a tier comparison partly measured the cap.
-    use_32_bit_worker = false
+    # 32-bit worker: the App Service default, and what a site gets unless
+    # someone changes it. Set explicitly so a provider default change cannot
+    # move it. It caps the process at 4 GB of address space (Umbraco's startup
+    # log on build 305770: "4095 MB is available to the process") on plans with
+    # 8-32 GB, so on the larger tiers part of what is measured is that cap.
+    # Builds 305781, 305802 and 305823 ran 64-bit (methodology 4 / 2).
+    use_32_bit_worker = true
 
     application_stack {
       current_stack  = "dotnet"

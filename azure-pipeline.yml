@@ -20,6 +20,7 @@ parameters:
       - 'Default'
       - 'DeliveryApi'
       - 'Heartbeat'
+      - 'ReadOnly'
 
   # Workload selects what kind of traffic the load test generates against the
   # provisioned Umbraco. 'frontend' runs the scenario's locustfile.py (the

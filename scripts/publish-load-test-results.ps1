@@ -117,10 +117,13 @@ $PSNativeCommandUseErrorActionPreference = $true
 #       Terraform/modules/umbraco/versions/main.tf). Every number is measured
 #       on a different setup than before, and this is the one value that keeps
 #       earlier runs out of the same medians and baselines.
+#   5 (frontend) / 3 (backoffice) - again a change of setup, not of
+#       computation: back to a 32-bit worker (the App Service default), keeping
+#       the Azure Web Apps settings that came in with 4 / 2.
 # Scoped per workload: 2 and 3 only changed how frontend numbers are computed,
 # so backoffice rows skipped them and kept their baselines instead of reporting
 # "insufficient history" for a change that never touched them.
-$MethodologyVersion = if ($JmeterTestName) { 2 } else { 4 }
+$MethodologyVersion = if ($JmeterTestName) { 3 } else { 5 }
 
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize

@@ -548,6 +548,46 @@ steps:
           Write-Host "##vso[task.setvariable variable=loadTestEndTime]$end"
           Write-Host "Load test window ends at: $end"
 
+    # The site's own log for this run, read through the Kudu file API and put
+    # next to the load test results, so the two steps below carry it into the
+    # pipeline artifact and into history storage (raw/umbraco-logs/). Without
+    # it the log is gone when cleanup deletes the resource group, and it is the
+    # only place the Heartbeat scenario's lines and Umbraco's own view of a
+    # whole-site pause exist. Read-only against the site; never fails the run.
+    - task: AzureCLI@2
+      displayName: 'Save Umbraco log [${{ parameters.testCaseId }}]'
+      condition: and(succeededOrFailed(), eq(variables['activeTestCaseId'], '${{ parameters.testCaseId }}'), ne(variables['safeTestCaseId'], ''))
+      continueOnError: true
+      inputs:
+        azureSubscription: '$(serviceConnection)'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          try {
+              $token = az account get-access-token --resource https://management.azure.com --query accessToken -o tsv
+              $headers = @{ Authorization = "Bearer $token" }
+              $logsUrl = "https://$(appServiceName).scm.azurewebsites.net/api/vfs/site/wwwroot/umbraco/Logs/"
+              # Only beside real results: creating the folder for a run that
+              # produced none would turn its 'no_results_dir' placeholder into
+              # 'no_metrics' in the publish step.
+              $resultsDir = "$(System.DefaultWorkingDirectory)/loadTest"
+              if (-not (Test-Path $resultsDir)) {
+                  Write-Host "No load test results folder for this case; not saving the Umbraco log."
+                  exit 0
+              }
+              $target = Join-Path $resultsDir 'umbraco-logs'
+              New-Item -ItemType Directory -Path $target -Force | Out-Null
+              $files = @(Invoke-RestMethod -Uri $logsUrl -Headers $headers -TimeoutSec 60 | Where-Object { $_.name -like 'UmbracoTraceLog*.json' })
+              foreach ($file in $files) {
+                  Invoke-WebRequest -Uri ($logsUrl + $file.name) -Headers $headers -TimeoutSec 180 -OutFile (Join-Path $target $file.name)
+                  Write-Host "Saved $($file.name) ($($file.size) bytes)"
+              }
+              if ($files.Count -eq 0) { Write-Host "##vso[task.logissue type=warning]No UmbracoTraceLog*.json found on the site; nothing saved." }
+          } catch {
+              Write-Host "##vso[task.logissue type=warning]Couldn't save the Umbraco log: $($_.Exception.Message)"
+          }
+          exit 0
+
     # Pipeline artifact: per-build, expires with build retention. continueOnError so a
     # blob upload hiccup doesn't lose the rest of the run; history publish below is the
     # long-lived copy.
