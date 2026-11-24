@@ -105,6 +105,23 @@ resource "azurerm_windows_web_app" "app_service" {
     }
   }
 
+  # App Service's own HTTP log (IIS, W3C format, with time-taken per request),
+  # for the Heartbeat diagnostic scenario only: it times each request one
+  # layer outside the app, which is where build 305891 put a 2 s hang. Off for
+  # every other scenario so the measured setup stays what a default site is.
+  # The pipeline saves LogFiles/http/RawLogs with the run.
+  dynamic "logs" {
+    for_each = var.scenario == "Heartbeat" ? [1] : []
+    content {
+      http_logs {
+        file_system {
+          retention_in_days = 1
+          retention_in_mb   = 100
+        }
+      }
+    }
+  }
+
   # Overlay wins on key collision.
   app_settings = merge(
     {

@@ -619,6 +619,25 @@ steps:
                   Write-Host "Saved $($file.name) ($($file.size) bytes)"
               }
               if ($files.Count -eq 0) { Write-Host "##vso[task.logissue type=warning]No UmbracoTraceLog*.json found on the site; nothing saved." }
+
+              # App Service's HTTP log, where the site has it switched on (the
+              # Heartbeat scenario). A site without it has no such folder, and
+              # that is not worth a warning. IIS writes the log in batches, so
+              # the last minute or so of the test can be missing from it.
+              $httpUrl = "https://$(appServiceName).scm.azurewebsites.net/api/vfs/LogFiles/http/RawLogs/"
+              try {
+                  $httpFiles = @(Invoke-RestMethod -Uri $httpUrl -Headers $headers -TimeoutSec 60 | Where-Object { $_.name -like '*.log' })
+              } catch {
+                  $httpFiles = @()
+              }
+              if ($httpFiles.Count -gt 0) {
+                  $httpTarget = Join-Path $resultsDir 'http-logs'
+                  New-Item -ItemType Directory -Path $httpTarget -Force | Out-Null
+                  foreach ($file in $httpFiles) {
+                      Invoke-WebRequest -Uri ($httpUrl + $file.name) -Headers $headers -TimeoutSec 180 -OutFile (Join-Path $httpTarget $file.name)
+                      Write-Host "Saved HTTP log $($file.name) ($($file.size) bytes)"
+                  }
+              }
           } catch {
               Write-Host "##vso[task.logissue type=warning]Couldn't save the Umbraco log: $($_.Exception.Message)"
           }

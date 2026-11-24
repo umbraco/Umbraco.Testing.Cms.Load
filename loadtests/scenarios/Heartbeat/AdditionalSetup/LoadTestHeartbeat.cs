@@ -56,6 +56,33 @@
 //              in_flight 0 and started 0 while the load test was sending: the
 //              requests never reached the app - the stall is in front of it
 //              (App Service front end, network, or the load generator).
+//   oldest_ms  age of the oldest request still inside the app. stuck_ms stays
+//              small when only some requests hang and the rest keep
+//              completing; this does not.
+//   slow_n / max_req_ms  requests that finished since the previous beat having
+//              spent 100 ms or more inside the app, and the longest.
+//
+// Each of those slow requests also gets its own line ("LoadTestHeartbeat slow
+// request"), written by the beat thread within about a second of the request
+// ending - ended_utc is when it actually ended:
+//
+//   ms         time inside the app, from the first middleware to the last.
+//              Compare with the load test's own time for the same request
+//              (same path, same end second): a request the client waited 2 s
+//              for that shows 6 ms here, or no line at all, spent that time
+//              outside the app - in front of it or on the way back.
+//   sql_n / sql_ms  SQL commands the request ran and their total time, up to
+//              the point each command returns (not reading its rows).
+//              commit_ms is transaction commits, open_ms opening connections
+//              (long when the connection pool is empty).
+//              ms far above sql_ms + commit_ms + open_ms: the request waited
+//              or computed inside the app. Close to it: it waited on the
+//              database.
+//   in_flight_at_start  other requests inside the app when this one arrived.
+//
+// The SQL figures come from Microsoft.Data.SqlClient's diagnostic events,
+// which are only produced while something listens: this scenario's SQL calls
+// are a little more expensive than the Default scenario's.
 //
 // EVERY beat is logged ("LoadTestHeartbeat beat"), as a Warning when something
 // crossed its threshold or a probe failed and as Information otherwise, plus a
@@ -68,6 +95,7 @@
 // Microsoft.Data.SqlClient (a dependency of Umbraco's SQL Server provider).
 // Compiled against Umbraco 17.8.2 (net10.0) and 19.0.0-rc1 (net11.0).
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Tracing;
@@ -97,14 +125,46 @@ public sealed class LoadTestHeartbeatComposer : IComposer
     }
 }
 
-// Counts requests entering and leaving the app. Three interlocked operations
-// per request; no allocation, no logging.
+// What one request did, filled in while it runs. One small object per request.
+public sealed class LoadTestRequestStats
+{
+    public long StartTimestamp;
+    public long InFlightAtStart;
+    public long SqlCommands;
+    public long SqlTicks;
+    public long CommitTicks;
+    public long OpenTicks;
+
+    // Start of the SQL operation in progress, 0 when none. A request runs its
+    // commands one after another, so one slot per kind is enough.
+    public long CommandStartedAt;
+    public long CommitStartedAt;
+    public long OpenStartedAt;
+}
+
+// A finished slow request, waiting for the beat thread to log it.
+public sealed record LoadTestSlowRequest(
+    DateTime EndedUtc, long Ms, string Method, string Path, int Status, long InFlightAtStart,
+    long SqlCommands, long SqlMs, long CommitMs, long OpenMs);
+
+// Counts and times requests entering and leaving the app. Nothing is logged
+// from the request's own thread: slow requests are queued for the beat thread.
 public static class LoadTestRequestTracker
 {
+    public const int SlowRequestMs = 100;
+    private const int MaxQueuedSlowRequests = 5000;
+
+    private static readonly AsyncLocal<LoadTestRequestStats?> CurrentStats = new();
+    private static readonly ConcurrentDictionary<LoadTestRequestStats, byte> Running = new();
+    private static readonly ConcurrentQueue<LoadTestSlowRequest> SlowQueue = new();
+
     private static long _inFlight;
     private static long _started;
     private static long _completed;
     private static long _lastCompletedTimestamp = Stopwatch.GetTimestamp();
+    private static long _slowCount;
+    private static long _slowDropped;
+    private static long _maxRequestMs;
 
     public static long InFlight => Interlocked.Read(ref _inFlight);
 
@@ -114,24 +174,216 @@ public static class LoadTestRequestTracker
 
     public static long MsSinceLastCompleted => (long)Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastCompletedTimestamp)).TotalMilliseconds;
 
-    public static void Enter()
+    // The request the calling code is running in, or null outside a request
+    // (background jobs, the heartbeat's own SQL probe).
+    public static LoadTestRequestStats? Current => CurrentStats.Value;
+
+    // Age of the oldest request still inside the app, 0 when there is none.
+    public static long OldestMs
+    {
+        get
+        {
+            long oldest = 0;
+            foreach (LoadTestRequestStats stats in Running.Keys)
+            {
+                long started = stats.StartTimestamp;
+                if (oldest == 0 || started < oldest)
+                {
+                    oldest = started;
+                }
+            }
+
+            return oldest == 0 ? 0 : (long)Stopwatch.GetElapsedTime(oldest).TotalMilliseconds;
+        }
+    }
+
+    public static LoadTestRequestStats Enter()
     {
         // The first request after an idle spell must not look stuck since the
         // last completion, which may be minutes old.
-        if (Interlocked.Increment(ref _inFlight) == 1)
+        long inFlight = Interlocked.Increment(ref _inFlight);
+        if (inFlight == 1)
         {
             Interlocked.Exchange(ref _lastCompletedTimestamp, Stopwatch.GetTimestamp());
         }
 
         Interlocked.Increment(ref _started);
+        var stats = new LoadTestRequestStats { StartTimestamp = Stopwatch.GetTimestamp(), InFlightAtStart = inFlight - 1 };
+        Running[stats] = 0;
+        CurrentStats.Value = stats;
+        return stats;
     }
 
-    public static void Leave()
+    public static void Leave(LoadTestRequestStats stats, HttpContext context)
     {
-        Interlocked.Exchange(ref _lastCompletedTimestamp, Stopwatch.GetTimestamp());
+        long now = Stopwatch.GetTimestamp();
+        Interlocked.Exchange(ref _lastCompletedTimestamp, now);
         Interlocked.Increment(ref _completed);
         Interlocked.Decrement(ref _inFlight);
+        Running.TryRemove(stats, out _);
+
+        long ms = (long)Stopwatch.GetElapsedTime(stats.StartTimestamp, now).TotalMilliseconds;
+        long seen;
+        while (ms > (seen = Interlocked.Read(ref _maxRequestMs)) &&
+               Interlocked.CompareExchange(ref _maxRequestMs, ms, seen) != seen)
+        {
+        }
+
+        if (ms < SlowRequestMs)
+        {
+            return;
+        }
+
+        Interlocked.Increment(ref _slowCount);
+        if (SlowQueue.Count >= MaxQueuedSlowRequests)
+        {
+            Interlocked.Increment(ref _slowDropped);
+            return;
+        }
+
+        try
+        {
+            SlowQueue.Enqueue(new LoadTestSlowRequest(
+                DateTime.UtcNow, ms, context.Request.Method, context.Request.Path.Value ?? string.Empty, context.Response.StatusCode,
+                stats.InFlightAtStart, Interlocked.Read(ref stats.SqlCommands), ToMs(Interlocked.Read(ref stats.SqlTicks)),
+                ToMs(Interlocked.Read(ref stats.CommitTicks)), ToMs(Interlocked.Read(ref stats.OpenTicks))));
+        }
+        catch (Exception)
+        {
+            // A diagnostic must never fail a request.
+        }
     }
+
+    // Each call returns what finished since the previous call.
+    public static void Drain(out long slowCount, out long slowDropped, out long maxRequestMs, List<LoadTestSlowRequest> slowRequests)
+    {
+        slowCount = Interlocked.Exchange(ref _slowCount, 0);
+        slowDropped = Interlocked.Exchange(ref _slowDropped, 0);
+        maxRequestMs = Interlocked.Exchange(ref _maxRequestMs, 0);
+        while (slowRequests.Count < MaxQueuedSlowRequests && SlowQueue.TryDequeue(out LoadTestSlowRequest? request))
+        {
+            slowRequests.Add(request);
+        }
+    }
+
+    private static long ToMs(long stopwatchTicks) => stopwatchTicks * 1000 / Stopwatch.Frequency;
+}
+
+// Adds up, per request, the time spent in SQL commands, transaction commits
+// and opening connections, from Microsoft.Data.SqlClient's diagnostic events.
+// The events are raised on the calling code's own flow, so the request they
+// belong to is the current one; work outside a request is ignored.
+public sealed class LoadTestSqlTimings : IObserver<DiagnosticListener>, IObserver<KeyValuePair<string, object?>>, IDisposable
+{
+    private readonly List<IDisposable> _subscriptions = new();
+    private IDisposable? _allListeners;
+
+    public void Start() => _allListeners = DiagnosticListener.AllListeners.Subscribe(this);
+
+    public void Dispose()
+    {
+        _allListeners?.Dispose();
+        lock (_subscriptions)
+        {
+            foreach (IDisposable subscription in _subscriptions)
+            {
+                subscription.Dispose();
+            }
+
+            _subscriptions.Clear();
+        }
+    }
+
+    void IObserver<DiagnosticListener>.OnNext(DiagnosticListener listener)
+    {
+        if (listener.Name == "SqlClientDiagnosticListener")
+        {
+            IDisposable subscription = listener.Subscribe(this);
+            lock (_subscriptions)
+            {
+                _subscriptions.Add(subscription);
+            }
+        }
+    }
+
+    void IObserver<KeyValuePair<string, object?>>.OnNext(KeyValuePair<string, object?> diagnosticEvent)
+    {
+        try
+        {
+            LoadTestRequestStats? stats = LoadTestRequestTracker.Current;
+            if (stats is null)
+            {
+                return;
+            }
+
+            // Names are "Microsoft.Data.SqlClient.WriteCommandBefore", "...After"
+            // and "...Error", and the same for ConnectionOpen and
+            // TransactionCommit.
+            string name = diagnosticEvent.Key;
+            bool before = name.EndsWith("Before", StringComparison.Ordinal);
+            if (!before && !name.EndsWith("After", StringComparison.Ordinal) && !name.EndsWith("Error", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            long now = Stopwatch.GetTimestamp();
+            if (name.Contains("WriteCommand", StringComparison.Ordinal))
+            {
+                if (before)
+                {
+                    Interlocked.Exchange(ref stats.CommandStartedAt, now);
+                }
+                else
+                {
+                    Stop(ref stats.CommandStartedAt, ref stats.SqlTicks, now);
+                    Interlocked.Increment(ref stats.SqlCommands);
+                }
+            }
+            else if (name.Contains("WriteTransactionCommit", StringComparison.Ordinal))
+            {
+                if (before)
+                {
+                    Interlocked.Exchange(ref stats.CommitStartedAt, now);
+                }
+                else
+                {
+                    Stop(ref stats.CommitStartedAt, ref stats.CommitTicks, now);
+                }
+            }
+            else if (name.Contains("WriteConnectionOpen", StringComparison.Ordinal))
+            {
+                if (before)
+                {
+                    Interlocked.Exchange(ref stats.OpenStartedAt, now);
+                }
+                else
+                {
+                    Stop(ref stats.OpenStartedAt, ref stats.OpenTicks, now);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // A diagnostic must never fail a database call.
+        }
+    }
+
+    private static void Stop(ref long startedAt, ref long total, long now)
+    {
+        long started = Interlocked.Exchange(ref startedAt, 0);
+        if (started != 0)
+        {
+            Interlocked.Add(ref total, now - started);
+        }
+    }
+
+    void IObserver<DiagnosticListener>.OnCompleted() { }
+
+    void IObserver<DiagnosticListener>.OnError(Exception error) { }
+
+    void IObserver<KeyValuePair<string, object?>>.OnCompleted() { }
+
+    void IObserver<KeyValuePair<string, object?>>.OnError(Exception error) { }
 }
 
 // Counts a few of the runtime's own events between beats: generation-2
@@ -239,14 +491,14 @@ public sealed class LoadTestRequestTrackingFilter : IStartupFilter
     {
         app.Use(async (HttpContext context, RequestDelegate nextMiddleware) =>
         {
-            LoadTestRequestTracker.Enter();
+            LoadTestRequestStats stats = LoadTestRequestTracker.Enter();
             try
             {
                 await nextMiddleware(context);
             }
             finally
             {
-                LoadTestRequestTracker.Leave();
+                LoadTestRequestTracker.Leave(stats, context);
             }
         });
         next(app);
@@ -277,6 +529,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     private readonly byte[] _payload = new byte[4096];
     private Thread? _thread;
     private LoadTestRuntimeEvents? _runtimeEvents;
+    private LoadTestSqlTimings? _sqlTimings;
 
     // Per-thread CPU at the previous beat, to name the threads that used most
     // since. Null once reading it has failed (the App Service sandbox may not
@@ -317,6 +570,15 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         {
             _logger.LogWarning(ex, "LoadTestHeartbeat could not listen to runtime events; gc2, contention and starvation will read 0");
         }
+        try
+        {
+            _sqlTimings = new LoadTestSqlTimings();
+            _sqlTimings.Start();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LoadTestHeartbeat could not listen to SQL client events; sql_n, sql_ms, commit_ms and open_ms will read 0");
+        }
         ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
         _logger.LogInformation(
             "LoadTestHeartbeat started: {Bitness}-bit process, server GC {ServerGc}, {Cores} cores, pool minimum {MinWorkers} worker / {MinIo} IO threads, share path {SharePath}, local path {LocalPath}",
@@ -333,6 +595,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     public void Dispose()
     {
         _runtimeEvents?.Dispose();
+        _sqlTimings?.Dispose();
         _stop.Dispose();
     }
 
@@ -404,6 +667,8 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         long lastCpuAt = clock.ElapsedMilliseconds;
         TopThreads();   // baseline for the first beat
         long maxCpu = 0, maxContention = 0, sumStarvation = 0, sumContentions = 0;
+        long maxOldest = 0, maxRequest = 0, sumSlowRequests = 0;
+        var slowRequests = new List<LoadTestSlowRequest>();
 
         while (true)
         {
@@ -436,6 +701,9 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             long started = LoadTestRequestTracker.Started, completed = LoadTestRequestTracker.Completed;
             long dStarted = started - lastStarted, dCompleted = completed - lastCompleted;
             lastStarted = started; lastCompleted = completed;
+            long oldestMs = LoadTestRequestTracker.OldestMs;
+            slowRequests.Clear();
+            LoadTestRequestTracker.Drain(out long slowCount, out long slowDropped, out long maxRequestMs, slowRequests);
             int poolThreads = ThreadPool.ThreadCount;
             long poolPending = ThreadPool.PendingWorkItemCount;
 
@@ -466,6 +734,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             lastBeatAt = now;
 
             maxInFlight = Math.Max(maxInFlight, inFlight); maxStuck = Math.Max(maxStuck, stuckMs);
+            maxOldest = Math.Max(maxOldest, oldestMs); maxRequest = Math.Max(maxRequest, maxRequestMs); sumSlowRequests += slowCount;
             minuteStarted += dStarted; minuteCompleted += dCompleted;
             maxLate = Math.Max(maxLate, lateMs); maxPool = Math.Max(maxPool, poolMs);
             maxShare = Math.Max(maxShare, shareMs); maxLocal = Math.Max(maxLocal, localMs);
@@ -479,7 +748,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             if (sqlFailed) { failedProbes++; }
 
             bool slow = lateMs >= SlowMs || poolMs >= SlowMs || shareMs >= SlowMs || localMs >= SlowMs || sqlMs >= SlowMs
-                || gcPauseMs >= GcPauseMs || stuckMs >= StuckMs || shareFailed || localFailed || sqlFailed || sqlBlockedWaitMs >= StuckMs;
+                || gcPauseMs >= GcPauseMs || stuckMs >= StuckMs || oldestMs >= StuckMs || shareFailed || localFailed || sqlFailed || sqlBlockedWaitMs >= StuckMs;
             if (slow) { slowBeats++; }
             maxCpu = Math.Max(maxCpu, cpuMs); maxContention = Math.Max(maxContention, contentionMaxMs);
             sumStarvation += starvation; sumContentions += contentions;
@@ -492,18 +761,34 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             // the load test was sending" is only visible if they are there.
             _logger.Log(
                 slow ? LogLevel.Warning : LogLevel.Information,
-                "LoadTestHeartbeat beat: late_ms={LateMs} gap_ms={GapMs} cpu_ms={CpuMs} cpu_span_ms={CpuSpanMs} top_threads={TopThreads} gc_pause_ms={GcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} gc2={Gc2Starts} gc_reason={GcReason} contention_n={Contentions} contention_max_ms={ContentionMaxMs} starvation={Starvation} pool_ms={PoolMs} pool_threads={PoolThreads} pool_pending={PoolPending} share_ms={ShareMs} share_failed={ShareFailed} local_ms={LocalMs} local_failed={LocalFailed} sql_ms={SqlMs} sql_failed={SqlFailed} sql_blocked={SqlBlocked} sql_blocked_wait_ms={SqlBlockedWaitMs} in_flight={InFlight} stuck_ms={StuckMs} started={Started} completed={Completed} heap_mb={HeapMb}",
-                lateMs, gapMs, cpuMs, cpuSpanMs, topThreads, gcPauseMs, dGen0, dGen1, dGen2, gen2Starts, gcReason, contentions, contentionMaxMs, starvation, poolMs, poolThreads, poolPending, shareMs, shareFailed, localMs, localFailed, sqlMs, sqlFailed, sqlBlocked, sqlBlockedWaitMs, inFlight, stuckMs, dStarted, dCompleted, GC.GetTotalMemory(false) / (1024 * 1024));
+                "LoadTestHeartbeat beat: late_ms={LateMs} gap_ms={GapMs} cpu_ms={CpuMs} cpu_span_ms={CpuSpanMs} top_threads={TopThreads} gc_pause_ms={GcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} gc2={Gc2Starts} gc_reason={GcReason} contention_n={Contentions} contention_max_ms={ContentionMaxMs} starvation={Starvation} pool_ms={PoolMs} pool_threads={PoolThreads} pool_pending={PoolPending} share_ms={ShareMs} share_failed={ShareFailed} local_ms={LocalMs} local_failed={LocalFailed} sql_ms={SqlMs} sql_failed={SqlFailed} sql_blocked={SqlBlocked} sql_blocked_wait_ms={SqlBlockedWaitMs} in_flight={InFlight} stuck_ms={StuckMs} oldest_ms={OldestMs} started={Started} completed={Completed} slow_n={SlowRequests} max_req_ms={MaxRequestMs} heap_mb={HeapMb}",
+                lateMs, gapMs, cpuMs, cpuSpanMs, topThreads, gcPauseMs, dGen0, dGen1, dGen2, gen2Starts, gcReason, contentions, contentionMaxMs, starvation, poolMs, poolThreads, poolPending, shareMs, shareFailed, localMs, localFailed, sqlMs, sqlFailed, sqlBlocked, sqlBlockedWaitMs, inFlight, stuckMs, oldestMs, dStarted, dCompleted, slowCount, maxRequestMs, GC.GetTotalMemory(false) / (1024 * 1024));
+
+            // One line per request that spent SlowRequestMs or more inside the
+            // app. Written here, not on the request's thread; ended_utc is when
+            // the request ended, up to a beat before this line's own timestamp.
+            foreach (LoadTestSlowRequest request in slowRequests)
+            {
+                _logger.LogInformation(
+                    "LoadTestHeartbeat slow request: ended_utc={EndedUtc} ms={Ms} method={Method} path={Path} status={Status} in_flight_at_start={InFlightAtStart} sql_n={SqlCommands} sql_ms={SqlMs} commit_ms={CommitMs} open_ms={OpenMs}",
+                    request.EndedUtc.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture), request.Ms, request.Method, request.Path, request.Status, request.InFlightAtStart, request.SqlCommands, request.SqlMs, request.CommitMs, request.OpenMs);
+            }
+
+            if (slowDropped > 0)
+            {
+                _logger.LogWarning("LoadTestHeartbeat dropped {Dropped} slow request line(s): more than the queue holds finished within one beat", slowDropped);
+            }
 
             // By the clock, not by beat count: beats stop while a probe hangs.
             if (now - summaryFrom >= SummaryEveryMs)
             {
                 _logger.LogInformation(
-                    "LoadTestHeartbeat minute: seconds={Seconds} beats={Beats} slow_beats={SlowBeats} failed_probes={FailedProbes} max_cpu_ms={MaxCpuMs} contentions={Contentions} max_contention_ms={MaxContentionMs} starvation={Starvation} max_late_ms={MaxLateMs} max_gap_ms={MaxGapMs} max_gc_pause_ms={MaxGcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} max_pool_ms={MaxPoolMs} pool_threads={PoolThreads} max_share_ms={MaxShareMs} max_local_ms={MaxLocalMs} max_sql_ms={MaxSqlMs} max_sql_blocked={MaxSqlBlocked} max_sql_blocked_wait_ms={MaxSqlBlockedWaitMs} max_in_flight={MaxInFlight} max_stuck_ms={MaxStuckMs} started={Started} completed={Completed} heap_mb={HeapMb}",
-                    (now - summaryFrom) / 1000, beats, slowBeats, failedProbes, maxCpu, sumContentions, maxContention, sumStarvation, maxLate, maxGap, maxGc, sumGen0, sumGen1, sumGen2, maxPool, ThreadPool.ThreadCount, maxShare, maxLocal, maxSql, maxBlocked, maxBlockedWait, maxInFlight, maxStuck, minuteStarted, minuteCompleted, GC.GetTotalMemory(false) / (1024 * 1024));
+                    "LoadTestHeartbeat minute: seconds={Seconds} beats={Beats} slow_beats={SlowBeats} failed_probes={FailedProbes} max_cpu_ms={MaxCpuMs} contentions={Contentions} max_contention_ms={MaxContentionMs} starvation={Starvation} max_late_ms={MaxLateMs} max_gap_ms={MaxGapMs} max_gc_pause_ms={MaxGcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} max_pool_ms={MaxPoolMs} pool_threads={PoolThreads} max_share_ms={MaxShareMs} max_local_ms={MaxLocalMs} max_sql_ms={MaxSqlMs} max_sql_blocked={MaxSqlBlocked} max_sql_blocked_wait_ms={MaxSqlBlockedWaitMs} max_in_flight={MaxInFlight} max_stuck_ms={MaxStuckMs} max_oldest_ms={MaxOldestMs} started={Started} completed={Completed} slow_requests={SlowRequests} max_req_ms={MaxRequestMs} heap_mb={HeapMb}",
+                    (now - summaryFrom) / 1000, beats, slowBeats, failedProbes, maxCpu, sumContentions, maxContention, sumStarvation, maxLate, maxGap, maxGc, sumGen0, sumGen1, sumGen2, maxPool, ThreadPool.ThreadCount, maxShare, maxLocal, maxSql, maxBlocked, maxBlockedWait, maxInFlight, maxStuck, maxOldest, minuteStarted, minuteCompleted, sumSlowRequests, maxRequest, GC.GetTotalMemory(false) / (1024 * 1024));
                 maxLate = maxPool = maxShare = maxLocal = maxSql = maxGc = maxInFlight = maxStuck = maxGap = maxBlocked = maxBlockedWait = minuteStarted = minuteCompleted = 0;
                 beats = slowBeats = failedProbes = sumGen0 = sumGen1 = sumGen2 = 0;
                 maxCpu = maxContention = sumStarvation = sumContentions = 0;
+                maxOldest = maxRequest = sumSlowRequests = 0;
                 summaryFrom = now;
             }
         }
