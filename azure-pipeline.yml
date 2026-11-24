@@ -74,12 +74,12 @@ parameters:
     default: false
 
   - name: loadProfile
-    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 300s, stress: 300 VUs / 600s, ramp: 0→max / 600s. Backoffice uses lower VU counts (heavier per VU).'
+    displayName: 'Load profile (intensity) — smoke: 20 VUs / 60s, standard: 50 VUs / 600s, stress: 300 VUs / 600s, ramp: 0→max / 600s. Frontend runs load the site for a settle-in first (standard and stress 300s, smoke 30s), so standard takes 15 min per tier. Backoffice uses lower VU counts and 300s per plan on standard.'
     type: string
     default: 'standard'
     values:
       - 'smoke'      # Small,  20 VUs,  60s, 1 engine  -- quick "does it work" probe
-      - 'standard'   # Medium, 50 VUs, 300s, 1 engine -- typical comparison run
+      - 'standard'   # Medium, 50 VUs, 600s measured after a 300s settle-in, 1 engine -- typical comparison run
       - 'stress'     # Medium, 300 VUs, 600s, 2 engines -- saturate the lower tiers
       - 'ramp'       # Medium, 0->300 VUs (backoffice 0->60), 600s, 1 engine -- climb to find the saturation knee
 
@@ -238,7 +238,7 @@ stages:
     jobs:
       - job: runLoadTests
         displayName: Run Load Tests
-        # Each case: warm-up (~5 min) + load test (up to 600s) + publish. Up to four
+        # Each case: warm-up (~5 min) + load test (up to 900s with settle-in) + publish. Up to four
         # cases per queue (one per selected tier); budget generously.
         timeoutInMinutes: 720
         steps:

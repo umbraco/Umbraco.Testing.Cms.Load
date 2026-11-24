@@ -68,6 +68,10 @@ param(
     [string]$SeededMediaImages = "",
     [string]$SeededMediaFiles = "",
 
+    # How the seeder ended at provision time (Completed, CompletedWithErrors,
+    # ...), from the same result the duration comes from. Blank when unknown.
+    [string]$SeederStatus = "",
+
     # JMeter test plan stem (e.g. 'ViewHomePage', 'MemberLogin'). Empty for
     # frontend (Locust) runs and the single-.jmx legacy backoffice path. When
     # set, the publish step (a) suffixes the blob path with the .jmx stem so
@@ -120,10 +124,21 @@ $PSNativeCommandUseErrorActionPreference = $true
 #   5 (frontend) / 3 (backoffice) - again a change of setup, not of
 #       computation: back to a 32-bit worker (the App Service default), keeping
 #       the Azure Web Apps settings that came in with 4 / 2.
+#   6 (frontend only) - latency statistics (percentiles, avg, min, max) are
+#       taken over successful requests only; failures still count in
+#       request_count, failure_count and error_rate. The load test now runs a
+#       settle-in period before the measured window (Get-SettleInSeconds:
+#       300 s for standard and stress, 30 s for smoke, none for ramp or a
+#       cold-start run) and duration_seconds is the measured window, where
+#       before the first 60 s of the duration were left out; the standard
+#       profile measures 600 s instead of 240 s. The plan_/sql_/app_ summary
+#       columns cover the measured window only. Backoffice is unchanged and
+#       stays at 3: its rows are Transaction Controllers, whose success flag
+#       is not reliable enough to select samples by.
 # Scoped per workload: 2 and 3 only changed how frontend numbers are computed,
 # so backoffice rows skipped them and kept their baselines instead of reporting
 # "insufficient history" for a change that never touched them.
-$MethodologyVersion = if ($JmeterTestName) { 3 } else { 5 }
+$MethodologyVersion = if ($JmeterTestName) { 3 } else { 6 }
 
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize
@@ -158,6 +173,12 @@ $metadata = [ordered]@{
     pool_dtu_max     = $PoolDtuMax
     seeder_preset    = $SeederPreset
     seeder_package_version = $seederPackageVersion
+    # Null when unknown. Anything but 'Completed' means the site may not hold
+    # the content the seeded_* counts and the preset suggest.
+    seeder_status    = if ([string]::IsNullOrWhiteSpace($SeederStatus)) { $null } else { $SeederStatus }
+    # The profile by name. users/spawn/duration identify the load, but two
+    # profiles can share a duration, and readers should not have to infer it.
+    load_profile     = if ([string]::IsNullOrWhiteSpace($LoadProfile)) { $null } else { $LoadProfile }
     infra_tier       = $Tier
     # Null (rather than 0) when the seeder didn't complete (Skipped, Failed,
     # TimedOut, or pre-feature run) — KQL percentile/avg ignore nulls, so
@@ -287,7 +308,10 @@ function Get-MetricSummary {
             # both views stay populated even on a series-ingest failure.
             foreach ($p in $points) {
                 $series.Add([pscustomobject]@{
-                    TimeGenerated = [string]$p.timeStamp
+                    # ISO UTC, like the client latency points in the same
+                    # table. A bare [string] cast gave the agent culture's
+                    # 'MM/dd/yyyy HH:mm:ss' with no zone.
+                    TimeGenerated = ([datetime]$p.timeStamp).ToUniversalTime().ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
                     metric_name   = $prefixedName
                     value         = [double]$p.$aggProp
                 })
@@ -588,12 +612,11 @@ if ($engineFiles.Count -gt 0) {
     # Locust result files carry each request's end time (see -TimestampIsEnd).
     $timestampIsEnd = -not $JmeterTestName
 
-    # Frontend only: also leave out the settle-in period after the ramp. Every
-    # frontend run looked at had a slow spell 20-40 s in (about 100 requests
-    # taking up to 5-8.5 s, on a warmed-up site), which moved p95/p99 from run
-    # to run without saying anything about the version. 60 s covers it; capped
-    # at a quarter of the run so a 60 s smoke run keeps most of its samples.
-    $settleSec = if ($JmeterTestName) { 0 } else { [int][math]::Min(60, [math]::Floor($DurationSeconds * 0.25)) }
+    # Frontend only: the settle-in period the load test ran before the measured
+    # window (Get-SettleInSeconds in _helpers.ps1, the same value
+    # generate-loadtest-config.ps1 added to the run time). Everything that
+    # started in it is left out; $DurationSeconds is what remains.
+    $settleSec = Get-SettleInSeconds -LoadProfile $LoadProfile -Frontend (-not $JmeterTestName) -ColdStart ($SkipWarmup -ieq 'true')
     $excludeSec = [int][math]::Max($effectiveRampSec, $settleSec)
 
     $rampCutoffMs = 0
@@ -614,7 +637,7 @@ if ($engineFiles.Count -gt 0) {
 
     if ($rampCutoffMs -gt 0) {
         $rampBasis = if ($JmeterTestName) { "JMeter ramp_time" } else { "$UserCount VUs / $SpawnRate per s" }
-        $settleNote = if ($excludeSec -gt $effectiveRampSec) { " plus settle-in up to ${excludeSec}s" } else { '' }
+        $settleNote = if ($excludeSec -gt $effectiveRampSec) { " plus settle-in, ${excludeSec}s in all" } else { '' }
         Write-Host "Excluding the first ${excludeSec}s (VU ramp-up ${effectiveRampSec}s: $rampBasis$settleNote, anchored to the engines' first request) from latency/error/throughput stats."
     } elseif ($LoadProfile -eq 'ramp') {
         Write-Host "LoadProfile=ramp - not excluding any ramp-up window (the climb is what this profile measures)."
@@ -648,13 +671,17 @@ if ($engineFiles.Count -gt 0) {
             $merged = $byLabel[$kv.Key]
             if (-not $merged) {
                 $merged = @{
-                    Samples = (New-Object 'System.Collections.Generic.List[int]')
-                    Errors  = 0
+                    Samples   = (New-Object 'System.Collections.Generic.List[int]')
+                    OkSamples = (New-Object 'System.Collections.Generic.List[int]')
+                    Errors    = 0
+                    OkBytes   = [long]0
                 }
                 $byLabel[$kv.Key] = $merged
             }
             $merged.Samples.AddRange($kv.Value.Samples)
-            $merged.Errors += $kv.Value.Errors
+            $merged.OkSamples.AddRange($kv.Value.OkSamples)
+            $merged.Errors  += $kv.Value.Errors
+            $merged.OkBytes += $kv.Value.OkBytes
         }
         foreach ($kv in $parsed.ByMinute.GetEnumerator()) {
             if (-not $byMinute.ContainsKey($kv.Key)) {
@@ -684,6 +711,51 @@ if ($engineFiles.Count -gt 0) {
         Write-Host "No whole-site pauses detected."
     }
 
+    # Shorter whole-site slow spells (Get-SlowSeconds in _helpers.ps1), which
+    # the pause count above does not see, and the share of all requests that
+    # took a second or more. Run-level like the pause fields.
+    # Both are over ALL requests, failed ones included (a timeout is part of a
+    # slow spell), as are the pause count and the per-minute latency series.
+    # Frontend only: a backoffice row is a Transaction Controller, several
+    # requests long, for which a second or more is ordinary.
+    if ($JmeterTestName) {
+        $metadata.slow_seconds = $null
+        $metadata.requests_over_1s_pct = $null
+    } else {
+        $metadata.slow_seconds = Get-SlowSeconds -Start $timelineStart.ToArray() -Elapsed $timelineElapsed.ToArray()
+        $overOneSecond = 0
+        foreach ($e in $timelineElapsed) { if ($e -ge 1000) { $overOneSecond++ } }
+        $metadata.requests_over_1s_pct = if ($timelineElapsed.Count -gt 0) { [math]::Round(100.0 * $overOneSecond / $timelineElapsed.Count, 2) } else { $null }
+        Write-Host "Whole-site slow seconds: $($metadata.slow_seconds). Requests taking 1 s or more: $($metadata.requests_over_1s_pct)%."
+    }
+
+    # The server-side summary columns were computed above over the whole load
+    # test step, which for a frontend run includes the settle-in the client
+    # numbers leave out - a CPU peak while the site was still compiling would
+    # sit on a row whose latencies exclude that period. Recompute them over the
+    # measured window only: the per-minute points from the first full minute
+    # after the cutoff. The series table keeps every minute for the drill-down.
+    # Left as they were when no point falls in the window.
+    if ($rampCutoffMs -gt 0 -and $excludeSec -gt $effectiveRampSec) {
+        $measuredFrom = [DateTimeOffset]::FromUnixTimeMilliseconds($rampCutoffMs).UtcDateTime
+        $measuredFrom = $measuredFrom.AddTicks(-($measuredFrom.Ticks % [TimeSpan]::TicksPerMinute)).AddMinutes(1)
+        $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        foreach ($result in @($planResult, $sqlResult, $appResult)) {
+            if ($null -eq $result -or $null -eq $result.Series) { continue }
+            foreach ($group in ($result.Series | Group-Object metric_name)) {
+                $values = @($group.Group | Where-Object {
+                        [datetime]::Parse([string]$_.TimeGenerated, [System.Globalization.CultureInfo]::InvariantCulture, $styles) -ge $measuredFrom
+                    } | ForEach-Object { [double]$_.value })
+                if ($values.Count -eq 0) { continue }
+                # metric_name is already prefixed ('plan_CpuPercentage'), which
+                # is also the stem of its two summary columns.
+                $metadata["$($group.Name)_avg"] = [math]::Round((($values | Measure-Object -Average).Average), 2)
+                $metadata["$($group.Name)_max"] = [math]::Round((($values | Measure-Object -Maximum).Maximum), 2)
+            }
+        }
+        Write-Host "Server-side summary columns cover the measured window (from $($measuredFrom.ToString('HH:mm')) UTC)."
+    }
+
     # Throughput denominator: the span the samples cover, not the configured
     # duration - they diverge when ALT autoStops early or the run fast-fails,
     # and the configured value then understates the rate. Floored at 1s; falls
@@ -704,18 +776,54 @@ if ($engineFiles.Count -gt 0) {
         Write-Warning "No usable sample timestamps - falling back to the configured duration (${DurationSeconds}s) for requests_per_sec."
     }
 
+    # What the samples cover and what was left out before them, so a run that
+    # was cut short (autoStop, an aborted engine) can be told from a full one:
+    # duration_seconds only ever carries the configured value.
+    $metadata.observed_span_seconds = if ($haveSpan) { $observedSpanSec } else { $null }
+    $metadata.excluded_seconds      = if ($rampCutoffMs -gt 0) { $excludeSec } else { 0 }
+    if ($haveSpan -and $LoadProfile -ne 'ramp' -and $observedSpanSec -lt 0.8 * $DurationSeconds) {
+        $msg = "The samples cover only $observedSpanSec s of the configured ${DurationSeconds} s measured window - the run was cut short. Its rows are published, but it is not a full run."
+        Write-Warning $msg
+        Write-Host "##vso[task.logissue type=warning]$msg"
+    }
+
+    # All successful requests of the run in one distribution, regardless of
+    # sampler. A sampler with 5% of the traffic has too few requests for a
+    # steady p95 of its own; the pooled figure is the run's overall picture.
+    # Run-level, repeated on every row. Samplers keep their own rows below.
+    $pooled = New-Object 'System.Collections.Generic.List[int]'
+    foreach ($label in $byLabel.Keys) {
+        # Same basis as the sampler rows below: successes for frontend, every
+        # Transaction Controller row for backoffice.
+        if ($JmeterTestName) { $pooled.AddRange($byLabel[$label].Samples) } else { $pooled.AddRange($byLabel[$label].OkSamples) }
+    }
+    $pooled.Sort()
+    $metadata.pooled_p50_ms = if ($pooled.Count -gt 0) { Get-Pct $pooled 50 } else { $null }
+    $metadata.pooled_p95_ms = if ($pooled.Count -gt 0) { Get-Pct $pooled 95 } else { $null }
+    $metadata.pooled_p99_ms = if ($pooled.Count -gt 0) { Get-Pct $pooled 99 } else { $null }
+
     foreach ($label in $byLabel.Keys) {
         $bucket = $byLabel[$label]
-        $sorted = [System.Collections.Generic.List[int]]::new($bucket.Samples)
+        # Frontend: latency over the successful requests. Only when nothing
+        # succeeded are the failures' own times used, so the row is not empty -
+        # its error_rate of 100% says what they are. Backoffice keeps every
+        # row: a Transaction Controller can be flagged failed while each of its
+        # requests returned 200 (see Parse-JmeterCsv), so its flag must not
+        # decide which samples count.
+        # Assigned, not returned from an if-expression: that would unroll the
+        # list into an array the List constructor below cannot take.
+        $latencySource = $bucket.Samples
+        if (-not $JmeterTestName -and $bucket.OkSamples.Count -gt 0) { $latencySource = $bucket.OkSamples }
+        $sorted = [System.Collections.Generic.List[int]]::new($latencySource)
         $sorted.Sort()
 
-        $reqCount  = $sorted.Count
+        $reqCount  = $bucket.Samples.Count
         $failCount = $bucket.Errors
         $errorRate = if ($reqCount -gt 0) { [math]::Round($failCount / $reqCount, 4) } else { 0 }
         $rps       = if ($testDurationSec -gt 0 -and $reqCount -gt 0) { [math]::Round($reqCount / $testDurationSec, 2) } else { 0 }
         # Round to match the DCR's "real" type on this column; the underlying
         # JMeter samples are int ms but the mean across them is fractional.
-        $avg       = if ($reqCount -gt 0) { [math]::Round((($sorted | Measure-Object -Average).Average), 2) } else { 0 }
+        $avg       = if ($sorted.Count -gt 0) { [math]::Round((($sorted | Measure-Object -Average).Average), 2) } else { 0 }
 
         $merged = [ordered]@{}
         foreach ($k in $metadata.Keys) { $merged[$k] = $metadata[$k] }
@@ -736,8 +844,11 @@ if ($engineFiles.Count -gt 0) {
         $merged.p90_ms           = Get-Pct $sorted 90
         $merged.p95_ms           = Get-Pct $sorted 95
         $merged.p99_ms           = Get-Pct $sorted 99
-        $merged.min_ms           = if ($reqCount -gt 0) { $sorted[0] } else { 0 }
-        $merged.max_ms           = if ($reqCount -gt 0) { $sorted[$sorted.Count - 1] } else { 0 }
+        $merged.min_ms           = if ($sorted.Count -gt 0) { $sorted[0] } else { 0 }
+        $merged.max_ms           = if ($sorted.Count -gt 0) { $sorted[$sorted.Count - 1] } else { 0 }
+        # Mean response size of the successful requests. Two versions serving
+        # the same URLs with different bytes are not serving the same content.
+        $merged.avg_bytes        = if ($bucket.OkSamples.Count -gt 0 -and $bucket.OkBytes -gt 0) { [math]::Round($bucket.OkBytes / [double]$bucket.OkSamples.Count, 0) } else { $null }
         $merged.requests_per_sec = $rps
         $merged.engine_count     = $engineFiles.Count
         $rows += [pscustomobject]$merged

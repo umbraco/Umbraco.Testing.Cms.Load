@@ -286,7 +286,7 @@ function Parse-JmeterCsv {
         # column order is configurable. Fall back to the conventional indices
         # (elapsed=1, label=2, success=7) if a header field is missing.
         $headerLine = $reader.ReadLine()
-        $idxTimestamp = 0; $idxElapsed = 1; $idxLabel = 2; $idxSuccess = 7
+        $idxTimestamp = 0; $idxElapsed = 1; $idxLabel = 2; $idxSuccess = 7; $idxBytes = -1
         if ($headerLine) {
             $header = Split-CsvLine $headerLine
             for ($h = 0; $h -lt $header.Count; $h++) {
@@ -295,6 +295,7 @@ function Parse-JmeterCsv {
                     'elapsed'   { $idxElapsed   = $h }
                     'label'     { $idxLabel     = $h }
                     'success'   { $idxSuccess   = $h }
+                    'bytes'     { $idxBytes     = $h }
                 }
             }
         }
@@ -329,13 +330,25 @@ function Parse-JmeterCsv {
             $bucket = $byLabel[$label]
             if (-not $bucket) {
                 $bucket = @{
-                    Samples = (New-Object 'System.Collections.Generic.List[int]')
-                    Errors  = 0
+                    Samples   = (New-Object 'System.Collections.Generic.List[int]')
+                    # The successful ones only: what latency statistics are
+                    # taken over. A failure is fast (an instant 5xx, an empty
+                    # URL bucket at 0 ms) or a timeout, and either way says
+                    # nothing about how long a served page takes.
+                    OkSamples = (New-Object 'System.Collections.Generic.List[int]')
+                    Errors    = 0
+                    # Response bytes of the successful samples (0 when the
+                    # file has no 'bytes' column).
+                    OkBytes   = [long]0
                 }
                 $byLabel[$label] = $bucket
             }
             $bucket.Samples.Add($elapsed)
-            if (-not $success) { $bucket.Errors++ }
+            if ($success) {
+                $bucket.OkSamples.Add($elapsed)
+                $bytes = [long]0
+                if ($idxBytes -ge 0 -and $idxBytes -lt $cols.Count -and [long]::TryParse($cols[$idxBytes], [ref]$bytes)) { $bucket.OkBytes += $bytes }
+            } else { $bucket.Errors++ }
 
             # Post-filter, so the span matches the samples the metrics come from.
             if ($tsOk) {
@@ -426,6 +439,59 @@ function Get-StallWindows {
         }
     }
     return , $windows
+}
+
+# Seconds of load driven BEFORE the measured window of a frontend (Locust) run.
+# The load test runs for settle-in + duration; only requests that start after
+# the settle-in count. A site that was started a minute or two before the load
+# is still compiling and filling caches under traffic for several minutes: on
+# eleven Starter runs the share of slow reads halved between the first and the
+# fourth minute, and with only the first 60 s left out the same two builds
+# compared 40% apart or level depending on that cutoff alone. One place, used
+# by generate-loadtest-config.ps1 (how long to run) and
+# publish-load-test-results.ps1 (what to leave out), so the two cannot drift.
+# JMeter (backoffice) runs have no settle-in; the ramp profile measures the
+# climb itself; and a cold-start run (skipWarmup) exists to measure exactly
+# the period a settle-in would throw away.
+function Get-SettleInSeconds {
+    param([string]$LoadProfile, [bool]$Frontend = $true, [bool]$ColdStart = $false)
+    if (-not $Frontend -or $ColdStart) { return 0 }
+    switch ($LoadProfile) {
+        'ramp'  { return 0 }
+        'smoke' { return 30 }
+        default { return 300 }
+    }
+}
+
+# Seconds of the run in which the site as a whole was slow: at least
+# $MinRequests requests started in that second and at least $SlowShare of them
+# took $SlowMs or longer. Complements Get-StallWindows, which only counts
+# stretches containing a request of 5 s or more and therefore misses the 1-4 s
+# spells most Starter and Standard runs have (build 305703 Starter: nine such
+# seconds, published with zero pauses). Counted per second, so one unrelated
+# slow request cannot stretch or hide a spell.
+# $Start (epoch ms) and $Elapsed are Parse-JmeterCsv -CollectTimeline's lists.
+function Get-SlowSeconds {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [long[]]$Start,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [int[]]$Elapsed,
+        [int]$SlowMs = 1000,
+        [int]$MinRequests = 5,
+        [double]$SlowShare = 0.9
+    )
+    $started = @{}
+    $slow    = @{}
+    for ($i = 0; $i -lt $Start.Count; $i++) {
+        $second = [long][math]::Floor($Start[$i] / 1000.0)
+        $started[$second] = 1 + [int]$started[$second]
+        if ($Elapsed[$i] -ge $SlowMs) { $slow[$second] = 1 + [int]$slow[$second] }
+    }
+    $count = 0
+    foreach ($second in $started.Keys) {
+        $n = [int]$started[$second]
+        if ($n -ge $MinRequests -and ([int]$slow[$second] / [double]$n) -ge $SlowShare) { $count++ }
+    }
+    return $count
 }
 
 # Per-minute client-side latency across all samplers, as LoadTestSeries_CL

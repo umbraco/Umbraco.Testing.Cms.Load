@@ -752,6 +752,7 @@ if ($isHistoryMode) {
 else {
     [void]$out.AppendLine("- Baseline:  ``$BaselinePath``")
     [void]$out.AppendLine("- Candidate: ``$CandidatePath``")
+    [void]$out.AppendLine("- **Not on the published basis.** Every row of each file is counted: the ramp-up and settle-in the published numbers leave out, and failed requests. Use history mode (``-Versions`` / ``-BaselineVersion``) for figures that match the workbook.")
 }
 [void]$out.AppendLine("- Significant-delta threshold: $SignificantDeltaPercent% (bold = at or above)")
 [void]$out.AppendLine()

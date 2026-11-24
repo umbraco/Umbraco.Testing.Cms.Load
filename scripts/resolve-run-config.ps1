@@ -46,7 +46,11 @@ if ($tiers.Count -eq 0) {
 
 switch ($Profile) {
     'smoke'    { $preset = 'Small';  $users = 20;  $spawn = 10; $duration = 60;  $engines = 1 }
-    'standard' { $preset = 'Medium'; $users = 50;  $spawn = 10; $duration = 300; $engines = 1 }
+    # 600 s measured, after a 300 s settle-in the load test drives first
+    # (Get-SettleInSeconds in _helpers.ps1), so a frontend standard run takes
+    # 15 minutes per tier. The 240 s it measured before left the smaller
+    # samplers with ~250 requests each - too few for a steady p95.
+    'standard' { $preset = 'Medium'; $users = 50;  $spawn = 10; $duration = 600; $engines = 1 }
     'stress'   { $preset = 'Medium'; $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
     # Ramp: climb load across the whole run to find the saturation knee. Low
     # spawn (frontend/Locust ramps 0->users at 1 VU/s); JMeter ramp handled via
@@ -65,7 +69,9 @@ if ($Workload -eq 'backoffice') {
     $engines = 1
     switch ($Profile) {
         'smoke'    { $users = 5 }
-        'standard' { $users = 15 }
+        # Duration stays 300 s per plan: six plans run one after another, and
+        # JMeter runs have no settle-in to make room for.
+        'standard' { $users = 15; $duration = 300 }
         'stress'   { $users = 50 }
         # Ramp to ~60 to bracket the observed backoffice knee (~50 on Standard).
         'ramp'     { $users = 60 }

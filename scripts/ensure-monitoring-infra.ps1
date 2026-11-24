@@ -94,6 +94,23 @@ $columns = @(
     # total length. Run-level, repeated on every row of the run.
     @{ name = "stall_count";                            type = "int"      }
     @{ name = "stall_seconds";                          type = "real"     }
+    # Shorter whole-site slow spells the pause count does not see
+    # (Get-SlowSeconds), the share of requests taking 1 s or more, and all
+    # successful requests of the run pooled into one distribution. Run-level.
+    @{ name = "slow_seconds";                           type = "int"      }
+    @{ name = "requests_over_1s_pct";                   type = "real"     }
+    @{ name = "pooled_p50_ms";                          type = "int"      }
+    @{ name = "pooled_p95_ms";                          type = "int"      }
+    @{ name = "pooled_p99_ms";                          type = "int"      }
+    # What the samples cover and what was left out before them (a run cut
+    # short keeps its configured duration_seconds), the profile by name, and
+    # how the seeder ended at provision time.
+    @{ name = "observed_span_seconds";                  type = "real"     }
+    @{ name = "excluded_seconds";                       type = "int"      }
+    @{ name = "load_profile";                           type = "string"   }
+    @{ name = "seeder_status";                          type = "string"   }
+    # Per sampler: mean response size of the successful requests.
+    @{ name = "avg_bytes";                              type = "real"     }
     @{ name = "infra_tier";                             type = "string"   }
     @{ name = "scenario";                               type = "string"   }
     @{ name = "scenario_name";                          type = "string"   }

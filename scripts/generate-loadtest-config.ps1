@@ -31,6 +31,10 @@ param(
     # rather than RampTime or SpawnRate, both of which scenario.yaml can override.
     [string]$LoadProfile = '',
 
+    # 'True' for a cold-start run: no settle-in is driven (see
+    # Get-SettleInSeconds). Same tolerant string the publish step takes.
+    [string]$SkipWarmup = 'False',
+
     # Resource IDs — App Service Plan + SQL Database — used to register extra
     # appComponents in ALT so plan-level (CpuPercentage / MemoryPercentage) and
     # database-level (DTU / log writes / etc.) metrics are captured alongside
@@ -195,6 +199,12 @@ if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
 # duration, so RampTime>=duration and SpawnRate==1 are both unreliable).
 $rampTimeEff = if ($RampTime -gt 0) { $RampTime } else { $UserAmount }
 $isRamp      = ($LoadProfile -eq 'ramp')
+# Frontend (Locust) runs drive a settle-in period before the measured window;
+# $TestDuration is the measured part and is what gets published as
+# duration_seconds. publish-load-test-results.ps1 leaves out the same number
+# of seconds (Get-SettleInSeconds in _helpers.ps1 is the one source for both).
+$settleInSeconds = Get-SettleInSeconds -LoadProfile $LoadProfile -Frontend $true -ColdStart ($SkipWarmup -ieq 'true')
+$locustRunTime   = $TestDuration + $settleInSeconds
 
 # Backoffice ops whose tail latency is dominated by serialization, not
 # per-request work (e.g. SaveDocumentType) - an absolute latency gate
@@ -366,7 +376,7 @@ env:
   - name: LOCUST_SPAWN_RATE
     value: "$SpawnRate"
   - name: LOCUST_RUN_TIME
-    value: "$TestDuration"
+    value: "$locustRunTime"
 $sharedTail
 "@
 }

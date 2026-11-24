@@ -325,6 +325,49 @@ Assert-Equal 0 (Get-StallWindows -Start $epStart.ToArray() -Elapsed $epElapsed.T
 Assert-Equal 0 (Get-StallWindows -Start @() -Elapsed @()).Count "no samples -> no pauses"
 
 Write-Host ""
+Write-Host "Get-SlowSeconds (whole-site slow spells shorter than a pause)"
+# The 10 s pause above: requests start in two of its seconds, all of them slow.
+Assert-Equal 2 (Get-SlowSeconds -Start $stStart.ToArray() -Elapsed $stElapsed.ToArray()) "the seconds of a pause in which requests started are slow seconds"
+# A 3 s spell where everything takes 1.5 s: no request reaches the 5 s a pause
+# needs, so Get-StallWindows sees nothing; the three seconds are counted here.
+$spStart = New-Object 'System.Collections.Generic.List[long]'; $spElapsed = New-Object 'System.Collections.Generic.List[int]'
+for ($ms = 0; $ms -lt 60000; $ms += 100) { $spStart.Add($ms); $spElapsed.Add($(if ($ms -ge 30000 -and $ms -lt 33000) { 1500 } else { 20 })) }
+Assert-Equal 0 (Get-StallWindows -Start $spStart.ToArray() -Elapsed $spElapsed.ToArray()).Count "a 3 s spell of 1.5 s requests is not a pause"
+Assert-Equal 3 (Get-SlowSeconds -Start $spStart.ToArray() -Elapsed $spElapsed.ToArray())        "but its three seconds are slow seconds"
+Assert-Equal 0 (Get-SlowSeconds -Start $epStart.ToArray() -Elapsed $epElapsed.ToArray())        "a slow endpoint among fast requests gives no slow seconds"
+Assert-Equal 0 (Get-SlowSeconds -Start @() -Elapsed @())                                         "no samples -> no slow seconds"
+# A second with too few requests cannot be judged.
+Assert-Equal 0 (Get-SlowSeconds -Start ([long[]]@(1000, 1200, 1400)) -Elapsed ([int[]]@(2000, 2000, 2000))) "three slow requests in a second are too few to call it"
+
+Write-Host ""
+Write-Host "Get-SettleInSeconds (load driven before the measured window)"
+Assert-Equal 300 (Get-SettleInSeconds -LoadProfile 'standard') "standard settles for 300 s"
+Assert-Equal 300 (Get-SettleInSeconds -LoadProfile 'stress')   "stress settles for 300 s"
+Assert-Equal 30  (Get-SettleInSeconds -LoadProfile 'smoke')    "smoke settles for 30 s"
+Assert-Equal 0   (Get-SettleInSeconds -LoadProfile 'ramp')     "ramp measures the climb, no settle-in"
+Assert-Equal 0   (Get-SettleInSeconds -LoadProfile 'standard' -Frontend $false) "JMeter runs have no settle-in"
+Assert-Equal 0   (Get-SettleInSeconds -LoadProfile 'standard' -ColdStart $true) "a cold-start run measures from the first request"
+
+Write-Host ""
+Write-Host "Parse-JmeterCsv keeps failures out of the latency samples"
+$okTmp = New-TemporaryFile
+try {
+    @(
+        'timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage,bytes'
+        '1000,10,Page,200,OK,u-1,text,TRUE,,4000'
+        '2000,30,Page,200,OK,u-1,text,true,,2000'
+        '3000,0,Page,0,empty bucket,u-1,text,FALSE,x,0'
+        '4000,60000,Page,0,timeout,u-1,text,false,x,0'
+    ) | Set-Content -Path $okTmp.FullName -Encoding utf8
+    $ok = Parse-JmeterCsv -Path $okTmp.FullName
+    Assert-Equal 4    $ok.ByLabel['Page'].Samples.Count   "every request is counted"
+    Assert-Equal 2    $ok.ByLabel['Page'].Errors          "two failures"
+    Assert-Equal 2    $ok.ByLabel['Page'].OkSamples.Count "latency samples are the successful ones"
+    Assert-Equal 30   ($ok.ByLabel['Page'].OkSamples | Measure-Object -Maximum).Maximum "a 60 s timeout is not a latency sample"
+    Assert-Equal 6000 $ok.ByLabel['Page'].OkBytes         "bytes summed over successful requests"
+} finally { Remove-Item -LiteralPath $okTmp.FullName -Force -ErrorAction SilentlyContinue }
+
+Write-Host ""
 if ($script:failures -gt 0) {
     Write-Host "$($script:failures) of $($script:checks) checks FAILED." -ForegroundColor Red
     exit 1

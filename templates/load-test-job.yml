@@ -143,6 +143,8 @@ steps:
             Write-Host "No seeder result for $testCaseId in SEEDER_RESULTS - publishing without duration."
         }
         Write-Host "##vso[task.setvariable variable=seederDurationSeconds]$seederDurationSeconds"
+        $seederStatus = if ($null -ne $seeder -and $seeder.status) { [string]$seeder.status } else { '' }
+        Write-Host "##vso[task.setvariable variable=seederStatus]$seederStatus"
         # Seeder inventory counts are filled in by the warm-up step. Initialised
         # empty here so the publish step gets a blank (-> null) rather than an
         # unexpanded macro when warm-up is skipped or its inventory probe fails.
@@ -227,6 +229,39 @@ steps:
               # Fail so the load-test step is skipped; running against an unready app gives misleading metrics.
               Write-Host "##vso[task.logissue type=error]App did not respond 200 within 5 minutes - skipping load test for this case"
               exit 1
+          }
+
+          # The seeder runs again on every app start: it skips what is already
+          # there, then rebuilds every document URL and reloads the published
+          # cache (2-3 s on a Medium site, longer on larger ones). Priming
+          # before that has finished warms a cache that is then thrown away,
+          # and whether it had finished used to depend on timing. Wait for it.
+          $seederStatusUrl = "$base/umbraco/api/seederstatus/status"
+          $seederDeadline = (Get-Date).AddMinutes(5)
+          $seederState = ''
+          Write-Host ""
+          Write-Host "Phase 1b: waiting for the seeder's start-up pass to finish (max 5 minutes)..."
+          while ((Get-Date) -lt $seederDeadline) {
+              try {
+                  # 202 while running, 503 when it failed: read the body either way.
+                  $seederResp = Invoke-RestMethod -Uri $seederStatusUrl -TimeoutSec 15 -SkipHttpErrorCheck
+                  $seederState = [string]$seederResp.Status
+                  if ($seederState -in 'Completed', 'CompletedWithErrors', 'Skipped', 'Failed') {
+                      Write-Host "  seeder status: $seederState (elapsed $($seederResp.ElapsedMs) ms)"
+                      if ($seederState -in 'CompletedWithErrors', 'Failed') {
+                          Write-Host "##vso[task.logissue type=warning]The seeder's start-up pass on this site ended as '$seederState'. The load test still runs, but the site may not be in the state the seeded counts suggest; check the Umbraco log saved with the run."
+                      }
+                      break
+                  }
+                  Write-Host "  seeder status: $seederState, waiting..."
+              }
+              catch {
+                  Write-Host "  seeder status not readable yet ($($_.Exception.Message.Split([Environment]::NewLine)[0]))"
+              }
+              Start-Sleep -Seconds 3
+          }
+          if ($seederState -notin 'Completed', 'CompletedWithErrors', 'Skipped', 'Failed') {
+              Write-Host "##vso[task.logissue type=warning]The seeder's start-up pass did not report an end state within 5 minutes (last: '$seederState'); priming anyway, the cache may be rebuilt under the load test."
           }
 
           Write-Host ""
@@ -481,6 +516,7 @@ steps:
           -TestDuration $(testDuration)
           -RampTime $(rampTime)
           -LoadProfile "$(loadProfile)"
+          -SkipWarmup "${{ parameters.skipWarmup }}"
           -AppServicePlanId "$(appServicePlanId)"
           -SqlDatabaseId "$(sqlDatabaseId)"
           -SqlDatabaseName "$(sqlDatabaseName)"
@@ -647,6 +683,7 @@ steps:
           -SeededRootSections "$(seededRootSections)"
           -SeededMediaImages "$(seededMediaImages)"
           -SeededMediaFiles "$(seededMediaFiles)"
+          -SeederStatus "$(seederStatus)"
           -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
           -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
           -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
@@ -819,6 +856,7 @@ steps:
             -SeededRootSections "$(seededRootSections)"
             -SeededMediaImages "$(seededMediaImages)"
             -SeededMediaFiles "$(seededMediaFiles)"
+            -SeederStatus "$(seederStatus)"
             -JmeterTestName "${{ jmxName }}"
             -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
             -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
@@ -879,6 +917,7 @@ steps:
           -SeededRootSections "$(seededRootSections)"
           -SeededMediaImages "$(seededMediaImages)"
           -SeededMediaFiles "$(seededMediaFiles)"
+          -SeederStatus "$(seederStatus)"
           -LogAnalyticsDceUri "${{ parameters.logAnalyticsDceUri }}"
           -LogAnalyticsDcrImmutableId "${{ parameters.logAnalyticsDcrImmutableId }}"
           -LogAnalyticsStreamName "${{ parameters.logAnalyticsStreamName }}"
