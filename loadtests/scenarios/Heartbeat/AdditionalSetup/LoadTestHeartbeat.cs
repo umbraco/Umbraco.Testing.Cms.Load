@@ -30,9 +30,18 @@
 //              averages away. cpu_span_ms is the time the reading covers:
 //              about 1000, more when a probe of the previous beat hung.
 //   top_threads  on a slow or CPU-heavy beat, the three OS threads that used
-//              most CPU over that same span (id:ms, not scaled). One thread
-//              close to the span is a single background job; many threads
-//              sharing it is request work.
+//              most CPU over that same span (id:ms:name, not scaled). One
+//              thread close to the span is a single background job; many
+//              threads sharing it is request work. The name is the one the
+//              thread was given (".NET_TP_Worker" is a thread-pool thread,
+//              ".NET_Server_GC" the collector, a library's own name its own
+//              thread); "?" when it has none or it could not be read.
+//   jit_n      methods compiled since the previous beat. A burst long after
+//              start-up means code is running for the first time: something
+//              was compiled or loaded at run time, or a job ran its first lap.
+//   asm_n      assemblies loaded since the previous beat; their names follow
+//              on a "LoadTestHeartbeat assemblies loaded" line. An assembly
+//              arriving mid-run is run-time compilation (models, views).
 //   gc2 / gc_reason  generation-2 collections started since the previous beat
 //              and the runtime's reason code for the last collection.
 //   contention_n / contention_max_ms  managed lock waits (Monitor) that ended
@@ -101,6 +110,7 @@ using System.Diagnostics;
 using System.Diagnostics.Tracing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -120,6 +130,18 @@ public sealed class LoadTestHeartbeatComposer : IComposer
 {
     public void Compose(IUmbracoBuilder builder)
     {
+        // Experiment switch, set in this scenario's appsettings.json. .NET starts
+        // with one worker thread per core and adds more only slowly, so a few
+        // requests that hold a thread (the contact form's synchronous save) can
+        // leave page requests waiting for one. A value above 0 raises that
+        // minimum; 0 or absent leaves the runtime's default, which is what a
+        // normal site runs with. The "started" line logs the minimum in force.
+        if (int.TryParse(builder.Config["LoadTest:MinWorkerThreads"], out int wantedWorkers) && wantedWorkers > 0)
+        {
+            ThreadPool.GetMinThreads(out int currentWorkers, out int currentIo);
+            ThreadPool.SetMinThreads(Math.Max(currentWorkers, wantedWorkers), currentIo);
+        }
+
         builder.Services.AddTransient<IStartupFilter, LoadTestRequestTrackingFilter>();
         builder.Services.AddHostedService<LoadTestHeartbeat>();
     }
@@ -536,6 +558,10 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     // allow it): the field is then logged as "n/a".
     private Dictionary<int, double>? _threadCpu = new();
 
+    // Names of assemblies loaded since the previous beat (see asm_n).
+    private readonly ConcurrentQueue<string> _loadedAssemblies = new();
+    private AssemblyLoadEventHandler? _assemblyLoadHandler;
+
     // Thread-pool probe state. _poolQueuedAt != 0 means a probe is still waiting.
     private long _poolQueuedAt;
     private long _poolLastDelayMs;
@@ -579,6 +605,14 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         {
             _logger.LogWarning(ex, "LoadTestHeartbeat could not listen to SQL client events; sql_n, sql_ms, commit_ms and open_ms will read 0");
         }
+        _assemblyLoadHandler = (_, args) =>
+        {
+            if (_loadedAssemblies.Count < 500)
+            {
+                _loadedAssemblies.Enqueue(args.LoadedAssembly.GetName().Name ?? "?");
+            }
+        };
+        AppDomain.CurrentDomain.AssemblyLoad += _assemblyLoadHandler;
         ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
         _logger.LogInformation(
             "LoadTestHeartbeat started: {Bitness}-bit process, server GC {ServerGc}, {Cores} cores, pool minimum {MinWorkers} worker / {MinIo} IO threads, share path {SharePath}, local path {LocalPath}",
@@ -594,6 +628,10 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
 
     public void Dispose()
     {
+        if (_assemblyLoadHandler is not null)
+        {
+            AppDomain.CurrentDomain.AssemblyLoad -= _assemblyLoadHandler;
+        }
         _runtimeEvents?.Dispose();
         _sqlTimings?.Dispose();
         _stop.Dispose();
@@ -644,13 +682,75 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
                 .Where(t => t.Ms > 0)
                 .OrderByDescending(t => t.Ms)
                 .Take(3)
-                .Select(t => $"{t.Id}:{t.Ms}"));
+                .Select(t => $"{t.Id}:{t.Ms}:{ThreadName(t.Id)}"));
             return top.Length > 0 ? top : "-";
         }
         catch (Exception)
         {
             _threadCpu = null;
             return "n/a";
+        }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenThread(uint desiredAccess, bool inheritHandle, uint threadId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern int GetThreadDescription(IntPtr thread, out IntPtr description);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr LocalFree(IntPtr memory);
+
+    private bool _threadNamesFailed;
+
+    // The name a thread was given (.NET passes Thread.Name on to Windows), with
+    // spaces as underscores so the field stays one token. "?" when there is
+    // none, the platform has no such call, or the sandbox refuses it.
+    private string ThreadName(int threadId)
+    {
+        if (_threadNamesFailed || !OperatingSystem.IsWindows())
+        {
+            return "?";
+        }
+
+        try
+        {
+            const uint ThreadQueryLimitedInformation = 0x0800;
+            IntPtr handle = OpenThread(ThreadQueryLimitedInformation, false, (uint)threadId);
+            if (handle == IntPtr.Zero)
+            {
+                return "?";
+            }
+
+            try
+            {
+                if (GetThreadDescription(handle, out IntPtr description) < 0 || description == IntPtr.Zero)
+                {
+                    return "?";
+                }
+
+                try
+                {
+                    string? name = Marshal.PtrToStringUni(description);
+                    return string.IsNullOrWhiteSpace(name) ? "?" : name.Replace(' ', '_').Replace(',', '_').Replace(':', '_');
+                }
+                finally
+                {
+                    LocalFree(description);
+                }
+            }
+            finally
+            {
+                CloseHandle(handle);
+            }
+        }
+        catch (Exception)
+        {
+            _threadNamesFailed = true;
+            return "?";
         }
     }
 
@@ -666,6 +766,8 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         TimeSpan lastCpu = Environment.CpuUsage.TotalTime;
         long lastCpuAt = clock.ElapsedMilliseconds;
         TopThreads();   // baseline for the first beat
+        long lastJit = System.Runtime.JitInfo.GetCompiledMethodCount();
+        var assemblyNames = new List<string>();
         long maxCpu = 0, maxContention = 0, sumStarvation = 0, sumContentions = 0;
         long maxOldest = 0, maxRequest = 0, sumSlowRequests = 0;
         var slowRequests = new List<LoadTestSlowRequest>();
@@ -721,6 +823,14 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             long gen2Starts = 0, gcReason = -1, contentions = 0, contentionMaxMs = 0, starvation = 0;
             _runtimeEvents?.Drain(out gen2Starts, out gcReason, out contentions, out contentionMaxMs, out starvation);
             string topThreads = TopThreads();
+            long jitNow = System.Runtime.JitInfo.GetCompiledMethodCount();
+            long jitMethods = jitNow - lastJit;
+            lastJit = jitNow;
+            assemblyNames.Clear();
+            while (_loadedAssemblies.TryDequeue(out string? assemblyName))
+            {
+                assemblyNames.Add(assemblyName);
+            }
 
             long poolMs = ProbeThreadPool(clock);
             long shareMs = TimeWrite(_sharePath, out bool shareFailed);
@@ -761,8 +871,15 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             // the load test was sending" is only visible if they are there.
             _logger.Log(
                 slow ? LogLevel.Warning : LogLevel.Information,
-                "LoadTestHeartbeat beat: late_ms={LateMs} gap_ms={GapMs} cpu_ms={CpuMs} cpu_span_ms={CpuSpanMs} top_threads={TopThreads} gc_pause_ms={GcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} gc2={Gc2Starts} gc_reason={GcReason} contention_n={Contentions} contention_max_ms={ContentionMaxMs} starvation={Starvation} pool_ms={PoolMs} pool_threads={PoolThreads} pool_pending={PoolPending} share_ms={ShareMs} share_failed={ShareFailed} local_ms={LocalMs} local_failed={LocalFailed} sql_ms={SqlMs} sql_failed={SqlFailed} sql_blocked={SqlBlocked} sql_blocked_wait_ms={SqlBlockedWaitMs} in_flight={InFlight} stuck_ms={StuckMs} oldest_ms={OldestMs} started={Started} completed={Completed} slow_n={SlowRequests} max_req_ms={MaxRequestMs} heap_mb={HeapMb}",
-                lateMs, gapMs, cpuMs, cpuSpanMs, topThreads, gcPauseMs, dGen0, dGen1, dGen2, gen2Starts, gcReason, contentions, contentionMaxMs, starvation, poolMs, poolThreads, poolPending, shareMs, shareFailed, localMs, localFailed, sqlMs, sqlFailed, sqlBlocked, sqlBlockedWaitMs, inFlight, stuckMs, oldestMs, dStarted, dCompleted, slowCount, maxRequestMs, GC.GetTotalMemory(false) / (1024 * 1024));
+                "LoadTestHeartbeat beat: late_ms={LateMs} gap_ms={GapMs} cpu_ms={CpuMs} cpu_span_ms={CpuSpanMs} top_threads={TopThreads} gc_pause_ms={GcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} gc2={Gc2Starts} gc_reason={GcReason} contention_n={Contentions} contention_max_ms={ContentionMaxMs} starvation={Starvation} pool_ms={PoolMs} pool_threads={PoolThreads} pool_pending={PoolPending} share_ms={ShareMs} share_failed={ShareFailed} local_ms={LocalMs} local_failed={LocalFailed} sql_ms={SqlMs} sql_failed={SqlFailed} sql_blocked={SqlBlocked} sql_blocked_wait_ms={SqlBlockedWaitMs} in_flight={InFlight} stuck_ms={StuckMs} oldest_ms={OldestMs} started={Started} completed={Completed} slow_n={SlowRequests} max_req_ms={MaxRequestMs} jit_n={JitMethods} asm_n={AssembliesLoaded} heap_mb={HeapMb}",
+                lateMs, gapMs, cpuMs, cpuSpanMs, topThreads, gcPauseMs, dGen0, dGen1, dGen2, gen2Starts, gcReason, contentions, contentionMaxMs, starvation, poolMs, poolThreads, poolPending, shareMs, shareFailed, localMs, localFailed, sqlMs, sqlFailed, sqlBlocked, sqlBlockedWaitMs, inFlight, stuckMs, oldestMs, dStarted, dCompleted, slowCount, maxRequestMs, jitMethods, assemblyNames.Count, GC.GetTotalMemory(false) / (1024 * 1024));
+
+            if (assemblyNames.Count > 0)
+            {
+                _logger.LogInformation(
+                    "LoadTestHeartbeat assemblies loaded: n={Count} names={Names}",
+                    assemblyNames.Count, string.Join(',', assemblyNames.Take(25)));
+            }
 
             // One line per request that spent SlowRequestMs or more inside the
             // app. Written here, not on the request's thread; ended_utc is when
