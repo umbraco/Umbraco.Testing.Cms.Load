@@ -340,6 +340,16 @@ Assert-Equal 0 (Get-SlowSeconds -Start @() -Elapsed @())                        
 Assert-Equal 0 (Get-SlowSeconds -Start ([long[]]@(1000, 1200, 1400)) -Elapsed ([int[]]@(2000, 2000, 2000))) "three slow requests in a second are too few to call it"
 
 Write-Host ""
+Write-Host "ConvertTo-SinceDate (-Since is read by explicit format, never month-first)"
+Assert-Equal ([datetime]::new(2026, 11, 5))            (ConvertTo-SinceDate '05-11-2026')        "dd-MM-yyyy: 05-11 is 5 November"
+Assert-Equal ([datetime]::new(2026, 11, 24))           (ConvertTo-SinceDate '24-11-2026')        "a day above 12 parses too"
+Assert-Equal ([datetime]::new(2026, 11, 5))            (ConvertTo-SinceDate '2026-11-05')        "ISO date"
+Assert-Equal ([datetime]::new(2026, 11, 5, 9, 30, 0))  (ConvertTo-SinceDate '05-11-2026 09:30')  "day-first with a time"
+Assert-Equal ([datetime]::new(2026, 11, 5, 8, 30, 0))  (ConvertTo-SinceDate '2026-11-05T09:30:00+01:00') "an offset is converted to UTC"
+Assert-Equal $null                                     (ConvertTo-SinceDate '')                  "blank -> none"
+Assert-Equal ([datetime]::new(2026, 11, 5))            (ConvertTo-SinceDate ([datetime]::new(2026, 11, 5))) "a DateTime passes through"
+
+Write-Host ""
 Write-Host "Get-SettleInSeconds (load driven before the measured window)"
 Assert-Equal 300 (Get-SettleInSeconds -LoadProfile 'standard') "standard settles for 300 s"
 Assert-Equal 300 (Get-SettleInSeconds -LoadProfile 'stress')   "stress settles for 300 s"

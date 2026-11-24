@@ -28,7 +28,9 @@ param (
     # all of them), and/or only these build ids / runs started since this time.
     [ValidateRange(0, 100)] [int]$Window = 0,
     [string[]]$RunIds,
-    [Nullable[datetime]]$Since,
+    # yyyy-MM-dd or dd-MM-yyyy, optionally with HH:mm, read as UTC. Untyped on
+    # purpose - see ConvertTo-SinceDate in _helpers.ps1.
+    $Since,
 
     # Same meaning as on compare-runs.ps1: -ExcludeRunIds drops runs you know
     # were invalid; -MaxErrorRate (percent, off when negative) leaves runs over
@@ -44,6 +46,8 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 . "$PSScriptRoot/_history-helpers.ps1"
+
+$Since = ConvertTo-SinceDate $Since
 
 # Load label for a cell, shown only when the cells of one table were measured
 # under different loads. The full load key, not just VUs and duration: stress

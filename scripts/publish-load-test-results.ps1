@@ -740,6 +740,7 @@ if ($engineFiles.Count -gt 0) {
         $measuredFrom = [DateTimeOffset]::FromUnixTimeMilliseconds($rampCutoffMs).UtcDateTime
         $measuredFrom = $measuredFrom.AddTicks(-($measuredFrom.Ticks % [TimeSpan]::TicksPerMinute)).AddMinutes(1)
         $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        $recomputed = 0
         foreach ($result in @($planResult, $sqlResult, $appResult)) {
             if ($null -eq $result -or $null -eq $result.Series) { continue }
             foreach ($group in ($result.Series | Group-Object metric_name)) {
@@ -751,9 +752,14 @@ if ($engineFiles.Count -gt 0) {
                 # is also the stem of its two summary columns.
                 $metadata["$($group.Name)_avg"] = [math]::Round((($values | Measure-Object -Average).Average), 2)
                 $metadata["$($group.Name)_max"] = [math]::Round((($values | Measure-Object -Maximum).Maximum), 2)
+                $recomputed++
             }
         }
-        Write-Host "Server-side summary columns cover the measured window (from $($measuredFrom.ToString('HH:mm')) UTC)."
+        if ($recomputed -gt 0) {
+            Write-Host "Server-side summary columns: $recomputed metric(s) recomputed over the measured window (from $($measuredFrom.ToString('HH:mm')) UTC)."
+        } else {
+            Write-Host "Server-side summary columns were not recomputed (no per-minute point at or after $($measuredFrom.ToString('HH:mm')) UTC); where present they cover the whole load test step, settle-in included."
+        }
     }
 
     # Throughput denominator: the span the samples cover, not the configured
@@ -781,7 +787,10 @@ if ($engineFiles.Count -gt 0) {
     # duration_seconds only ever carries the configured value.
     $metadata.observed_span_seconds = if ($haveSpan) { $observedSpanSec } else { $null }
     $metadata.excluded_seconds      = if ($rampCutoffMs -gt 0) { $excludeSec } else { 0 }
-    if ($haveSpan -and $LoadProfile -ne 'ramp' -and $observedSpanSec -lt 0.8 * $DurationSeconds) {
+    # Frontend only: a backoffice span runs from the first to the last
+    # Transaction Controller START after the ramp, and a controller can take
+    # many seconds, so a complete short run can fall under the threshold.
+    if ($haveSpan -and -not $JmeterTestName -and $LoadProfile -ne 'ramp' -and $observedSpanSec -lt 0.8 * $DurationSeconds) {
         $msg = "The samples cover only $observedSpanSec s of the configured ${DurationSeconds} s measured window - the run was cut short. Its rows are published, but it is not a full run."
         Write-Warning $msg
         Write-Host "##vso[task.logissue type=warning]$msg"

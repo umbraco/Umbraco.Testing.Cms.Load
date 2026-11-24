@@ -154,6 +154,30 @@ function ConvertTo-IsoUtc([string] $DateTime) {
     return $parsed.ToUniversalTime().ToString("o", [System.Globalization.CultureInfo]::InvariantCulture)
 }
 
+# A -Since value as a DateTime, or $null when none was given. PowerShell binds
+# a [datetime] parameter month-first whatever the machine's culture, so
+# '05-11-2026', meant as 5 November the way the reports print dates, silently
+# became 11 May. Taken as text instead and read by explicit format: ISO
+# (yyyy-MM-dd, optionally with a time) or day-first (dd-MM-yyyy, optionally
+# with HH:mm). A value with a Z or an offset is converted to UTC; one without
+# is left unspecified and read as UTC by ConvertTo-SinceUtc. A DateTime (from
+# another script) passes through. Anything else stops with the formats named.
+function ConvertTo-SinceDate($Value) {
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [datetime]) { return $Value }
+    $text = "$Value".Trim()
+    if (-not $text) { return $null }
+    $invariant = [System.Globalization.CultureInfo]::InvariantCulture
+    if ($text -match '^\d{4}-\d{2}-\d{2}T[0-9:.]+(Z|[+-]\d{2}:?\d{2})$') {
+        $withZone = [DateTimeOffset]::MinValue
+        if ([DateTimeOffset]::TryParse($text, $invariant, [System.Globalization.DateTimeStyles]::None, [ref]$withZone)) { return $withZone.UtcDateTime }
+    }
+    $formats = [string[]]@('yyyy-MM-dd', 'yyyy-MM-dd HH:mm', 'yyyy-MM-dd HH:mm:ss', 'yyyy-MM-ddTHH:mm', 'yyyy-MM-ddTHH:mm:ss', 'dd-MM-yyyy', 'dd-MM-yyyy HH:mm', 'dd-MM-yyyy HH:mm:ss')
+    $parsed = [datetime]::MinValue
+    if ([datetime]::TryParseExact($text, $formats, $invariant, [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) { return $parsed }
+    Write-PipelineError "-Since '$text' is not a date this script reads. Use yyyy-MM-dd or dd-MM-yyyy, optionally followed by HH:mm (UTC), e.g. 2026-11-24 or 24-11-2026 09:30."
+}
+
 # Tolerant double parse: blank/malformed input -> $null (never 0). Callers that
 # treat a missing metric as 0 would otherwise silently skew medians/comparisons.
 # Invariant culture so a comma-decimal agent locale doesn't misread "42.5".

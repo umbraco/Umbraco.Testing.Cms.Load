@@ -24,6 +24,22 @@
 //              the longest such wait (sql_blocked_wait_ms). Content writes
 //              queueing on Umbraco's lock rows show here.
 //   *_failed   the probe threw. Its _ms is then the time it took to fail.
+//   cpu_ms     CPU time the whole process used since the previous beat, per
+//              second. One core gives 1000: near cores x 1000 means the
+//              process was CPU-bound, which Azure Monitor's per-minute figure
+//              averages away. cpu_span_ms is the time the reading covers:
+//              about 1000, more when a probe of the previous beat hung.
+//   top_threads  on a slow or CPU-heavy beat, the three OS threads that used
+//              most CPU over that same span (id:ms, not scaled). One thread
+//              close to the span is a single background job; many threads
+//              sharing it is request work.
+//   gc2 / gc_reason  generation-2 collections started since the previous beat
+//              and the runtime's reason code for the last collection.
+//   contention_n / contention_max_ms  managed lock waits (Monitor) that ended
+//              since the previous beat, and the longest one.
+//   starvation  times the runtime added a pool thread because it judged the
+//              pool starved. Non-zero is the runtime itself saying requests
+//              are blocking its threads.
 //   gap_ms     time since the previous beat finished. The probes run on the
 //              beat thread, so one that hangs stops the beats: the next line
 //              then carries the length of the hang here.
@@ -52,8 +68,11 @@
 // Microsoft.Data.SqlClient (a dependency of Umbraco's SQL Server provider).
 // Compiled against Umbraco 17.8.2 (net10.0) and 19.0.0-rc1 (net11.0).
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -115,6 +134,105 @@ public static class LoadTestRequestTracker
     }
 }
 
+// Counts a few of the runtime's own events between beats: generation-2
+// collections, managed lock contention, and the thread pool growing because it
+// judged itself starved. Callbacks only touch interlocked counters - logging
+// from inside an EventListener callback can re-enter the event pipeline.
+public sealed class LoadTestRuntimeEvents : EventListener
+{
+    private const EventKeywords GcKeyword = (EventKeywords)0x1;
+    private const EventKeywords ContentionKeyword = (EventKeywords)0x4000;
+    private const EventKeywords ThreadingKeyword = (EventKeywords)0x10000;
+    private const uint StarvationReason = 6;
+
+    private long _gen2Starts;
+    private long _lastGcReason = -1;
+    private long _contentions;
+    private long _contentionMaxNs;
+    private long _starvationAdjustments;
+
+    // Each call returns what happened since the previous call.
+    public void Drain(out long gen2Starts, out long lastGcReason, out long contentions, out long contentionMaxMs, out long starvationAdjustments)
+    {
+        gen2Starts = Interlocked.Exchange(ref _gen2Starts, 0);
+        lastGcReason = Interlocked.Exchange(ref _lastGcReason, -1);
+        contentions = Interlocked.Exchange(ref _contentions, 0);
+        contentionMaxMs = Interlocked.Exchange(ref _contentionMaxNs, 0) / 1_000_000;
+        starvationAdjustments = Interlocked.Exchange(ref _starvationAdjustments, 0);
+    }
+
+    // Called from the base constructor, before this class's own fields are
+    // assigned: it must not touch instance state.
+    protected override void OnEventSourceCreated(EventSource eventSource)
+    {
+        if (eventSource.Name == "Microsoft-Windows-DotNETRuntime")
+        {
+            EnableEvents(eventSource, EventLevel.Informational, GcKeyword | ContentionKeyword | ThreadingKeyword);
+        }
+    }
+
+    protected override void OnEventWritten(EventWrittenEventArgs eventData)
+    {
+        try
+        {
+            string? name = eventData.EventName;
+            if (name is null)
+            {
+                return;
+            }
+
+            if (name.StartsWith("GCStart", StringComparison.Ordinal))
+            {
+                if (Payload(eventData, "Depth") == 2)
+                {
+                    Interlocked.Increment(ref _gen2Starts);
+                }
+
+                Interlocked.Exchange(ref _lastGcReason, Payload(eventData, "Reason"));
+            }
+            else if (name.StartsWith("ContentionStop", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _contentions);
+                long ns = Payload(eventData, "DurationNs");
+                long seen;
+                while (ns > (seen = Interlocked.Read(ref _contentionMaxNs)) &&
+                       Interlocked.CompareExchange(ref _contentionMaxNs, ns, seen) != seen)
+                {
+                }
+            }
+            else if (name.StartsWith("ThreadPoolWorkerThreadAdjustmentAdjustment", StringComparison.Ordinal))
+            {
+                if (Payload(eventData, "Reason") == StarvationReason)
+                {
+                    Interlocked.Increment(ref _starvationAdjustments);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // A diagnostic must never take the site down.
+        }
+    }
+
+    private static long Payload(EventWrittenEventArgs eventData, string field)
+    {
+        int index = eventData.PayloadNames?.IndexOf(field) ?? -1;
+        if (index < 0 || eventData.Payload is null || index >= eventData.Payload.Count || eventData.Payload[index] is null)
+        {
+            return -1;
+        }
+
+        try
+        {
+            return Convert.ToInt64(eventData.Payload[index], System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch (Exception)
+        {
+            return -1;
+        }
+    }
+}
+
 public sealed class LoadTestRequestTrackingFilter : IStartupFilter
 {
     public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -142,6 +260,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     private const int GcPauseMs = 200;
     private const int StuckMs = 2000;
     private const int SummaryEveryMs = 60000;
+    private const int HeavyCpuMs = 700;   // per beat; one core is about 1000
 
     // Requests in this database that are waiting on another session's lock, and
     // the longest such wait. SELECT 1 would come back instantly while every
@@ -157,6 +276,12 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     private readonly ManualResetEventSlim _stop = new(false);
     private readonly byte[] _payload = new byte[4096];
     private Thread? _thread;
+    private LoadTestRuntimeEvents? _runtimeEvents;
+
+    // Per-thread CPU at the previous beat, to name the threads that used most
+    // since. Null once reading it has failed (the App Service sandbox may not
+    // allow it): the field is then logged as "n/a".
+    private Dictionary<int, double>? _threadCpu = new();
 
     // Thread-pool probe state. _poolQueuedAt != 0 means a probe is still waiting.
     private long _poolQueuedAt;
@@ -184,6 +309,14 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     {
         _thread = new Thread(Run) { IsBackground = true, Name = "loadtest-heartbeat" };
         _thread.Start();
+        try
+        {
+            _runtimeEvents = new LoadTestRuntimeEvents();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LoadTestHeartbeat could not listen to runtime events; gc2, contention and starvation will read 0");
+        }
         ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
         _logger.LogInformation(
             "LoadTestHeartbeat started: {Bitness}-bit process, server GC {ServerGc}, {Cores} cores, pool minimum {MinWorkers} worker / {MinIo} IO threads, share path {SharePath}, local path {LocalPath}",
@@ -197,7 +330,66 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
-    public void Dispose() => _stop.Dispose();
+    public void Dispose()
+    {
+        _runtimeEvents?.Dispose();
+        _stop.Dispose();
+    }
+
+    // The three OS threads that used most CPU since the previous call, as
+    // "id:ms,id:ms,id:ms" ("-" when there is nothing to name). Always called, so
+// the next slow beat has a baseline. The figures cover the time since the
+// previous call - see cpu_span_ms on the beat line.
+    private string TopThreads()
+    {
+        Dictionary<int, double>? previous = _threadCpu;
+        if (previous is null)
+        {
+            return "n/a";
+        }
+
+        try
+        {
+            var current = new Dictionary<int, double>();
+            using Process process = Process.GetCurrentProcess();
+            foreach (ProcessThread thread in process.Threads)
+            {
+                try
+                {
+                    current[thread.Id] = thread.TotalProcessorTime.TotalMilliseconds;
+                }
+                catch (Exception)
+                {
+                    // The thread ended while it was being read.
+                }
+                finally
+                {
+                    thread.Dispose();
+                }
+            }
+
+            _threadCpu = current;
+            if (previous.Count == 0)
+            {
+                // First call: no earlier reading to subtract, and lifetime
+                // totals would read as one second's work.
+                return "-";
+            }
+
+            string top = string.Join(',', current
+                .Select(kv => (Id: kv.Key, Ms: (long)(kv.Value - (previous.TryGetValue(kv.Key, out double before) ? before : 0))))
+                .Where(t => t.Ms > 0)
+                .OrderByDescending(t => t.Ms)
+                .Take(3)
+                .Select(t => $"{t.Id}:{t.Ms}"));
+            return top.Length > 0 ? top : "-";
+        }
+        catch (Exception)
+        {
+            _threadCpu = null;
+            return "n/a";
+        }
+    }
 
     private void Run()
     {
@@ -208,6 +400,10 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         long lastStarted = LoadTestRequestTracker.Started, lastCompleted = LoadTestRequestTracker.Completed, minuteStarted = 0, minuteCompleted = 0;
         int beats = 0, slowBeats = 0, failedProbes = 0, sumGen0 = 0, sumGen1 = 0, sumGen2 = 0;
         long lastBeatAt = clock.ElapsedMilliseconds, summaryFrom = clock.ElapsedMilliseconds;
+        TimeSpan lastCpu = Environment.CpuUsage.TotalTime;
+        long lastCpuAt = clock.ElapsedMilliseconds;
+        TopThreads();   // baseline for the first beat
+        long maxCpu = 0, maxContention = 0, sumStarvation = 0, sumContentions = 0;
 
         while (true)
         {
@@ -243,6 +439,21 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             int poolThreads = ThreadPool.ThreadCount;
             long poolPending = ThreadPool.PendingWorkItemCount;
 
+            // Also read before the probes, for the same reason.
+            TimeSpan cpuNow = Environment.CpuUsage.TotalTime;
+            // The reading covers the time since the previous reading, which is
+            // longer than a second when a probe of the previous beat hung.
+            // Scaled to one second, so "near cores x 1000" keeps its meaning;
+            // cpu_span_ms says how long the reading actually covers.
+            long cpuAt = clock.ElapsedMilliseconds;
+            long cpuSpanMs = Math.Max(1, cpuAt - lastCpuAt);
+            long cpuMs = (long)((cpuNow - lastCpu).TotalMilliseconds * 1000 / cpuSpanMs);
+            lastCpu = cpuNow;
+            lastCpuAt = cpuAt;
+            long gen2Starts = 0, gcReason = -1, contentions = 0, contentionMaxMs = 0, starvation = 0;
+            _runtimeEvents?.Drain(out gen2Starts, out gcReason, out contentions, out contentionMaxMs, out starvation);
+            string topThreads = TopThreads();
+
             long poolMs = ProbeThreadPool(clock);
             long shareMs = TimeWrite(_sharePath, out bool shareFailed);
             long localMs = TimeWrite(_localPath, out bool localFailed);
@@ -270,23 +481,29 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             bool slow = lateMs >= SlowMs || poolMs >= SlowMs || shareMs >= SlowMs || localMs >= SlowMs || sqlMs >= SlowMs
                 || gcPauseMs >= GcPauseMs || stuckMs >= StuckMs || shareFailed || localFailed || sqlFailed || sqlBlockedWaitMs >= StuckMs;
             if (slow) { slowBeats++; }
+            maxCpu = Math.Max(maxCpu, cpuMs); maxContention = Math.Max(maxContention, contentionMaxMs);
+            sumStarvation += starvation; sumContentions += contentions;
+            // Named only where it matters: a slow beat, or a second in which
+            // the process used most of a core.
+            if (!slow && cpuMs < HeavyCpuMs) { topThreads = "-"; }
 
             // Every beat is logged, a slow one as a Warning. The seconds in
             // which nothing crossed a threshold matter too: "started=0 while
             // the load test was sending" is only visible if they are there.
             _logger.Log(
                 slow ? LogLevel.Warning : LogLevel.Information,
-                "LoadTestHeartbeat beat: late_ms={LateMs} gap_ms={GapMs} gc_pause_ms={GcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} pool_ms={PoolMs} pool_threads={PoolThreads} pool_pending={PoolPending} share_ms={ShareMs} share_failed={ShareFailed} local_ms={LocalMs} local_failed={LocalFailed} sql_ms={SqlMs} sql_failed={SqlFailed} sql_blocked={SqlBlocked} sql_blocked_wait_ms={SqlBlockedWaitMs} in_flight={InFlight} stuck_ms={StuckMs} started={Started} completed={Completed} heap_mb={HeapMb}",
-                lateMs, gapMs, gcPauseMs, dGen0, dGen1, dGen2, poolMs, poolThreads, poolPending, shareMs, shareFailed, localMs, localFailed, sqlMs, sqlFailed, sqlBlocked, sqlBlockedWaitMs, inFlight, stuckMs, dStarted, dCompleted, GC.GetTotalMemory(false) / (1024 * 1024));
+                "LoadTestHeartbeat beat: late_ms={LateMs} gap_ms={GapMs} cpu_ms={CpuMs} cpu_span_ms={CpuSpanMs} top_threads={TopThreads} gc_pause_ms={GcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} gc2={Gc2Starts} gc_reason={GcReason} contention_n={Contentions} contention_max_ms={ContentionMaxMs} starvation={Starvation} pool_ms={PoolMs} pool_threads={PoolThreads} pool_pending={PoolPending} share_ms={ShareMs} share_failed={ShareFailed} local_ms={LocalMs} local_failed={LocalFailed} sql_ms={SqlMs} sql_failed={SqlFailed} sql_blocked={SqlBlocked} sql_blocked_wait_ms={SqlBlockedWaitMs} in_flight={InFlight} stuck_ms={StuckMs} started={Started} completed={Completed} heap_mb={HeapMb}",
+                lateMs, gapMs, cpuMs, cpuSpanMs, topThreads, gcPauseMs, dGen0, dGen1, dGen2, gen2Starts, gcReason, contentions, contentionMaxMs, starvation, poolMs, poolThreads, poolPending, shareMs, shareFailed, localMs, localFailed, sqlMs, sqlFailed, sqlBlocked, sqlBlockedWaitMs, inFlight, stuckMs, dStarted, dCompleted, GC.GetTotalMemory(false) / (1024 * 1024));
 
             // By the clock, not by beat count: beats stop while a probe hangs.
             if (now - summaryFrom >= SummaryEveryMs)
             {
                 _logger.LogInformation(
-                    "LoadTestHeartbeat minute: seconds={Seconds} beats={Beats} slow_beats={SlowBeats} failed_probes={FailedProbes} max_late_ms={MaxLateMs} max_gap_ms={MaxGapMs} max_gc_pause_ms={MaxGcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} max_pool_ms={MaxPoolMs} pool_threads={PoolThreads} max_share_ms={MaxShareMs} max_local_ms={MaxLocalMs} max_sql_ms={MaxSqlMs} max_sql_blocked={MaxSqlBlocked} max_sql_blocked_wait_ms={MaxSqlBlockedWaitMs} max_in_flight={MaxInFlight} max_stuck_ms={MaxStuckMs} started={Started} completed={Completed} heap_mb={HeapMb}",
-                    (now - summaryFrom) / 1000, beats, slowBeats, failedProbes, maxLate, maxGap, maxGc, sumGen0, sumGen1, sumGen2, maxPool, ThreadPool.ThreadCount, maxShare, maxLocal, maxSql, maxBlocked, maxBlockedWait, maxInFlight, maxStuck, minuteStarted, minuteCompleted, GC.GetTotalMemory(false) / (1024 * 1024));
+                    "LoadTestHeartbeat minute: seconds={Seconds} beats={Beats} slow_beats={SlowBeats} failed_probes={FailedProbes} max_cpu_ms={MaxCpuMs} contentions={Contentions} max_contention_ms={MaxContentionMs} starvation={Starvation} max_late_ms={MaxLateMs} max_gap_ms={MaxGapMs} max_gc_pause_ms={MaxGcPauseMs} gen0={Gen0} gen1={Gen1} gen2={Gen2} max_pool_ms={MaxPoolMs} pool_threads={PoolThreads} max_share_ms={MaxShareMs} max_local_ms={MaxLocalMs} max_sql_ms={MaxSqlMs} max_sql_blocked={MaxSqlBlocked} max_sql_blocked_wait_ms={MaxSqlBlockedWaitMs} max_in_flight={MaxInFlight} max_stuck_ms={MaxStuckMs} started={Started} completed={Completed} heap_mb={HeapMb}",
+                    (now - summaryFrom) / 1000, beats, slowBeats, failedProbes, maxCpu, sumContentions, maxContention, sumStarvation, maxLate, maxGap, maxGc, sumGen0, sumGen1, sumGen2, maxPool, ThreadPool.ThreadCount, maxShare, maxLocal, maxSql, maxBlocked, maxBlockedWait, maxInFlight, maxStuck, minuteStarted, minuteCompleted, GC.GetTotalMemory(false) / (1024 * 1024));
                 maxLate = maxPool = maxShare = maxLocal = maxSql = maxGc = maxInFlight = maxStuck = maxGap = maxBlocked = maxBlockedWait = minuteStarted = minuteCompleted = 0;
                 beats = slowBeats = failedProbes = sumGen0 = sumGen1 = sumGen2 = 0;
+                maxCpu = maxContention = sumStarvation = sumContentions = 0;
                 summaryFrom = now;
             }
         }

@@ -77,13 +77,25 @@ param (
     [string]$BaselineTier,
     [string]$CandidateTier,
 
+    # Default: 'median' for -Versions, and for the pair modes whenever -Window,
+    # -Since or more than one run id is given (asking for several runs and
+    # getting the latest one compared was a silent trap); otherwise 'latest'.
     [ValidateSet('latest', 'median', 'median5')] [string]$Aggregate = 'latest',
     # Runs per cell the median is taken over ('median' only).
     [ValidateRange(2, 100)] [int]$Window = 5,
     # History mode: only these build ids (run_id) / only runs started at or
     # after this time count. Use them to pin a median to the runs you queued.
     [string[]]$RunIds,
-    [Nullable[datetime]]$Since,
+    # yyyy-MM-dd or dd-MM-yyyy, optionally with HH:mm, read as UTC (see
+    # ConvertTo-SinceDate in _helpers.ps1). Untyped on purpose: a [datetime]
+    # parameter would read 05-11-2026 as 11 May.
+    $Since,
+    # History mode: 'frontend' (Locust rows) or 'backoffice' (JMeter rows).
+    # Both publish under the same scenario, so without this a backoffice run
+    # of the same version shows up in a frontend report's run list, warnings
+    # and tables. Default: 'frontend' for -Versions; unfiltered for the pair
+    # modes, which have always shown both.
+    [ValidateSet('', 'frontend', 'backoffice')] [string]$Workload = '',
     # History mode: build ids to leave out entirely - a run you know was
     # invalid (an Azure hiccup, a wrong override). Applied before -Window, so
     # the next older like-for-like run takes its place. Listed in the report.
@@ -124,6 +136,7 @@ if ($Aggregate -eq 'median5') {
 # copied from a report with the '#': normalise once so every use agrees.
 $RunIds        = @($RunIds        | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim().TrimStart('#') } | Where-Object { $_ })
 $ExcludeRunIds = @($ExcludeRunIds | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim().TrimStart('#') } | Where-Object { $_ })
+$Since         = ConvertTo-SinceDate $Since
 
 # --- Mode detection + validation ---
 
@@ -173,6 +186,12 @@ if ($isHistoryMode) {
     if ($isTierPair -and -not $Version) {
         Write-PipelineError "Tier-vs-tier comparison requires -Version (the shared version)."
     }
+
+    if (-not $PSBoundParameters.ContainsKey('Aggregate') -and
+        ($isVersionList -or $PSBoundParameters.ContainsKey('Window') -or $RunIds.Count -gt 1 -or $null -ne $Since)) {
+        $Aggregate = 'median'
+    }
+    if (-not $Workload -and $isVersionList) { $Workload = 'frontend' }
 }
 
 # --- CSV-mode stats: stream raw samples, compute true aggregate + per-label ---
@@ -221,7 +240,9 @@ function Get-HistoryStats {
         [Parameter(Mandatory)] [ValidateSet('latest', 'median')] [string]$Aggregate,
         [int]$Window = 5,
         # Percent; negative = off. See -MaxErrorRate on the script.
-        [double]$MaxErrorRate = -1
+        [double]$MaxErrorRate = -1,
+        # '' = both; see -Workload on the script.
+        [string]$Workload = ''
     )
 
     # cellKey = "{version}__{tier}__{sampler}"
@@ -231,6 +252,11 @@ function Get-HistoryStats {
         $parts = $_ -split '__', 3
         $parts.Count -eq 3 -and $parts[0] -eq $Version -and $parts[1] -eq $Tier
     })
+    if ($Workload) {
+        # A cell is one sampler, so all its rows are of one workload: backoffice
+        # rows carry jmeter_test_name, frontend rows do not.
+        $relevantKeys = @($relevantKeys | Where-Object { ([bool]$Cells[$_][0].jmeter_test_name) -eq ($Workload -eq 'backoffice') })
+    }
 
     $perLabel    = @{}
     $matchedRuns = @{}
@@ -268,18 +294,18 @@ function Get-HistoryStats {
         # Get-Median works for n=1 (returns the single value), so latest and median
         # share the same code path.
         $perLabel[$sampler] = [PSCustomObject]@{
-            Count    = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.request_count }))), 0)
-            Errors   = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.failure_count }))), 0)
-            Avg      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.avg_ms }))), 0)
-            P50      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p50_ms }))), 0)
-            P90      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p90_ms }))), 0)
-            P95      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p95_ms }))), 0)
-            P99      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p99_ms }))), 0)
-            Max      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.max_ms }))), 0)
+            Count    = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.request_count }))), 0, [MidpointRounding]::AwayFromZero)
+            Errors   = [int][math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.failure_count }))), 0, [MidpointRounding]::AwayFromZero)
+            Avg      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.avg_ms }))), 0, [MidpointRounding]::AwayFromZero)
+            P50      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p50_ms }))), 0, [MidpointRounding]::AwayFromZero)
+            P90      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p90_ms }))), 0, [MidpointRounding]::AwayFromZero)
+            P95      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p95_ms }))), 0, [MidpointRounding]::AwayFromZero)
+            P99      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.p99_ms }))), 0, [MidpointRounding]::AwayFromZero)
+            Max      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.max_ms }))), 0, [MidpointRounding]::AwayFromZero)
             # Fastest request per run: the latency floor (network + a cached
             # response). It barely moves with the code under test, so a shift
             # here points at the environment rather than the version.
-            Min      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.min_ms }))), 0)
+            Min      = [int][math]::Round((Get-Median (@($latency | ForEach-Object { [double]$_.min_ms }))), 0, [MidpointRounding]::AwayFromZero)
             ErrPct   = [math]::Round((Get-Median (@($picked | ForEach-Object { [double]$_.error_rate }))) * 100, 2)
             # Worst single run. A median hides failures up to just under half
             # the runs - two of five at 40% errors still reads 0% - so the
@@ -290,6 +316,11 @@ function Get-HistoryStats {
             P95Std   = [int][math]::Round((Get-PopulationStdDev (@($latency | ForEach-Object { [double]$_.p95_ms }))), 0)
             P99Std   = [int][math]::Round((Get-PopulationStdDev (@($latency | ForEach-Object { [double]$_.p99_ms }))), 0)
             MinStd   = [int][math]::Round((Get-PopulationStdDev (@($latency | ForEach-Object { [double]$_.min_ms }))), 0)
+            # Mean response size (successful requests), median across runs;
+            # $null on runs published before it was recorded.
+            AvgBytes = $(
+                $bytes = @($picked | ForEach-Object { $_.avg_bytes } | Where-Object { $null -ne $_ -and "$_" -ne '' } | ForEach-Object { [double]$_ })
+                if ($bytes.Count -gt 0) { [int][math]::Round((Get-Median $bytes), 0, [MidpointRounding]::AwayFromZero) } else { $null })
             LoadKey  = Get-LoadKey $picked[0]
             RunCount = $picked.Count
             # Runs behind the latency figures: fewer than RunCount when some went
@@ -435,8 +466,13 @@ function Add-ExclusionNotes {
 # flag integer granularity. A change is only bold when it also exceeds 1 ms and
 # the larger of the two run-to-run spreads.
 function Format-VersionChange {
-    param ([int]$Reference, [int]$Value, [int]$ReferenceSpread, [int]$ValueSpread, [int]$ThresholdPct)
+    param ([int]$Reference, [int]$Value, [int]$ReferenceSpread, [int]$ValueSpread, [int]$ThresholdPct,
+           # Runs behind each side. Under three there is no spread worth the
+           # name (it is 0 for one run and half the range for two), so nothing
+           # is bold: the change is shown, not vouched for.
+           [int]$ReferenceRuns = 3, [int]$ValueRuns = 3)
     $text     = Format-Delta $Reference $Value
+    if ($ReferenceRuns -lt 3 -or $ValueRuns -lt 3) { return $text }
     $absolute = [math]::Abs($Value - $Reference)
     $noise    = [math]::Max(1, [math]::Max($ReferenceSpread, $ValueSpread))
     # No percentage exists against a zero reference; the absolute test still applies.
@@ -473,8 +509,12 @@ if ($isHistoryMode -and $isVersionList) {
     }
 
     $sides = @(foreach ($v in $Versions) {
-        $stats = Get-HistoryStats -Cells $cells -Version $v -Tier $Tier -Aggregate $Aggregate -Window $Window -MaxErrorRate $MaxErrorRate
+        $stats = Get-HistoryStats -Cells $cells -Version $v -Tier $Tier -Aggregate $Aggregate -Window $Window -MaxErrorRate $MaxErrorRate -Workload $Workload
         if ($stats.ByLabel.Count -eq 0) {
+            $otherWorkload = if ($Workload -eq 'frontend') { 'backoffice' } else { 'frontend' }
+            if ($Workload -and (Get-HistoryStats -Cells $cells -Version $v -Tier $Tier -Aggregate latest -Workload $otherWorkload).ByLabel.Count -gt 0) {
+                Write-PipelineError "No $Workload rows for cell ($v / $Tier / $Scenario), but it has $otherWorkload runs. A -Versions report covers one workload; add -Workload $otherWorkload to compare those."
+            }
             Write-PipelineError "No history rows for cell ($v / $Tier / $Scenario). Version strings are matched exactly - has this combination ever run?$(if ($Major) { " -Major $Major also limits the search to that major; drop it when comparing across majors." })"
         }
         $stats
@@ -491,6 +531,7 @@ if ($isHistoryMode -and $isVersionList) {
     if ($RunIds) { $aggText += "; limited to runs $((@($RunIds) | ForEach-Object { "#$_" }) -join ', ')" }
     if ($Since)  { $aggText += "; runs started on or after $((ConvertTo-SinceUtc ([datetime]$Since)).ToString('dd-MM-yyyy HH:mm', [cultureinfo]::InvariantCulture)) UTC" }
     [void]$out.AppendLine("- Aggregate: $aggText")
+    [void]$out.AppendLine("- Workload: $Workload runs only")
     $seededFields = @(
         @{ Label = 'content';       Field = 'seeded_content_total' },
         @{ Label = 'root sections'; Field = 'seeded_root_sections' },
@@ -553,7 +594,7 @@ if ($isHistoryMode -and $isVersionList) {
     if ($pausedVersions.Count -gt 0) {
         [void]$out.AppendLine("- Whole-site pauses: stretches where the site answered nothing and then released every request at once. They decide p99 and max for that run and are not a property of the version; p50 and p95 are barely affected. Consider re-running with ``-ExcludeRunIds`` for those runs before reading p99.")
     }
-    [void]$out.AppendLine("- Change columns are relative to **$($Versions[0])**; bold = at or above $SignificantDeltaPercent% and larger than both 1 ms and the run-to-run spread. Negative = faster.")
+    [void]$out.AppendLine("- Change columns are relative to **$($Versions[0])**; bold = at or above $SignificantDeltaPercent% and larger than both 1 ms and the run-to-run spread, and only when both sides rest on at least 3 runs. Negative = faster.")
     [void]$out.AppendLine("- ``±`` is the run-to-run standard deviation of the value beside it (shown when a cell has 2+ runs). A change smaller than the spread is noise.")
     if ($MaxErrorRate -ge 0) {
         [void]$out.AppendLine("- Error limit for latency: $MaxErrorRate%. ``(n=K)`` after a latency value = it rests on K runs because the others went over the limit; ``!`` = every run went over it, so the value is the latency of failing runs and no change is computed against it (``n/c``). Error rates always count every run.")
@@ -603,9 +644,78 @@ if ($isHistoryMode -and $isVersionList) {
         [void]$out.AppendLine()
     }
 
+    # A seeder that did not end 'Completed' may have left a site without the
+    # content the counts above suggest.
+    $seederNotClean = @(for ($i = 0; $i -lt $Versions.Count; $i++) {
+        $bad = @($sides[$i].Runs | Where-Object { "$($_.seeder_status)" -ne '' -and "$($_.seeder_status)" -ne 'Completed' } | ForEach-Object { "#$($_.run_id) $($_.seeder_status)" })
+        if ($bad.Count -gt 0) { "$($Versions[$i]) ($($bad -join ', '))" }
+    })
+    if ($seederNotClean.Count -gt 0) {
+        [void]$out.AppendLine("> **The seeder did not end cleanly on every run:** $($seederNotClean -join '; '). Those sites may be missing content.")
+        [void]$out.AppendLine()
+    }
+
     # Heaviest reference samplers first, then any the reference never ran.
     $labels = @($reference.ByLabel.Keys | Sort-Object { -$reference.ByLabel[$_].Count }) +
               @($sides | Select-Object -Skip 1 | ForEach-Object { $_.ByLabel.Keys } | Sort-Object -Unique | Where-Object { -not $reference.ByLabel.ContainsKey($_) })
+
+    # The same URLs answered with different bytes are not the same content,
+    # whatever the seeded counts say.
+    $bytesDiffer = @(foreach ($label in $labels) {
+        $ref = $reference.ByLabel[$label]
+        if (-not $ref -or $null -eq $ref.AvgBytes -or $ref.AvgBytes -le 0) { continue }
+        for ($i = 1; $i -lt $sides.Count; $i++) {
+            $s = $sides[$i].ByLabel[$label]
+            if (-not $s -or $null -eq $s.AvgBytes) { continue }
+            if ([math]::Abs($s.AvgBytes - $ref.AvgBytes) / [double]$ref.AvgBytes -gt 0.01) { "``$label`` $($ref.AvgBytes) -> $($s.AvgBytes) bytes on $($Versions[$i])" }
+        }
+    })
+    if ($bytesDiffer.Count -gt 0) {
+        [void]$out.AppendLine("> **Response sizes differ from $($Versions[0]) by more than 1%:** $($bytesDiffer -join '; '). The versions did not serve the same bytes for the same requests - different content, or the same content rendered differently.")
+        [void]$out.AppendLine()
+    }
+
+    # One value per run, the same on every sampler row of it: all successful
+    # requests pooled, and how much of the run was a whole-site slow spell.
+    # Median with the range across runs; '-' when no run recorded the field.
+    $runLevel = @(
+        @{ Title = 'Pooled p50 (ms)';          Field = 'pooled_p50_ms';        Digits = 0 },
+        @{ Title = 'Pooled p95 (ms)';          Field = 'pooled_p95_ms';        Digits = 0 },
+        @{ Title = 'Pooled p99 (ms)';          Field = 'pooled_p99_ms';        Digits = 0 },
+        @{ Title = 'Requests of 1 s or more (%)'; Field = 'requests_over_1s_pct'; Digits = 2 },
+        @{ Title = 'Whole-site slow seconds';  Field = 'slow_seconds';         Digits = 0 }
+    )
+    # Frontend only: a backoffice run publishes once per .jmx plan under one
+    # run id, each with its own pooled figures and pause count, and the run
+    # list keeps one arbitrary row per run id - the table would mix plans.
+    $runLevelRecorded = $Workload -ne 'backoffice' -and
+        @($sides | ForEach-Object { $_.Runs } | Where-Object { "$($_.pooled_p50_ms)" -ne '' }).Count -gt 0
+    if ($runLevelRecorded) {
+        [void]$out.AppendLine("## Whole run")
+        [void]$out.AppendLine()
+        [void]$out.AppendLine("> *One figure per run, over all its requests: median across the runs counted, with the lowest and highest run in brackets. The pooled percentiles rest on thousands of requests per run, so they are steadier than any single sampler's below. Slow seconds are seconds in which nearly every request started took a second or more.*")
+        [void]$out.AppendLine()
+        [void]$out.AppendLine("| | " + ($Versions -join ' | ') + " |")
+        [void]$out.AppendLine("|---|" + ((@($Versions) | ForEach-Object { "---|" }) -join ''))
+        foreach ($m in $runLevel) {
+            $cellsOut = foreach ($side in $sides) {
+                $values = @($side.Runs | ForEach-Object { $_.($m.Field) } | Where-Object { $null -ne $_ -and "$_" -ne '' } | ForEach-Object { [double]$_ })
+                if ($values.Count -eq 0) { '-' }
+                else {
+                    $median = [math]::Round((Get-Median $values), $m.Digits, [MidpointRounding]::AwayFromZero)
+                    $stats  = $values | Measure-Object -Minimum -Maximum
+                    if ($values.Count -gt 1) { "$median ($([math]::Round($stats.Minimum, $m.Digits))-$([math]::Round($stats.Maximum, $m.Digits)), n=$($values.Count))" } else { "$median (n=1)" }
+                }
+            }
+            [void]$out.AppendLine("| $($m.Title) | " + ($cellsOut -join ' | ') + " |")
+        }
+        $pauseCells = foreach ($side in $sides) {
+            $known = @($side.Runs | Where-Object { "$($_.stall_count)" -ne '' })
+            if ($known.Count -eq 0) { '-' } else { "$(@($known | Where-Object { [int]$_.stall_count -gt 0 }).Count) of $($known.Count)" }
+        }
+        [void]$out.AppendLine("| Runs with a whole-site pause | " + ($pauseCells -join ' | ') + " |")
+        [void]$out.AppendLine()
+    }
 
     $header = "| Sampler | $($Versions[0]) |" + ((@($Versions | Select-Object -Skip 1) | ForEach-Object { " $_ | Change |" }) -join '')
     $sep    = "|---|---|" + ((@($Versions | Select-Object -Skip 1) | ForEach-Object { "---|---|" }) -join '')
@@ -617,7 +727,7 @@ if ($isHistoryMode -and $isVersionList) {
         @{ Title = 'p95 (ms)'; Value = 'P95'; Spread = 'P95Std' },
         @{ Title = 'p99 (ms)'; Value = 'P99'; Spread = 'P99Std' },
         @{ Title = 'Fastest request (ms)'; Value = 'Min'; Spread = 'MinStd'
-           Note  = "The latency floor: network plus a cached response. It should be near-identical across versions. If it differs, either the runs were not made under the same conditions or every request got slower by a fixed amount, and the tables above carry that offset - re-run a version with known numbers as a control before drawing conclusions. The floor counts failed requests too, so a sampler with errors can show an unusually low value from an instant failure; check the error table first." }
+           Note  = "The latency floor: network plus a cached response. It should be near-identical across versions. If it differs, either the runs were not made under the same conditions or every request got slower by a fixed amount, and the tables above carry that offset - re-run a version with known numbers as a control before drawing conclusions. On runs published before frontend methodology 6 the floor counts failed requests too, so a sampler with errors can show an unusually low value from an instant failure; check the error table and the methodology in the header first." }
     )) {
         [void]$out.AppendLine("## $($metric.Title)")
         [void]$out.AppendLine()
@@ -656,7 +766,7 @@ if ($isHistoryMode -and $isVersionList) {
                 if ($i -gt 0) {
                     $row += $(if (-not $ref) { " - |" }
                               elseif ($otherLoad -or $failingLatency) { " n/c |" }
-                              else { " $(Format-VersionChange $ref.($metric.Value) $value $ref.($metric.Spread) $s.($metric.Spread) $SignificantDeltaPercent) |" })
+                              else { " $(Format-VersionChange $ref.($metric.Value) $value $ref.($metric.Spread) $s.($metric.Spread) $SignificantDeltaPercent $ref.LatencyRunCount $s.LatencyRunCount) |" })
                 }
             }
             [void]$out.AppendLine($row)
@@ -683,7 +793,7 @@ if ($isHistoryMode -and $isVersionList) {
         [void]$out.AppendLine("| ``$label`` | " + ($rowCells -join ' | ') + " |")
     }
     [void]$out.AppendLine()
-    [void]$out.AppendLine("> *Each cell is the median of that sampler's per-run value, so p95 here is a median of per-run p95s. No all-sampler aggregate row: true aggregate percentiles need raw samples, which the history summary doesn't keep. The error rate is a median too, which hides failures in fewer than half the runs - ``worst`` is the highest single run and is shown whenever it is above the median. A fast sampler with a high error rate is not a win - read the error table before the latency ones.*")
+    [void]$out.AppendLine("> *Each cell is the median of that sampler's per-run value, so p95 here is a median of per-run p95s. The all-request figures are in the 'Whole run' table above, for runs that recorded them (frontend methodology 6 on). The error rate is a median too, which hides failures in fewer than half the runs - ``worst`` is the highest single run and is shown whenever it is above the median. A fast sampler with a high error rate is not a win - read the error table before the latency ones.*")
 
     Write-Report $out.ToString()
     return
@@ -719,8 +829,8 @@ if ($isHistoryMode) {
         Write-PipelineError "No history rows found for scenario '$Scenario'$(if ($Major) { " (major $Major)" }). Nothing to compare."
     }
 
-    $baseline  = Get-HistoryStats -Cells $cells -Version $baselineVersion  -Tier $baselineTier  -Aggregate $Aggregate -Window $Window -MaxErrorRate $MaxErrorRate
-    $candidate = Get-HistoryStats -Cells $cells -Version $candidateVersion -Tier $candidateTier -Aggregate $Aggregate -Window $Window -MaxErrorRate $MaxErrorRate
+    $baseline  = Get-HistoryStats -Cells $cells -Version $baselineVersion  -Tier $baselineTier  -Aggregate $Aggregate -Window $Window -MaxErrorRate $MaxErrorRate -Workload $Workload
+    $candidate = Get-HistoryStats -Cells $cells -Version $candidateVersion -Tier $candidateTier -Aggregate $Aggregate -Window $Window -MaxErrorRate $MaxErrorRate -Workload $Workload
 
     if ($baseline.ByLabel.Count -eq 0) {
         Write-PipelineError "No history rows for baseline cell ($baselineVersion / $baselineTier / $Scenario). Has this combination ever run?"
