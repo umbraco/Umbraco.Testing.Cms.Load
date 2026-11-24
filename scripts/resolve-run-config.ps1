@@ -118,18 +118,13 @@ $runtimeMaps = @{
     # on 10-11-2026 (11.0.0 / SDK 11.0.100, dotnet release index), so previewSdk
     # is off: a preview SDK would otherwise let two v19 runs build against
     # different runtimes with nothing in history to tell them apart.
-    # blockedBy: the azurerm provider validates
+    # The azurerm provider validates
     # azurerm_windows_web_app.application_stack.dotnet_version against a fixed
-    # list (internal/services/appservice/helpers/app_stack.go). As of 20-11-2026
-    # the newest release, 5.14.0, still ends that list at v10.0 (confirmed with
-    # terraform validate); 'v11.0' was merged to the provider's main on
-    # 17-11-2026 (hashicorp/terraform-provider-azurerm#33870) and is not in a
-    # release yet. Terraform/main.tf is already on the 5.x line ('~> 5.14'), so
-    # once a release carries it: `terraform init -upgrade -backend=false` in
-    # Terraform/ (keep the null/random pins), confirm with `terraform validate`
-    # on a v11.0 test case, then remove blockedBy and its Pester expectation.
-    19 = @{ runtime = 'v11.0'; previewSdk = $false
-            blockedBy = "the azurerm Terraform provider pinned in Terraform/.terraform.lock.hcl (currently {azurerm}) rejects dotnet_version 'v11.0' for a Windows App Service (see internal/services/appservice/helpers/app_stack.go in hashicorp/terraform-provider-azurerm). Support was merged upstream in PR #33870 on 17-11-2026 and the pinned release does not carry it - once a 5.x release that does is out, run 'terraform init -upgrade -backend=false' in Terraform/, restore the hashicorp/null and hashicorp/random pins in the lock file (-upgrade moves them too), then drop 'blockedBy' from the v19 entry in resolve-run-config.ps1" }
+    # list (internal/services/appservice/helpers/app_stack.go); 'v11.0' is in
+    # that list from 5.15.0 (24-11-2026, hashicorp/terraform-provider-azurerm
+    # #33870), which Terraform/.terraform.lock.hcl now pins. Confirmed with
+    # terraform validate on a v11.0 web app.
+    19 = @{ runtime = 'v11.0'; previewSdk = $false }
 }
 # What a queue can actually run today: mapped, not blocked, and with a seeder.
 $supportedMajors = @($runtimeMaps.Keys | Where-Object { -not $runtimeMaps[$_].blockedBy -and $_ -in $seederShippedMajors } | Sort-Object)
