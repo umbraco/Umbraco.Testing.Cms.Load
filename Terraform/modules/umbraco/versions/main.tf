@@ -91,6 +91,12 @@ resource "azurerm_windows_web_app" "app_service" {
   client_affinity_enabled                        = false
 
   site_config {
+    # 64-bit worker. The provider's default is 32-bit, which caps the process at
+    # 4 GB of address space (Umbraco's startup log on build 305770: "4095 MB is
+    # available to the process") on plans with 8-32 GB, so the larger tiers
+    # could not use their memory and a tier comparison partly measured the cap.
+    use_32_bit_worker = false
+
     application_stack {
       current_stack  = "dotnet"
       dotnet_version = var.dotnet_version
@@ -134,6 +140,19 @@ resource "azurerm_windows_web_app" "app_service" {
       # notifications are ever exercised by a test, configure the site URL
       # instead of raising this back down.
       "Serilog__MinimumLevel__Override__Umbraco.Cms.Core.Events.UserNotificationsHandler" = "Error"
+
+      # Umbraco's recommended configuration for Azure Web Apps, so the site is
+      # set up the way the documentation tells customers to run it:
+      # https://docs.umbraco.com/umbraco-cms/run-in-production/infrastructure-and-ops/server-setup/azure-web-apps
+      # On a Windows App Service the site folder is a remote file share. Without
+      # these, Umbraco keeps its Examine indexes and temp files on that share
+      # (confirmed on build 305770: umbraco/Data/TEMP/ExamineIndexes under
+      # wwwroot, rewritten during the load test). With them the indexes are
+      # worked on in the instance's local temp folder and synced back, and temp
+      # files stay local. Same three values in the v13, v17, v18 and v19 docs.
+      "Umbraco__CMS__Global__MainDomLock"               = "FileSystemMainDomLock"
+      "Umbraco__CMS__Hosting__LocalTempStorageLocation" = "EnvironmentTemp"
+      "Umbraco__CMS__Examine__LuceneDirectoryFactory"   = "SyncedTempFileSystemDirectoryFactory"
 
       "Umbraco.Cms.TestDataSeeder__Options__Enabled"      = "true"
       "Umbraco.Cms.TestDataSeeder__Options__Preset"       = var.seeder_preset

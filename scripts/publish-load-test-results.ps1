@@ -111,10 +111,16 @@ $PSNativeCommandUseErrorActionPreference = $true
 #   3 - frontend only: the settle-in period after the ramp is excluded too (the
 #       first 60 s of the run, at most a quarter of it), and the result file's
 #       timeStamp is read as the request's end, which it is for Locust runs.
+#   4 (frontend) / 2 (backoffice) - not a change in computation: from here the
+#       site runs on a 64-bit worker with Umbraco's recommended Azure Web Apps settings (Examine
+#       indexes and temp files off the remote file share; see
+#       Terraform/modules/umbraco/versions/main.tf). Every number is measured
+#       on a different setup than before, and this is the one value that keeps
+#       earlier runs out of the same medians and baselines.
 # Scoped per workload: 2 and 3 only changed how frontend numbers are computed,
-# so backoffice rows stay on 1 and keep their baselines instead of reporting
+# so backoffice rows skipped them and kept their baselines instead of reporting
 # "insufficient history" for a change that never touched them.
-$MethodologyVersion = if ($JmeterTestName) { 1 } else { 3 }
+$MethodologyVersion = if ($JmeterTestName) { 2 } else { 4 }
 
 # $(System.PipelineStartTime) is space-separated ("2026-06-15 13:45:30+00:00");
 # LA's Logs Ingestion API rejects that on a datetime column with a 400. Normalize
