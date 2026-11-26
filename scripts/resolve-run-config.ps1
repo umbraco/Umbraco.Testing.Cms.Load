@@ -10,7 +10,7 @@
 
 [CmdletBinding()]
 param (
-    [Parameter(Mandatory = $true)] [ValidateSet('smoke', 'standard', 'stress', 'ramp')] [string]$Profile,
+    [Parameter(Mandatory = $true)] [ValidateSet('smoke', 'standard', 'ramp')] [string]$Profile,
     [Parameter(Mandatory = $true)] [string]$UmbracoVersion,
     [Parameter(Mandatory = $true)] [string]$Scenario,
     # Bool-shaped flags pass through as strings — AzDO interpolates booleans as
@@ -51,7 +51,6 @@ switch ($Profile) {
     # 15 minutes per tier. The 240 s it measured before left the smaller
     # samplers with ~250 requests each - too few for a steady p95.
     'standard' { $preset = 'Medium'; $users = 50;  $spawn = 10; $duration = 600; $engines = 1 }
-    'stress'   { $preset = 'Medium'; $users = 300; $spawn = 50; $duration = 600; $engines = 2 }
     # Ramp: climb load across the whole run to find the saturation knee. Low
     # spawn (frontend/Locust ramps 0->users at 1 VU/s); JMeter ramp handled via
     # $rampTime below. Single engine so the ramp target isn't silently doubled.
@@ -72,7 +71,6 @@ if ($Workload -eq 'backoffice') {
         # Duration stays 300 s per plan: six plans run one after another, and
         # JMeter runs have no settle-in to make room for.
         'standard' { $users = 15; $duration = 300 }
-        'stress'   { $users = 50 }
         # Ramp to ~60 to bracket the observed backoffice knee (~50 on Standard).
         'ramp'     { $users = 60 }
     }
@@ -86,7 +84,7 @@ if ($Workload -eq 'backoffice') {
 $rampTime = if ($Profile -eq 'ramp') { $duration } else { $users }
 
 # Seeder preset override (Auto keeps the profile-coupled default). Unlocks
-# off-diagonal cells (Small content + stress load, Massive content + smoke
+# off-diagonal cells (Small content + ramp load, Massive content + smoke
 # load) and is the only way to reach the Massive preset.
 if ($SeederPresetOverride -ne 'Auto') {
     $preset = $SeederPresetOverride

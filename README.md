@@ -141,7 +141,7 @@ Archive tier transition is **disabled by default** (`-LifecycleArchiveAfterDays 
 
 ### Pipeline Parameters
 
-The queue UI splits into three concerns: **what to test**, **which tiers to test it on**, and **how hard to test**. Each lives on its own knob so you can mix freely (e.g. "stress profile against Standard only" or "smoke profile against all four tiers").
+The queue UI splits into three concerns: **what to test**, **which tiers to test it on**, and **how hard to test**. Each lives on its own knob so you can mix freely (e.g. "ramp profile against Standard only" or "smoke profile against all four tiers").
 
 **What to test:**
 
@@ -169,14 +169,13 @@ At least one tier must be selected — the validator fails the run if all are un
 |---|---|---|---|---|---|
 | `smoke` | Small | 20 | 10/s | 60s | 1 |
 | `standard` | Medium | 50 | 10/s | 600s (backoffice: 300s per plan) | 1 |
-| `stress` | Medium | 300 | 50/s | 600s | 2 |
 | `ramp` | Medium | 0→300 | 1/s (linear) | 600s | 1 |
 
-**Backoffice runs use lower VU counts.** A backoffice VU holds a full authenticated editor session (login → navigate → save/publish) — far heavier per VU than a frontend page-view, so the same count saturates much sooner (50 backoffice VUs peg even Standard's App CPU). Backoffice resolves to **smoke 5, standard 15, stress 50, ramp 0→60**, single engine. See the backoffice override in `scripts/resolve-run-config.ps1`.
+**Backoffice runs use lower VU counts.** A backoffice VU holds a full authenticated editor session (login → navigate → save/publish) — far heavier per VU than a frontend page-view, so the same count saturates much sooner (50 backoffice VUs peg even Standard's App CPU). Backoffice resolves to **smoke 5, standard 15, ramp 0→60**, single engine. See the backoffice override in `scripts/resolve-run-config.ps1`.
 
 **The `ramp` profile** climbs load from 0 to the target across the whole run (Locust spawns at 1 VU/s; the JMeter thread group ramps over the full duration) to find the **saturation knee** — read it off the per-minute resource/error charts on the workbook's Runs tab (or the ALT portal's response-time-over-time). Ramp runs deliberately drive into saturation, so they relax the absolute failure criteria.
 
-**Duration is the measured window.** A frontend run first drives a **settle-in** period that is not measured: 300 s for `standard` and `stress`, 30 s for `smoke`, none for `ramp` or for a cold-start run (`skipWarmup`), which exists to measure that period (one rule, `Get-SettleInSeconds` in `scripts/_helpers.ps1`, read by both the load test config and the publish step). So a frontend `standard` run loads the site for 15 minutes per tier and measures the last 10. Backoffice (JMeter) runs have no settle-in.
+**Duration is the measured window.** A frontend run first drives a **settle-in** period that is not measured: 300 s for `standard`, 30 s for `smoke`, none for `ramp` or for a cold-start run (`skipWarmup`), which exists to measure that period (one rule, `Get-SettleInSeconds` in `scripts/_helpers.ps1`, read by both the load test config and the publish step). So a frontend `standard` run loads the site for 15 minutes per tier and measures the last 10. Backoffice (JMeter) runs have no settle-in.
 
 The profile only encodes load intensity — the same profile can drive any combination of tiers. Tuning a profile is a single-place edit to the `switch` in `scripts/resolve-run-config.ps1`.
 
@@ -214,7 +213,7 @@ The profile only encodes load intensity — the same profile can drive any combi
 
 **App SKU override.** Counterpart to `poolDtuOverride` on the app side. When set to a value other than `Auto`, every test case uses the same App Service Plan SKU regardless of the tier's default — useful for "is the app actually the bottleneck?" experiments. Default SKUs are Starter→P0v3, Standard→P1v3, Pro→P2v3, Enterprise→P3v3.
 
-**Seeder preset override.** Decouples content size from the load profile. `Auto` keeps the existing coupling (smoke→Small; standard, stress, ramp→Medium — Large currently hangs the seeder, see below); explicit values unlock off-diagonal combinations like Massive content + smoke load or Small content + stress load, and are the only way to reach the Massive preset. Approximate seeder times: Small ~10 min, Medium ~3 min (re-verified 2026-08-22 at 178.62s post-logging-fix, was ~30 min before the Serilog quieting — Small/Large/Massive not yet re-verified and may also be faster than shown), Large ~60 min, Massive ~120 min.
+**Seeder preset override.** Decouples content size from the load profile. `Auto` keeps the existing coupling (smoke→Small; standard, ramp→Medium — Large currently hangs the seeder, see below); explicit values unlock off-diagonal combinations like Massive content + smoke load or Small content + ramp load, and are the only way to reach the Massive preset. Approximate seeder times: Small ~10 min, Medium ~3 min (re-verified 2026-08-22 at 178.62s post-logging-fix, was ~30 min before the Serilog quieting — Small/Large/Massive not yet re-verified and may also be faster than shown), Large ~60 min, Massive ~120 min.
 
 **Fail on regression.** `failOnRegression` (default `false`) arms the regression gate for this run. Off = report-only: the stage still produces the full report and the Log Analytics status rows, it just never fails the pipeline. See [Regression gating](#regression-gating) for when to turn it on.
 
@@ -267,7 +266,7 @@ loadtests/scenarios/
     scenario.yaml          # optional load profile overrides
 ```
 
-The shipped scenarios are **`Default`** (traditional customer — rendered pages + media + write path) and **`DeliveryApi`** (headless customer — Content Delivery API + media + write path, no rendered-page traffic). A third, **`Heartbeat`**, is a diagnostic, not a benchmark: it runs the Default traffic against a site that also carries `AdditionalSetup/LoadTestHeartbeat.cs`, a hosted service that beats once a second on its own thread and times a garbage-collection pause, a thread-pool wait, a write to the site's file share, a write to local temp and a SQL round trip. Queue it when the publish step reports whole-site pauses, keep the site alive at the cleanup prompt, and read the `LoadTestHeartbeat` lines in `umbraco/Logs/UmbracoTraceLog.*.json` for the seconds of the pause: the header of the `.cs` file says how to read them. It also writes one line for every request that spent 100 ms or more inside the app (`LoadTestHeartbeat slow request`: path, time in the app, SQL commands and SQL time), and its site has App Service's HTTP log switched on, saved with the run as `http-logs/`: compare both with the load test's own time for the same request to see whether a slow request was slow inside Umbraco or outside it. `LoadTest:MinWorkerThreads` in its `AdditionalSetup/appsettings.json` raises the thread pool's minimum worker threads (0 leaves the .NET default of one per core); it is there to test whether page requests wait for a thread while form submits hold them, and a run with it above 0 is not a normal site. Its results are published under scenario `Heartbeat`, so they never mix with `Default` history in the scripts or on the workbook's Versions tab. A fourth, **`ReadOnly`**, is also a diagnostic: the Default read traffic without the contact-form submit, which is Default's only write and saves a new content node each time. Queue it on the same version and tiers as a Default run that paused; pauses that disappear point at the writes. Each run's Umbraco log is saved with the run (`umbraco-logs/` in the pipeline artifact and under `raw/` in history storage), so the site does not have to be kept alive to read it. Each scenario ships its own `locustfile.py` next to its `AdditionalSetup/` and declares its tasks explicitly, so the workload that runs for a given scenario is fully visible in that one file. Shared building blocks (inventory probe, Delivery API probe, `pick_url` helper) live in `loadtests/_helpers.py` and are imported by each scenario's locustfile.
+The shipped scenarios are **`Default`** (traditional customer — rendered pages + media + write path) and **`DeliveryApi`** (headless customer — Content Delivery API + media + write path, no rendered-page traffic). A third, **`Heartbeat`**, is a diagnostic, not a benchmark: it runs the Default traffic against a site that also carries `AdditionalSetup/LoadTestHeartbeat.cs`, a hosted service that beats once a second on its own thread and times a garbage-collection pause, a thread-pool wait, a write to the site's file share, a write to local temp and a SQL round trip. Queue it when the publish step reports whole-site pauses, keep the site alive at the cleanup prompt, and read the `LoadTestHeartbeat` lines in `umbraco/Logs/UmbracoTraceLog.*.json` for the seconds of the pause: the header of the `.cs` file says how to read them. It also writes one line for every request that spent 100 ms or more inside the app (`LoadTestHeartbeat slow request`: path, time in the app, SQL commands and SQL time), and its site has App Service's HTTP log switched on, saved with the run as `http-logs/`: compare both with the load test's own time for the same request to see whether a slow request was slow inside Umbraco or outside it. `LoadTest:MinWorkerThreads` in its `AdditionalSetup/appsettings.json` raises the thread pool's minimum worker threads (0 leaves the .NET default of one per core); it is there to test whether page requests wait for a thread while form submits hold them, and a run with it above 0 is not a normal site. Its results are published under scenario `Heartbeat`, so they never mix with `Default` history in the scripts or on the workbook's Versions tab. Each run's Umbraco log is saved with the run (`umbraco-logs/` in the pipeline artifact and under `raw/` in history storage), so the site does not have to be kept alive to read it. Each scenario ships its own `locustfile.py` next to its `AdditionalSetup/` and declares its tasks explicitly, so the workload that runs for a given scenario is fully visible in that one file. Shared building blocks (inventory probe, Delivery API probe, `pick_url` helper) live in `loadtests/_helpers.py` and are imported by each scenario's locustfile.
 
 ### Naming convention
 
@@ -781,7 +780,7 @@ The pipeline runs in seven stages. Stage boundaries are visible in the AzDO run 
 
 ```
 validateTestCases    Validate testCases JSON, read scenario folders, resolve load profile
-                     (smoke / standard / stress) into seederPreset + engineInstances + VUs.
+                     (smoke / standard / ramp) into seederPreset + engineInstances + VUs.
 
 ensureHistoryInfra   Idempotent: shared Azure Load Testing resource + storage + container.
                      First run creates; subsequent runs no-op.
@@ -821,7 +820,7 @@ The seeder preset is **run-level** — applied uniformly to every case. (A scena
 ### Running via Azure Pipelines
 
 1. Run the pipeline manually from Azure DevOps.
-2. Pick the **load profile** (`smoke` / `standard` / `stress`), **Umbraco version** (free text — prereleases ok), and **scenario** (defaults to `Default`).
+2. Pick the **load profile** (`smoke` / `standard` / `ramp`), **Umbraco version** (free text — prereleases ok), and **scenario** (defaults to `Default`).
 3. Tick the **tiers** to run against (`runStarter` / `runStandard` / `runPro` / `runEnterprise` — at least one). Defaults to Starter only.
 4. Adjust the orthogonal knobs (region, prefix, cold start, fail-on-regression, validation window) only if you need to.
 5. Wait for validation → ensure-history-infra → ensure-monitoring-infra → provisioning → load tests → regression check to complete.

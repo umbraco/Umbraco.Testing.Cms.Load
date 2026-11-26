@@ -128,7 +128,7 @@ $PSNativeCommandUseErrorActionPreference = $true
 #       taken over successful requests only; failures still count in
 #       request_count, failure_count and error_rate. The load test now runs a
 #       settle-in period before the measured window (Get-SettleInSeconds:
-#       300 s for standard and stress, 30 s for smoke, none for ramp or a
+#       300 s for standard, 30 s for smoke, none for ramp or a
 #       cold-start run) and duration_seconds is the measured window, where
 #       before the first 60 s of the duration were left out; the standard
 #       profile measures 600 s instead of 240 s. The plan_/sql_/app_ summary
@@ -598,7 +598,7 @@ if ($engineFiles.Count -gt 0) {
     # rampTime is a JMeter thread-group setting (resolve-run-config.ps1 sets it to
     # the thread count and says so). Locust doesn't use it - it spawns at
     # LOCUST_SPAWN_RATE, so the frontend ramp is users/spawn, an order of
-    # magnitude shorter: 6s for stress, not the 300s rampTime carries. Using
+    # magnitude shorter: 5s for standard, not the 50s rampTime carries. Using
     # rampTime for frontend discarded up to half a run's steady-state samples,
     # which widens p99 spread - the opposite of what this exclusion is for.
     $effectiveRampSec = if ($JmeterTestName) {

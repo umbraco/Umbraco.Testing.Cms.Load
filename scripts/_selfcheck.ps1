@@ -150,6 +150,9 @@ $allBad = Split-ByErrorLimit -Runs @((New-ErrRow 'x' 0.9), (New-ErrRow 'y' 1.0))
 Assert-Equal $true $allBad.AllOver "every run over the limit is flagged"
 Assert-Equal 2 @($allBad.Latency).Count "all over: falls back to all runs instead of an empty cell"
 Assert-Equal $false (Split-ByErrorLimit -Runs @() -MaxErrorRate 5).AllOver "no runs = nothing to flag"
+$atLimit = Split-ByErrorLimit -Runs @((New-ErrRow 'seven' 0.07), (New-ErrRow 'fourteen' 0.14)) -MaxErrorRate 7
+Assert-Equal 'seven' (($atLimit.Latency | ForEach-Object { $_.run_id }) -join ',') "a run exactly at the limit is within it (0.07 * 100 is not exactly 7)"
+Assert-Equal 'fourteen' (($atLimit.Over | ForEach-Object { $_.run_id }) -join ',') "and one above it is over"
 
 Write-Host "Split-CsvLine (RFC-4180 quoting)"
 Assert-Seq @('a', 'b', 'c')      (Split-CsvLine 'a,b,c')        "plain fields"
@@ -352,7 +355,6 @@ Assert-Equal ([datetime]::new(2026, 11, 5))            (ConvertTo-SinceDate ([da
 Write-Host ""
 Write-Host "Get-SettleInSeconds (load driven before the measured window)"
 Assert-Equal 300 (Get-SettleInSeconds -LoadProfile 'standard') "standard settles for 300 s"
-Assert-Equal 300 (Get-SettleInSeconds -LoadProfile 'stress')   "stress settles for 300 s"
 Assert-Equal 30  (Get-SettleInSeconds -LoadProfile 'smoke')    "smoke settles for 30 s"
 Assert-Equal 0   (Get-SettleInSeconds -LoadProfile 'ramp')     "ramp measures the climb, no settle-in"
 Assert-Equal 0   (Get-SettleInSeconds -LoadProfile 'standard' -Frontend $false) "JMeter runs have no settle-in"
