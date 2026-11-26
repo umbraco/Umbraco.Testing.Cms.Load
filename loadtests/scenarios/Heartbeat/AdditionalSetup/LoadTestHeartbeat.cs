@@ -45,7 +45,10 @@
 //     "LoadTestHeartbeat cost: class=... n=... ms=... sql_n=... sql_ms=...
 //      commit_ms=..." - one line per kind of request (Home, Section, Category,
 //      Page, Detail, Media, FormPost, SeederApi, Other) with what all requests
-//      of that kind used in the minute: divide by n for the cost of one.
+//      of that kind used in the minute: divide by n for the cost of one. A
+//      page or media request that ran any SQL is counted under its kind plus
+//      "Loaded" (PageLoaded, DetailLoaded, ...): its content was not in
+//      memory and had to be loaded from the database first.
 //     "LoadTestHeartbeat cost total: requests=... cpu_ms=... alloc_mb=...
 //      gen0=... gen1=... gen2=..." - what the whole process used in the same
 //      minute, so CPU and memory allocated per request can be worked out.
@@ -267,10 +270,20 @@ public static class LoadTestRequestTracker
 
         try
         {
-            long[] cost = Cost.GetOrAdd(Classify(context.Request.Method, context.Request.Path.Value), _ => new long[5]);
+            // A page or media request that needed SQL had to load its content
+            // from the database; one that needed none was served from memory.
+            // The two cost very different amounts, so they are counted apart.
+            long sqlCommands = Interlocked.Read(ref stats.SqlCommands);
+            string kind = Classify(context.Request.Method, context.Request.Path.Value);
+            if (sqlCommands > 0 && kind is "Home" or "Section" or "Category" or "Page" or "Detail" or "Media")
+            {
+                kind += "Loaded";
+            }
+
+            long[] cost = Cost.GetOrAdd(kind, _ => new long[5]);
             Interlocked.Increment(ref cost[0]);
             Interlocked.Add(ref cost[1], now - stats.StartTimestamp);
-            Interlocked.Add(ref cost[2], Interlocked.Read(ref stats.SqlCommands));
+            Interlocked.Add(ref cost[2], sqlCommands);
             Interlocked.Add(ref cost[3], Interlocked.Read(ref stats.SqlTicks));
             Interlocked.Add(ref cost[4], Interlocked.Read(ref stats.CommitTicks));
         }
@@ -702,8 +715,12 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         AppDomain.CurrentDomain.AssemblyLoad += _assemblyLoadHandler;
         ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
         _logger.LogInformation(
-            "LoadTestHeartbeat started: {Bitness}-bit process, server GC {ServerGc}, {Cores} cores, pool minimum {MinWorkers} worker / {MinIo} IO threads, share path {SharePath}, local path {LocalPath}",
-            Environment.Is64BitProcess ? 64 : 32, System.Runtime.GCSettings.IsServerGC, Environment.ProcessorCount, minWorkers, minIo, _sharePath, _localPath);
+            "LoadTestHeartbeat started: {Bitness}-bit process, server GC {ServerGc}, {Cores} cores, processor {Processor}, pool minimum {MinWorkers} worker / {MinIo} IO threads, share path {SharePath}, local path {LocalPath}",
+            Environment.Is64BitProcess ? 64 : 32, System.Runtime.GCSettings.IsServerGC, Environment.ProcessorCount,
+            // The same plan size can sit on different hardware from one build to
+            // the next, and time per request follows the processor. Recorded so
+            // two runs can be told apart on it.
+            Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "unknown", minWorkers, minIo, _sharePath, _localPath);
         return Task.CompletedTask;
     }
 
