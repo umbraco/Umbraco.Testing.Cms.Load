@@ -79,3 +79,47 @@ Describe 'Get-RunCost with a time window' {
         $c.Total.CpuMs | Should -Be 700
     }
 }
+
+Describe 'Get-RunCost with the process figures added later' {
+    BeforeAll {
+        function New-FullTotal($time, $n, $cpu, $exc, $jit, $jitTotal, $asm, $heap, $ws) {
+            [ordered]@{ '@t' = $time; '@mt' = 'LoadTestHeartbeat cost total: requests={Requests} cpu_ms={CpuMs} alloc_mb={AllocMb} gen0={Gen0} gen1={Gen1} gen2={Gen2} exceptions={Exceptions} jit_n={JitMethods} jit_total={JitTotal} assemblies={Assemblies} heap_mb={HeapMb} working_set_mb={WorkingSetMb}'
+                Requests = $n; CpuMs = $cpu; AllocMb = 10; Gen0 = 1; Gen1 = 0; Gen2 = 0; Exceptions = $exc; JitMethods = $jit; JitTotal = $jitTotal; Assemblies = $asm; HeapMb = $heap; WorkingSetMb = $ws } | ConvertTo-Json -Compress
+        }
+        function New-Calibration($time, $us) {
+            [ordered]@{ '@t' = $time; '@mt' = 'LoadTestHeartbeat calibration: work_us={WorkUs} runs={Runs}'; WorkUs = $us; Runs = 3 } | ConvertTo-Json -Compress
+        }
+        $script:full = @(
+            (New-Calibration '2026-11-26T10:00:00Z' 5000),
+            (New-FullTotal '2026-11-26T10:01:00Z' 1000 2000 4 300 20300 250 80 300), (New-Calibration '2026-11-26T10:01:00Z' 4000),
+            (New-FullTotal '2026-11-26T10:02:00Z' 1000 2000 6 100 20400 251 90 310), (New-Calibration '2026-11-26T10:02:00Z' 4200),
+            (New-FullTotal '2026-11-26T10:03:00Z' 1000 2000 0 0 20400 251 100 320),   (New-Calibration '2026-11-26T10:03:00Z' 4100)
+        )
+    }
+    It 'sums exceptions and methods compiled, and takes the start-up work from the first kept minute' {
+        $t = (Get-RunCost -Lines $script:full).Total
+        $t.Exceptions | Should -Be 10
+        $t.JitMethods | Should -Be 400
+        $t.JitBefore | Should -Be 20000
+        $t.Assemblies | Should -Be 250
+    }
+    It 'gives the median of heap and working set, and the fastest calibration' {
+        $t = (Get-RunCost -Lines $script:full).Total
+        $t.HeapMb | Should -Be 90
+        $t.WorkingSetMb | Should -Be 310
+        $t.CalibrationUs | Should -Be 4000
+    }
+    It 'cuts calibration lines by the window like the rest' {
+        $t = (Get-RunCost -Lines $script:full -From ([datetime]::Parse('2026-11-26T10:01:30Z').ToUniversalTime())).Total
+        $t.CalibrationUs | Should -Be 4100
+        $t.JitBefore | Should -Be 20300
+    }
+    It 'reads a log without the new fields as missing, not zero' {
+        $old = @((New-TotalLine '2026-11-26T10:01:00Z' 10 500 10))
+        $t = (Get-RunCost -Lines $old).Total
+        $t.Exceptions | Should -BeNullOrEmpty
+        $t.HeapMb | Should -BeNullOrEmpty
+        $t.CalibrationUs | Should -BeNullOrEmpty
+        $t.JitBefore | Should -BeNullOrEmpty
+    }
+}

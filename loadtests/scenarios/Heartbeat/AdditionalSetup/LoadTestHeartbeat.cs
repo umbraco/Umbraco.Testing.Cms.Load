@@ -50,8 +50,20 @@
 //      "Loaded" (PageLoaded, DetailLoaded, ...): its content was not in
 //      memory and had to be loaded from the database first.
 //     "LoadTestHeartbeat cost total: requests=... cpu_ms=... alloc_mb=...
-//      gen0=... gen1=... gen2=..." - what the whole process used in the same
-//      minute, so CPU and memory allocated per request can be worked out.
+//      gen0=... gen1=... gen2=... exceptions=... jit_n=... jit_total=...
+//      assemblies=... heap_mb=... working_set_mb=..." - what the whole process
+//      used in the same minute, so CPU and memory allocated per request can be
+//      worked out. exceptions counts every exception thrown, handled or not;
+//      jit_n the methods compiled in the minute and jit_total since start;
+//      assemblies those loaded so far; heap_mb and working_set_mb the size of
+//      the process at the end of the minute.
+//     "LoadTestHeartbeat calibration: work_us=... runs=..." - how long a fixed
+//      piece of CPU work took on this machine (the fastest of a few runs, in
+//      microseconds), once at start and after every cost minute. The same
+//      plan size lands on different processors from one build to the next;
+//      CPU per request divided by this figure can be compared across builds
+//      far better than CPU per request alone. Its own CPU is left out of the
+//      minute it follows.
 //   asm_n      assemblies loaded since the previous beat; their names follow
 //              on a "LoadTestHeartbeat assemblies loaded" line. An assembly
 //              arriving mid-run is run-time compilation (models, views).
@@ -662,6 +674,15 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     private readonly ConcurrentQueue<string> _loadedAssemblies = new();
     private AssemblyLoadEventHandler? _assemblyLoadHandler;
 
+    // Every exception thrown in the process, handled or not (see exceptions=).
+    private static long _exceptions;
+    private EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs>? _exceptionHandler;
+
+    // Fixed input for the calibration workload, built once.
+    private static readonly int[] CalibrationSource = BuildCalibrationSource();
+    private static readonly int[] CalibrationWork = new int[CalibrationSource.Length];
+    private static readonly Dictionary<int, int> CalibrationMap = new(capacity: 20_000);
+
     // Thread-pool probe state. _poolQueuedAt != 0 means a probe is still waiting.
     private long _poolQueuedAt;
     private long _poolLastDelayMs;
@@ -713,6 +734,8 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             }
         };
         AppDomain.CurrentDomain.AssemblyLoad += _assemblyLoadHandler;
+        _exceptionHandler = (_, _) => Interlocked.Increment(ref _exceptions);
+        AppDomain.CurrentDomain.FirstChanceException += _exceptionHandler;
         ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
         _logger.LogInformation(
             "LoadTestHeartbeat started: {Bitness}-bit process, server GC {ServerGc}, {Cores} cores, processor {Processor}, pool minimum {MinWorkers} worker / {MinIo} IO threads, share path {SharePath}, local path {LocalPath}",
@@ -735,6 +758,10 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         if (_assemblyLoadHandler is not null)
         {
             AppDomain.CurrentDomain.AssemblyLoad -= _assemblyLoadHandler;
+        }
+        if (_exceptionHandler is not null)
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= _exceptionHandler;
         }
         _runtimeEvents?.Dispose();
         _sqlTimings?.Dispose();
@@ -858,8 +885,73 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         }
     }
 
+    private static int[] BuildCalibrationSource()
+    {
+        // A fixed pseudo-random sequence (xorshift), the same on every machine.
+        var values = new int[50_000];
+        uint x = 2_463_534_242;
+        for (int i = 0; i < values.Length; i++)
+        {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            values[i] = (int)(x & 0x7FFF_FFFF);
+        }
+
+        return values;
+    }
+
+    // Microseconds the fastest of `runs` repetitions of a fixed piece of work
+    // took: copying and sorting 50,000 integers, then filling and reading a
+    // 20,000-entry dictionary. Plain managed work on purpose - no hashing or
+    // vector code that one processor accelerates and another does not - and no
+    // allocation after the first run. The fastest run is the one least
+    // disturbed by the requests sharing the core. Heartbeat thread only.
+    private static long Calibrate(int runs)
+    {
+        long best = long.MaxValue;
+        int checksum = 0;
+        for (int r = 0; r < runs; r++)
+        {
+            long start = Stopwatch.GetTimestamp();
+            Array.Copy(CalibrationSource, CalibrationWork, CalibrationSource.Length);
+            Array.Sort(CalibrationWork);
+            CalibrationMap.Clear();
+            for (int i = 0; i < 20_000; i++)
+            {
+                CalibrationMap[CalibrationWork[i * 2]] = i;
+            }
+
+            for (int i = 0; i < 20_000; i++)
+            {
+                if (CalibrationMap.TryGetValue(CalibrationSource[i], out int value))
+                {
+                    checksum += value;
+                }
+            }
+
+            long us = (long)Stopwatch.GetElapsedTime(start).TotalMicroseconds;
+            if (us < best)
+            {
+                best = us;
+            }
+        }
+
+        GC.KeepAlive(checksum);
+        return best;
+    }
+
     private void Run()
     {
+        try
+        {
+            _logger.LogInformation("LoadTestHeartbeat calibration: work_us={WorkUs} runs={Runs}", Calibrate(9), 9);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LoadTestHeartbeat calibration failed");
+        }
+
         var clock = Stopwatch.StartNew();
         TimeSpan lastGcPause = GC.GetTotalPauseDuration();
         int lastGen0 = GC.CollectionCount(0), lastGen1 = GC.CollectionCount(1), lastGen2 = GC.CollectionCount(2);
@@ -874,6 +966,8 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         TimeSpan minuteCpu = Environment.CpuUsage.TotalTime;
         long minuteAllocated = GC.GetTotalAllocatedBytes(false);
         int minuteGen0 = GC.CollectionCount(0), minuteGen1 = GC.CollectionCount(1), minuteGen2 = GC.CollectionCount(2);
+        long minuteExceptions = Interlocked.Read(ref _exceptions);
+        long minuteJit = System.Runtime.JitInfo.GetCompiledMethodCount();
         var costs = new List<(string Class, long Requests, long Ms, long SqlCommands, long SqlMs, long CommitMs)>();
         var assemblyNames = new List<string>();
         long maxCpu = 0, maxContention = 0, sumStarvation = 0, sumContentions = 0;
@@ -1027,13 +1121,23 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
 
                 TimeSpan cpuTotal = Environment.CpuUsage.TotalTime;
                 long allocated = GC.GetTotalAllocatedBytes(false);
+                long exceptionsNow = Interlocked.Read(ref _exceptions);
+                long jitTotal = System.Runtime.JitInfo.GetCompiledMethodCount();
                 _logger.LogInformation(
-                    "LoadTestHeartbeat cost total: requests={Requests} cpu_ms={CpuMs} alloc_mb={AllocMb} gen0={Gen0} gen1={Gen1} gen2={Gen2}",
+                    "LoadTestHeartbeat cost total: requests={Requests} cpu_ms={CpuMs} alloc_mb={AllocMb} gen0={Gen0} gen1={Gen1} gen2={Gen2} exceptions={Exceptions} jit_n={JitMethods} jit_total={JitTotal} assemblies={Assemblies} heap_mb={HeapMb} working_set_mb={WorkingSetMb}",
                     costRequests, (long)(cpuTotal - minuteCpu).TotalMilliseconds, (allocated - minuteAllocated) / (1024 * 1024),
-                    gen0 - minuteGen0, gen1 - minuteGen1, gen2 - minuteGen2);
+                    gen0 - minuteGen0, gen1 - minuteGen1, gen2 - minuteGen2,
+                    exceptionsNow - minuteExceptions, jitTotal - minuteJit, jitTotal, AppDomain.CurrentDomain.GetAssemblies().Length,
+                    GC.GetTotalMemory(false) / (1024 * 1024), Environment.WorkingSet / (1024 * 1024));
                 minuteGen0 = gen0; minuteGen1 = gen1; minuteGen2 = gen2;
-                minuteCpu = cpuTotal;
+                minuteExceptions = exceptionsNow;
+                minuteJit = jitTotal;
                 minuteAllocated = allocated;
+
+                // After the minute is logged, so its CPU is not counted in it;
+                // the minute that follows starts after it, so not there either.
+                _logger.LogInformation("LoadTestHeartbeat calibration: work_us={WorkUs} runs={Runs}", Calibrate(3), 3);
+                minuteCpu = Environment.CpuUsage.TotalTime;
 
                 maxOldest = maxRequest = sumSlowRequests = 0;
                 summaryFrom = now;

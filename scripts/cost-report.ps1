@@ -55,15 +55,22 @@ function Get-RunCost {
     )
     $classRows = [System.Collections.Generic.List[object]]::new()
     $totalRows = [System.Collections.Generic.List[object]]::new()
+    $calibration = [System.Collections.Generic.List[object]]::new()
+    # A field older logs do not have reads as $null, not 0.
+    $opt = { param($value) if ($null -eq $value) { $null } else { [long]$value } }
     foreach ($line in $Lines) {
-        if (-not $line.Contains('LoadTestHeartbeat cost')) { continue }
+        if (-not ($line.Contains('LoadTestHeartbeat cost') -or $line.Contains('LoadTestHeartbeat calibration'))) { continue }
         try { $o = $line | ConvertFrom-Json } catch { continue }
         $template = [string]$o.'@mt'
         $when = ([datetime]$o.'@t').ToUniversalTime()
         if ($null -ne $From -and $when -lt $From) { continue }
         if ($null -ne $To -and $when -gt $To) { continue }
-        if ($template.StartsWith('LoadTestHeartbeat cost total:')) {
-            $totalRows.Add([pscustomobject]@{ When = $when; Requests = [long]$o.Requests; CpuMs = [long]$o.CpuMs; AllocMb = [long]$o.AllocMb; Gen0 = [long]$o.Gen0; Gen1 = [long]$o.Gen1; Gen2 = [long]$o.Gen2 })
+        if ($template.StartsWith('LoadTestHeartbeat calibration:')) {
+            $calibration.Add([pscustomobject]@{ When = $when; WorkUs = [long]$o.WorkUs })
+        } elseif ($template.StartsWith('LoadTestHeartbeat cost total:')) {
+            $totalRows.Add([pscustomobject]@{ When = $when; Requests = [long]$o.Requests; CpuMs = [long]$o.CpuMs; AllocMb = [long]$o.AllocMb; Gen0 = [long]$o.Gen0; Gen1 = [long]$o.Gen1; Gen2 = [long]$o.Gen2
+                Exceptions = (& $opt $o.Exceptions); JitMethods = (& $opt $o.JitMethods); JitTotal = (& $opt $o.JitTotal); Assemblies = (& $opt $o.Assemblies)
+                HeapMb = (& $opt $o.HeapMb); WorkingSetMb = (& $opt $o.WorkingSetMb) })
         } elseif ($template.StartsWith('LoadTestHeartbeat cost:')) {
             $classRows.Add([pscustomobject]@{ When = $when; Class = [string]$o.Class; Requests = [long]$o.Requests; Ms = [long]$o.Ms; SqlCommands = [long]$o.SqlCommands; SqlMs = [long]$o.SqlMs; CommitMs = [long]$o.CommitMs })
         }
@@ -89,12 +96,27 @@ function Get-RunCost {
         }
     }
     $sum = { param($name) [long](($keptTotals | Measure-Object $name -Sum).Sum ?? 0) }
+    # Sum or median of a field older logs may not have: $null when no kept minute has it.
+    $present = { param($name) @($keptTotals | Where-Object { $null -ne $_.$name } | ForEach-Object { $_.$name }) }
+    $sumOpt = { param($name) $v = & $present $name; if ($v.Count) { [long]($v | Measure-Object -Sum).Sum } else { $null } }
+    $medianOf = { param([object[]]$v) if (-not $v -or $v.Count -eq 0) { return $null }; $s = @($v | Sort-Object); if ($s.Count % 2) { [double]$s[($s.Count - 1) / 2] } else { ([double]$s[$s.Count / 2 - 1] + [double]$s[$s.Count / 2]) / 2 } }
+    $first = $keptTotals | Select-Object -First 1
+    # Calibration lines are cut by the same window, and by the minutes skipped.
+    $keptCalibration = @($calibration | Where-Object { $_.When -gt $cutoff } | ForEach-Object { $_.WorkUs })
     [pscustomobject]@{
         Minutes = $keptTotals.Count
         Classes = @($classes)
         Total   = [pscustomobject]@{
             Requests = (& $sum 'Requests'); CpuMs = (& $sum 'CpuMs'); AllocMb = (& $sum 'AllocMb')
             Gen0 = (& $sum 'Gen0'); Gen1 = (& $sum 'Gen1'); Gen2 = (& $sum 'Gen2')
+            Exceptions = (& $sumOpt 'Exceptions'); JitMethods = (& $sumOpt 'JitMethods')
+            # Compiled before the first kept minute began: the start-up work.
+            JitBefore = $(if ($first -and $null -ne $first.JitTotal -and $null -ne $first.JitMethods) { $first.JitTotal - $first.JitMethods } else { $null })
+            Assemblies = $(if ($first) { $first.Assemblies } else { $null })
+            HeapMb = (& $medianOf (& $present 'HeapMb')); WorkingSetMb = (& $medianOf (& $present 'WorkingSetMb'))
+            # The fastest timing in the window: the one least disturbed by the
+            # requests sharing the machine. A median follows the load instead.
+            CalibrationUs = $(if ($keptCalibration.Count) { [double]($keptCalibration | Measure-Object -Minimum).Minimum } else { $null })
         }
     }
 }
@@ -138,7 +160,7 @@ $runs = foreach ($spec in $Run) {
     foreach ($file in $files) {
         # The site may still hold the file open; read without locking it.
         $stream = [System.IO.FileStream]::new($file.FullName, 'Open', 'Read', 'ReadWrite')
-        try { $reader = [System.IO.StreamReader]::new($stream); while ($null -ne ($l = $reader.ReadLine())) { if ($l.Contains('LoadTestHeartbeat cost')) { $lines.Add($l) } } } finally { $stream.Dispose() }
+        try { $reader = [System.IO.StreamReader]::new($stream); while ($null -ne ($l = $reader.ReadLine())) { if ($l.Contains('LoadTestHeartbeat cost') -or $l.Contains('LoadTestHeartbeat calibration')) { $lines.Add($l) } } } finally { $stream.Dispose() }
     }
     $cost = Get-RunCost -Lines $lines.ToArray() -SkipMinutes $SkipMinutes -From $fromUtc -To $toUtc
     if ($cost.Minutes -eq 0) { Write-Warning "Run '$label': no cost lines after skipping $SkipMinutes minute(s). Was it a Heartbeat run on a commit that records cost?" }
@@ -173,7 +195,7 @@ foreach ($measure in $measures) {
 }
 
 [void]$report.AppendLine("## Whole process, per request`n")
-[void]$report.AppendLine("All requests together, background work included, so compare runs with the same traffic mix.`n")
+[void]$report.AppendLine("All requests together, background work included, so compare runs with the same traffic mix. CPU and time depend on the processor a run landed on; CPU per request in calibration units divides by a fixed workload timed on the same machine, so it can be compared across builds far better than CPU per request alone. Counts and memory do not depend on the processor.`n")
 $header = '| Measure | ' + (($runs | ForEach-Object { $_.Label }) -join ' | ')
 $rule = '|---|' + ('---:|' * $runs.Count)
 if ($runs.Count -gt 1) { $header += ' | ' + (($runs | Select-Object -Skip 1 | ForEach-Object { "$($_.Label) vs $($baseline.Label)" }) -join ' | '); $rule += ('---:|' * ($runs.Count - 1)) }
@@ -183,7 +205,15 @@ $processMeasures = @(
     @{ Title = 'CPU per request (ms)'; Value = { param($t) Get-PerRequest $t.CpuMs $t.Requests }; Decimals = 2; Change = $true },
     @{ Title = 'Memory allocated per request (KB)'; Value = { param($t) Get-PerRequest ($t.AllocMb * 1024) $t.Requests }; Decimals = 0; Change = $true },
     @{ Title = 'Gen 0 collections per 1,000 requests'; Value = { param($t) Get-PerRequest ($t.Gen0 * 1000) $t.Requests }; Decimals = 1; Change = $true },
-    @{ Title = 'Gen 2 collections per 1,000 requests'; Value = { param($t) Get-PerRequest ($t.Gen2 * 1000) $t.Requests }; Decimals = 2; Change = $true }
+    @{ Title = 'Gen 2 collections per 1,000 requests'; Value = { param($t) Get-PerRequest ($t.Gen2 * 1000) $t.Requests }; Decimals = 2; Change = $true },
+    @{ Title = 'Exceptions per 1,000 requests'; Value = { param($t) if ($null -eq $t.Exceptions) { $null } else { Get-PerRequest ($t.Exceptions * 1000) $t.Requests } }; Decimals = 2; Change = $true },
+    @{ Title = 'Methods compiled before the window (start-up work)'; Value = { param($t) $t.JitBefore }; Decimals = 0; Change = $true },
+    @{ Title = 'Methods compiled during the window'; Value = { param($t) $t.JitMethods }; Decimals = 0; Change = $true },
+    @{ Title = 'Assemblies loaded'; Value = { param($t) $t.Assemblies }; Decimals = 0; Change = $true },
+    @{ Title = 'Managed heap, median (MB)'; Value = { param($t) $t.HeapMb }; Decimals = 0; Change = $true },
+    @{ Title = 'Working set, median (MB)'; Value = { param($t) $t.WorkingSetMb }; Decimals = 0; Change = $true },
+    @{ Title = 'Calibration workload, fastest (µs)'; Value = { param($t) $t.CalibrationUs }; Decimals = 0; Change = $true },
+    @{ Title = 'CPU per request in calibration units'; Value = { param($t) if ($null -eq $t.CalibrationUs -or $t.CalibrationUs -le 0) { $null } else { $c = Get-PerRequest $t.CpuMs $t.Requests; if ($null -eq $c) { $null } else { $c * 1000 / $t.CalibrationUs } } }; Decimals = 3; Change = $true }
 )
 foreach ($pm in $processMeasures) {
     $values = @($runs | ForEach-Object { & $pm.Value $_.Cost.Total })
@@ -206,6 +236,7 @@ if ($OutCsv) {
                 commit_ms_per_request    = (Format-Num (Get-PerRequest $c.CommitMs $c.Requests) 4)
                 app_ms_per_request       = (Format-Num (Get-PerRequest $c.Ms $c.Requests) 4)
                 cpu_ms_per_request = ''; alloc_kb_per_request = ''; gen0_per_1000 = ''; gen2_per_1000 = ''
+                exceptions_per_1000 = ''; jit_before_window = ''; jit_in_window = ''; assemblies = ''; heap_mb = ''; working_set_mb = ''; calibration_us = ''; cpu_per_request_calibrated = ''
             }
         }
         $t = $r.Cost.Total
@@ -216,6 +247,14 @@ if ($OutCsv) {
             alloc_kb_per_request = (Format-Num (Get-PerRequest ($t.AllocMb * 1024) $t.Requests) 1)
             gen0_per_1000        = (Format-Num (Get-PerRequest ($t.Gen0 * 1000) $t.Requests) 2)
             gen2_per_1000        = (Format-Num (Get-PerRequest ($t.Gen2 * 1000) $t.Requests) 3)
+            exceptions_per_1000  = $(if ($null -eq $t.Exceptions) { '' } else { Format-Num (Get-PerRequest ($t.Exceptions * 1000) $t.Requests) 3 })
+            jit_before_window    = $(if ($null -eq $t.JitBefore) { '' } else { $t.JitBefore })
+            jit_in_window        = $(if ($null -eq $t.JitMethods) { '' } else { $t.JitMethods })
+            assemblies           = $(if ($null -eq $t.Assemblies) { '' } else { $t.Assemblies })
+            heap_mb              = $(if ($null -eq $t.HeapMb) { '' } else { Format-Num $t.HeapMb 1 })
+            working_set_mb       = $(if ($null -eq $t.WorkingSetMb) { '' } else { Format-Num $t.WorkingSetMb 1 })
+            calibration_us       = $(if ($null -eq $t.CalibrationUs) { '' } else { Format-Num $t.CalibrationUs 0 })
+            cpu_per_request_calibrated = $(if ($null -eq $t.CalibrationUs -or $t.CalibrationUs -le 0 -or $t.Requests -le 0) { '' } else { Format-Num ((Get-PerRequest $t.CpuMs $t.Requests) * 1000 / $t.CalibrationUs) 4 })
         }
     }
     $rows | Export-Csv -Path $OutCsv -Encoding utf8
