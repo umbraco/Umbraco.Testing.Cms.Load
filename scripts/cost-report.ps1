@@ -19,6 +19,11 @@
 # -SkipMinutes  minutes of cost lines to leave out at the start of each run
 #               (warm-up and settle-in). Default 0: a caller that wants the
 #               measured window passes the settle-in.
+# -From, -To    keep only cost lines logged in this window (UTC, any format
+#               [datetime] reads, e.g. 2026-11-26T08:05:09Z). A pipeline run's
+#               log also holds the minutes the site spent being provisioned
+#               and warmed up, in earlier processes, so for those give the
+#               measured window here rather than counting minutes to skip.
 # -MinRequests  kinds of request with fewer requests than this are left out of
 #               the tables: a cost per request over a handful is noise.
 # -OutCsv       also write every figure, one row per run and kind of request,
@@ -28,6 +33,8 @@
 param(
     [string[]]$Run,
     [int]$SkipMinutes = 0,
+    [string]$From,
+    [string]$To,
     [int]$MinRequests = 20,
     [string]$OutCsv,
     [string]$OutputPath,
@@ -42,7 +49,9 @@ $invariant = [System.Globalization.CultureInfo]::InvariantCulture
 function Get-RunCost {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Lines,
-        [int]$SkipMinutes = 0
+        [int]$SkipMinutes = 0,
+        [Nullable[datetime]]$From = $null,
+        [Nullable[datetime]]$To = $null
     )
     $classRows = [System.Collections.Generic.List[object]]::new()
     $totalRows = [System.Collections.Generic.List[object]]::new()
@@ -50,7 +59,9 @@ function Get-RunCost {
         if (-not $line.Contains('LoadTestHeartbeat cost')) { continue }
         try { $o = $line | ConvertFrom-Json } catch { continue }
         $template = [string]$o.'@mt'
-        $when = [datetime]$o.'@t'
+        $when = ([datetime]$o.'@t').ToUniversalTime()
+        if ($null -ne $From -and $when -lt $From) { continue }
+        if ($null -ne $To -and $when -gt $To) { continue }
         if ($template.StartsWith('LoadTestHeartbeat cost total:')) {
             $totalRows.Add([pscustomobject]@{ When = $when; Requests = [long]$o.Requests; CpuMs = [long]$o.CpuMs; AllocMb = [long]$o.AllocMb; Gen0 = [long]$o.Gen0; Gen1 = [long]$o.Gen1; Gen2 = [long]$o.Gen2 })
         } elseif ($template.StartsWith('LoadTestHeartbeat cost:')) {
@@ -112,6 +123,9 @@ function Format-Num { param($Value, [int]$Decimals = 2) if ($null -eq $Value) { 
 if ($DotSourceForTest) { return }
 
 if (-not $Run -or $Run.Count -eq 0) { throw "Pass at least one -Run 'label=path'." }
+$styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
+$fromUtc = if ($From) { [datetime]::Parse($From, $invariant, $styles) } else { $null }
+$toUtc   = if ($To)   { [datetime]::Parse($To, $invariant, $styles) } else { $null }
 
 $runs = foreach ($spec in $Run) {
     $at = $spec.IndexOf('=')
@@ -126,7 +140,7 @@ $runs = foreach ($spec in $Run) {
         $stream = [System.IO.FileStream]::new($file.FullName, 'Open', 'Read', 'ReadWrite')
         try { $reader = [System.IO.StreamReader]::new($stream); while ($null -ne ($l = $reader.ReadLine())) { if ($l.Contains('LoadTestHeartbeat cost')) { $lines.Add($l) } } } finally { $stream.Dispose() }
     }
-    $cost = Get-RunCost -Lines $lines.ToArray() -SkipMinutes $SkipMinutes
+    $cost = Get-RunCost -Lines $lines.ToArray() -SkipMinutes $SkipMinutes -From $fromUtc -To $toUtc
     if ($cost.Minutes -eq 0) { Write-Warning "Run '$label': no cost lines after skipping $SkipMinutes minute(s). Was it a Heartbeat run on a commit that records cost?" }
     [pscustomobject]@{ Label = $label; Cost = $cost }
 }

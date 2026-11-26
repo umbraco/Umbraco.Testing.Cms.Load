@@ -65,3 +65,17 @@ Describe 'Format-CostChange and Get-PerRequest' {
         try { [cultureinfo]::CurrentCulture = 'da-DK'; Format-CostChange 1 1.5 2 | Should -Be '+0.50 (+50%)' } finally { [cultureinfo]::CurrentCulture = $old }
     }
 }
+
+Describe 'Get-RunCost with a time window' {
+    It 'keeps only the minutes inside -From and -To' {
+        $lines = @(
+            (New-ClassLine '2026-11-26T10:00:59Z' 'Page' 10 100 0 0), (New-TotalLine '2026-11-26T10:01:00Z' 10 500 10),
+            (New-ClassLine '2026-11-26T10:01:59Z' 'Page' 30 60 0 0),  (New-TotalLine '2026-11-26T10:02:00Z' 30 700 20),
+            (New-ClassLine '2026-11-26T10:02:59Z' 'Page' 7 60 0 0),   (New-TotalLine '2026-11-26T10:03:00Z' 7 300 5)
+        )
+        $c = Get-RunCost -Lines $lines -From ([datetime]::Parse('2026-11-26T10:01:30Z').ToUniversalTime()) -To ([datetime]::Parse('2026-11-26T10:02:30Z').ToUniversalTime())
+        $c.Minutes | Should -Be 1
+        ($c.Classes | Where-Object Class -eq 'Page').Requests | Should -Be 30
+        $c.Total.CpuMs | Should -Be 700
+    }
+}
