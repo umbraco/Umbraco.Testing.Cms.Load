@@ -198,8 +198,10 @@ function Split-ByErrorLimit {
     if ($MaxErrorRate -lt 0) {
         return [pscustomobject]@{ Latency = @($Runs); Over = @(); AllOver = $false }
     }
-    $ok   = @($Runs | Where-Object { [double]$_.error_rate * 100 -le $MaxErrorRate })
-    $over = @($Runs | Where-Object { [double]$_.error_rate * 100 -gt $MaxErrorRate })
+    # Rounded before comparing: 0.07 * 100 is 7.000000000000001 in floating
+    # point, which put a run at exactly the limit over it.
+    $ok   = @($Runs | Where-Object { [math]::Round([double]$_.error_rate * 100, 6) -le $MaxErrorRate })
+    $over = @($Runs | Where-Object { [math]::Round([double]$_.error_rate * 100, 6) -gt $MaxErrorRate })
     $allOver = $Runs.Count -gt 0 -and $ok.Count -eq 0
     [pscustomobject]@{ Latency = $(if ($allOver) { @($Runs) } else { $ok }); Over = $over; AllOver = $allOver }
 }

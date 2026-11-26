@@ -3,7 +3,16 @@
 # Client-measurement regression gate. Reads client summary.ndjson rows from
 # history storage (the 'client/{major}/' prefix), takes the latest run per
 # (version × tier × metric) cell as candidate, compares its median against the
-# median-of-last-N baseline. Mirrors check-regression.ps1's philosophy: report-only
+# median-of-last-N baseline. The baseline is like-for-like: only earlier runs
+# on the candidate's App Service SKU, pool DTU cap and seeder preset.
+#
+# With -RunId (the pipeline passes its build id) only that run is judged, and
+# a result the run should have produced but did not is reported as MISSING: a
+# metric whose every repetition failed writes no row, and without this the gate
+# would grade the previous run's row and say "ok". A candidate built on fewer
+# repetitions than its baseline runs is reported as INCOMPLETE for the same
+# reason - a median over the three repetitions that did not time out is not a
+# result. Both fail the gate where a regression would. Mirrors check-regression.ps1's philosophy: report-only
 # until >= MinBaselineRuns accrue, then fails (unless -NoFailOnRegression) so it can
 # gate the pipeline.
 
@@ -22,6 +31,12 @@ param(
     [int]$BaselineWindow = 5,
     [switch]$NoFailOnRegression,
     [switch]$DotSourceForTest,
+
+    # The run to judge (the pipeline's build id, which publish-client-results.ps1
+    # writes as run_id). Empty = judge the latest row of every cell, as before.
+    [string]$RunId,
+    # Repetitions a complete result has. 0 = take it from the baseline runs.
+    [int]$ExpectedReps = 0,
 
     # Optional LA target for ClientMeasurement_CL, mirroring check-regression.ps1.
     # Empty (default) skips posting.
@@ -51,6 +66,44 @@ function Test-ClientRegression {
     $baseMedian = Get-Median ([double[]]$BaselineMedians)
     $regressed = $CandidateMedian -gt ($baseMedian * (1 + $Threshold))
     return [pscustomobject]@{ Insufficient = $false; Regressed = $regressed; BaselineMedian = $baseMedian }
+}
+
+# The earlier runs a candidate may be compared with: same App Service SKU, pool
+# DTU cap and seeder preset, newest $Window of them. $Ordered is oldest first
+# and ends with the candidate. A run on an overridden SKU is a different
+# machine, not a baseline for this one.
+function Select-ClientBaseline {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Ordered,
+        [int]$Window = 5
+    )
+    if ($Ordered.Count -lt 2) { return [pscustomobject]@{ Rows = @(); Excluded = 0 } }
+    $candidate = $Ordered[-1]
+    $earlier = @($Ordered[0..($Ordered.Count - 2)])
+    $same = @($earlier | Where-Object {
+        [string]$_.app_service_sku -eq [string]$candidate.app_service_sku -and
+        [string]$_.pool_dtu_max -eq [string]$candidate.pool_dtu_max -and
+        [string]$_.seeder_preset -eq [string]$candidate.seeder_preset
+    })
+    [pscustomobject]@{ Rows = @($same | Select-Object -Last $Window); Excluded = $earlier.Count - $same.Count }
+}
+
+# How many repetitions a complete result has, and whether the candidate has
+# them. Expected comes from -ExpectedReps, else from the most any baseline run
+# had. $null Expected = nothing to judge against.
+function Test-ClientComplete {
+    param(
+        [AllowNull()] $CandidateCount,
+        [AllowEmptyCollection()] [object[]]$BaselineRows = @(),
+        [int]$ExpectedReps = 0
+    )
+    $have = ConvertTo-IntOrNull ([string]$CandidateCount)
+    $expected = if ($ExpectedReps -gt 0) { $ExpectedReps } else {
+        $counts = @($BaselineRows | ForEach-Object { ConvertTo-IntOrNull ([string]$_.count) } | Where-Object { $null -ne $_ })
+        if ($counts.Count) { ($counts | Measure-Object -Maximum).Maximum } else { $null }
+    }
+    $complete = ($null -eq $expected) -or ($null -eq $have) -or ($have -ge $expected)
+    [pscustomobject]@{ Complete = $complete; Have = $have; Expected = $expected }
 }
 
 if ($DotSourceForTest) { return }
@@ -105,6 +158,22 @@ $report = New-Object System.Text.StringBuilder
 [void]$report.AppendLine("# Client measurement regression report`n")
 [void]$report.AppendLine("Source: ``$prefix``$(if ($Scenario) { " filtered to scenario '$Scenario'" } else { " (all scenarios)" })`n")
 $regressedAny = $false
+$incompleteAny = $false
+
+# What this run measured, as "version__tier". A cell of one of these with no
+# row from this run is a metric the run failed to produce.
+$runVersionTiers = [System.Collections.Generic.HashSet[string]]::new()
+if ($RunId) {
+    foreach ($list in $cells.Values) {
+        foreach ($row in $list) {
+            if ([string]$row.run_id -eq $RunId) { [void]$runVersionTiers.Add("$($row.umbraco_version)__$($row.infra_tier)") }
+        }
+    }
+    if ($runVersionTiers.Count -eq 0) {
+        $incompleteAny = $true
+        [void]$report.AppendLine("- **MISSING: run $RunId published no client results at all.** Every measurement failed, or the publish step did not run.")
+    }
+}
 if ($cells.Count -eq 0) { [void]$report.AppendLine("No client runs found under $prefix$(if ($Scenario) { " for scenario '$Scenario'" }).") }
 
 # Per-cell verdict + candidate row, keyed by cellKey — used below to build the
@@ -120,13 +189,33 @@ foreach ($cellKey in ($cells.Keys | Sort-Object)) {
         try { [datetime]::Parse([string]$_.TimeGenerated, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AdjustToUniversal) }
         catch { [datetime]::MinValue }
     })
+    if ($RunId) {
+        $mine = @($ordered | Where-Object { [string]$_.run_id -eq $RunId })
+        if ($mine.Count -eq 0) {
+            $versionTier = ($cellKey -split '__', 3)[0..1] -join '__'
+            if ($runVersionTiers.Contains($versionTier)) {
+                $incompleteAny = $true
+                [void]$report.AppendLine("- **${cellKey}: MISSING** - run $RunId has no result for this metric (every repetition failed)")
+            }
+            continue   # another run's cell: not this run's to judge
+        }
+        # Judge this run's row against what came before it.
+        $ordered = @($ordered[0..([array]::IndexOf($ordered, $mine[-1]))])
+    }
     $candidate = $ordered[-1]
-    if ($ordered.Count -lt 2) {
-        [void]$report.AppendLine("- ${cellKey}: insufficient baseline (1 run)")
+    $baseline = Select-ClientBaseline -Ordered $ordered -Window $BaselineWindow
+    $baselineRows = @($baseline.Rows)
+    $completeness = Test-ClientComplete -CandidateCount $candidate.count -BaselineRows $baselineRows -ExpectedReps $ExpectedReps
+    if (-not $completeness.Complete) {
+        $incompleteAny = $true
+        [void]$report.AppendLine("- **${cellKey}: INCOMPLETE** - $($completeness.Have) of $($completeness.Expected) repetitions succeeded; the median below rests on those only")
+    }
+    if ($baselineRows.Count -eq 0) {
+        $why = if ($baseline.Excluded -gt 0) { "no earlier run on the same SKU, DTU cap and seeder preset; $($baseline.Excluded) on another setup left out" } else { '1 run' }
+        [void]$report.AppendLine("- ${cellKey}: insufficient baseline ($why)")
         $cellVerdicts[$cellKey] = [pscustomobject]@{ Candidate = $candidate; Regressed = $false; Insufficient = $true }
         continue
     }
-    $baselineRows = @($ordered[0..($ordered.Count - 2)] | Select-Object -Last $BaselineWindow)
     # Blank/unparseable median_ms -> $null (never 0). A 0 would read as "faster",
     # masking a regression on the candidate side and dragging the baseline median
     # down on the other. Candidate with no valid median can't be judged -> skip.
@@ -234,8 +323,13 @@ if ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsClien
     }
 }
 
-if ($regressedAny -and -not $NoFailOnRegression) {
-    Write-Host "##vso[task.logissue type=error]Client measurement regression detected."
+if ($incompleteAny) {
+    # A warning even in report-only mode: this is a broken measurement, not a
+    # judgement about speed.
+    Write-Host "##vso[task.logissue type=warning]Client measurement is missing or incomplete for this run - see the report."
+}
+if (($regressedAny -or $incompleteAny) -and -not $NoFailOnRegression) {
+    Write-Host "##vso[task.logissue type=error]Client measurement regression detected, or the measurement is missing or incomplete."
     exit 1
 }
 exit 0

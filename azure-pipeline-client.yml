@@ -263,6 +263,7 @@ stages:
                     StorageAccountName           = '$(historyStorageAccount)'
                     ContainerName                = '$(historyContainer)'
                     OutputPath                   = "$(System.DefaultWorkingDirectory)/client-regression-report.md"
+                    RunId                        = '$(Build.BuildId)'
                     LogAnalyticsDceUri           = '$(monitoringDceUri)'
                     LogAnalyticsDcrImmutableId   = '$(monitoringDcrImmutableId)'
                     LogAnalyticsClientStreamName = '$(monitoringClientStreamName)'
