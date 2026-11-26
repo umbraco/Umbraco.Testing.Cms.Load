@@ -18,7 +18,12 @@ param (
     # File the script writes once the seeder finishes — the load-test job
     # reads it to surface seeder_duration_seconds in the published metrics.
     # On Skipped/Failed seeder, duration_seconds is written as null.
-    [Parameter(Mandatory = $true)] [string]$SeederResultPath
+    [Parameter(Mandatory = $true)] [string]$SeederResultPath,
+    # The site's runtime as App Service names it ('v10.0'). When given, the
+    # build is pinned to an installed SDK of that major: a build agent holding
+    # two SDKs (one build testing versions on two runtimes) would otherwise
+    # build every site with the newest one.
+    [string]$DotnetVersion = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -104,6 +109,25 @@ if (Test-Path -LiteralPath $buildDirName) {
 try {
     New-Item -ItemType Directory -Path $buildDirName -Force | Out-Null
     Set-Location -LiteralPath $buildDirName
+
+    # Pin this build to the SDK of the site's own runtime. Written before
+    # `dotnet new install`, which keeps installed templates per SDK version -
+    # the install and the `dotnet new umbraco` after it must see the same SDK.
+    # global.json applies to this folder and the project folder under it.
+    if ($DotnetVersion -match '^v(\d+)\.') {
+        $sdkMajor = $Matches[1]
+        $installedSdks = @(dotnet --list-sdks | ForEach-Object { ($_ -split ' ')[0] })
+        $pinnedSdk = $installedSdks |
+            Where-Object { $_ -match "^$sdkMajor\." } |
+            Sort-Object { [System.Management.Automation.SemanticVersion]$_ } |
+            Select-Object -Last 1
+        if ($pinnedSdk) {
+            @{ sdk = @{ version = $pinnedSdk; rollForward = 'disable' } } | ConvertTo-Json | Set-Content -LiteralPath 'global.json' -Encoding utf8
+            Write-Host "Building with .NET SDK $pinnedSdk (pinned in global.json; installed: $($installedSdks -join ', '))"
+        } else {
+            Write-Warning "No installed .NET SDK matches $DotnetVersion (installed: $($installedSdks -join ', ')); building with the default SDK."
+        }
+    }
 
     # Prerelease and nightly feeds — needed for Umbraco versions not yet on nuget.org.
     # `dotnet nuget add source` returns non-zero when the source name already

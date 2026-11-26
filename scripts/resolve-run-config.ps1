@@ -134,83 +134,167 @@ $runtimeMaps = @{
 $supportedMajors = @($runtimeMaps.Keys | Where-Object { -not $runtimeMaps[$_].blockedBy -and $_ -in $seederShippedMajors } | Sort-Object)
 $supportedList   = ($supportedMajors | ForEach-Object { "v$_" }) -join ', '
 
-$umbracoMajor = Get-UmbracoMajor $UmbracoVersion
-$runtimeMap = $runtimeMaps[$umbracoMajor]
-$dotnetVersion = $runtimeMap.runtime
-if (-not $dotnetVersion) {
-    Write-PipelineError "Umbraco $UmbracoVersion is unsupported: no .NET runtime is mapped for major $umbracoMajor. This pipeline can run $supportedList today. Extend `$runtimeMaps in resolve-run-config.ps1 (and scripts/seeder-versions.json) when a new major is supported."
+# One or more versions, comma-separated ("17.8.2,19.0.0-rc2"): every version
+# gets its own site and database on each selected tier, so two versions on one
+# tier share that tier's App Service plan and elastic pool - the same machine,
+# tested one after the other. Plain spaces are dropped here and in the
+# replace()/split() in azure-pipeline.yml, and nothing else is: the two must
+# stay in step, because the pipeline builds each testCaseId at compile time
+# from the same string. Any other character (a tab, a non-breaking space pasted
+# from a chat or a document) fails the check below instead of producing a
+# testCaseId the load-test stage can't find after everything is provisioned.
+$versions = @(($UmbracoVersion -replace ' ', '') -split ',')
+if (@($versions | Where-Object { $_ -eq '' }).Count -gt 0) {
+    Write-PipelineError "umbracoVersion '$UmbracoVersion' has an empty entry. Give one version, or several separated by commas (e.g. 17.8.2,19.0.0-rc2)."
 }
-if ($runtimeMap.blockedBy) {
-    # Fail here rather than at terraform plan: the provision stage only runs
-    # after ensureHistoryInfra/ensureMonitoringInfra, so "plan fails" still
-    # costs several minutes of agent time and idempotent-infra churn per attempt.
-    # The pinned provider version is read from the lock file so the message
-    # can't go stale on a lock bump.
-    $azurermPinned = 'unknown'
-    $lockPath = Join-Path $WorkspaceRoot 'Terraform/.terraform.lock.hcl'
-    if (Test-Path -LiteralPath $lockPath) {
-        $lock = Get-Content -LiteralPath $lockPath -Raw
-        if ($lock -match 'provider "registry\.terraform\.io/hashicorp/azurerm" \{\s*version\s*=\s*"([^"]+)"') { $azurermPinned = $Matches[1] }
-    }
-    $reason = $runtimeMap.blockedBy.Replace('{azurerm}', $azurermPinned)
-    Write-PipelineError "Umbraco $UmbracoVersion (major $umbracoMajor, .NET $dotnetVersion) can't be provisioned yet: $reason. Runnable today: $supportedList."
+$malformed = @($versions | Where-Object { $_ -notmatch '^[0-9A-Za-z][0-9A-Za-z.\-]*$' })
+if ($malformed.Count -gt 0) {
+    $shown = ($malformed | ForEach-Object { "'$_' (" + (($_.ToCharArray() | Where-Object { $_ -notmatch '[0-9A-Za-z.\-]' } | ForEach-Object { 'U+{0:X4}' -f [int]$_ }) -join ' ') + ')' }) -join ', '
+    Write-PipelineError "umbracoVersion has characters other than letters, digits, dots, hyphens, commas and spaces: $shown. Retype the versions rather than pasting them."
 }
-$sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
-$sdkIncludePreview = if ($runtimeMap.previewSdk) { 'true' } else { 'false' }
-
-# Confirm the exact requested version is actually published before Terraform
-# provisions anything. install-umbraco-cms-on-appservice.ps1's first package
-# pull is `dotnet new install "Umbraco.Templates@$UmbracoVersion"`, so that's
-# the most direct proxy for "will this install structurally succeed" - a typo'd
-# or not-yet-published version (a queued RC that hasn't hit any feed yet) would
-# otherwise fail 10+ minutes into deploy_umbraco, after a full App Service + SQL
-# DB were already stood up. Same "fail here costs nothing" rationale as below.
-# Checked against every feed the install restores from, so nightly tags pass.
-if (-not $SkipNuGetCheck) {
-    if (-not (Test-NuGetPackageVersionExists -PackageId 'Umbraco.Templates' -Version $UmbracoVersion)) {
-        Write-PipelineError "Umbraco.Templates $UmbracoVersion was not found on nuget.org or the Umbraco prerelease/nightly MyGet feeds (checked $($UmbracoPackageFlatContainerUrls -join ', '); a feed warned about as unreachable above was skipped). Verify the version string and that it's actually published before queuing - this pipeline provisions a full App Service + SQL DB before install-umbraco-cms-on-appservice.ps1 would otherwise discover this."
-    }
+$repeated = @($versions | Group-Object | Where-Object Count -gt 1 | ForEach-Object Name)
+if ($repeated.Count -gt 0) {
+    Write-PipelineError "umbracoVersion lists $($repeated -join ', ') more than once. Each version gets one site per tier; to repeat a version, queue another build."
+}
+if ($versions.Count -gt 4) {
+    Write-PipelineError "umbracoVersion lists $($versions.Count) versions; one build takes at most 4 (each adds an install and a full test per selected tier)."
+}
+if ($versions.Count -gt 1 -and $Workload -eq 'client') {
+    Write-PipelineError "The browser pipeline (workload=client) takes one version per build; got $($versions.Count)."
 }
 
-# Validate that the chosen (scenario, workload) pair has the files the runner
-# will look for. Failing here costs nothing; failing 15 minutes into the
-# provision stage when generate-loadtest-config can't find a .jmx wastes
-# real Azure time and money.
-$scenarioRoot = Join-Path $WorkspaceRoot "loadtests/scenarios/$Scenario"
-if (-not (Test-Path -LiteralPath $scenarioRoot -PathType Container)) {
-    Write-PipelineError "Scenario '$Scenario' has no folder under loadtests/scenarios/. Available scenarios are the subfolders of loadtests/scenarios/."
-}
-if ($Workload -eq 'frontend') {
-    $locustfilePath = Join-Path $scenarioRoot 'locustfile.py'
-    if (-not (Test-Path -LiteralPath $locustfilePath)) {
-        Write-PipelineError "Workload=frontend selected but scenario '$Scenario' has no locustfile.py. Either add one or pick a different workload."
+$resolvedVersions = @()
+foreach ($version in $versions) {
+    $umbracoMajor = Get-UmbracoMajor $version
+    $runtimeMap = $runtimeMaps[$umbracoMajor]
+    $dotnetVersion = $runtimeMap.runtime
+    if (-not $dotnetVersion) {
+        Write-PipelineError "Umbraco $version is unsupported: no .NET runtime is mapped for major $umbracoMajor. This pipeline can run $supportedList today. Extend `$runtimeMaps in resolve-run-config.ps1 (and scripts/seeder-versions.json) when a new major is supported."
     }
-} elseif ($Workload -eq 'backoffice') {
-    $jmeterMajor = Get-JmeterMajor $umbracoMajor
-    $jmeterDir = Join-Path $scenarioRoot "jmeter/v$jmeterMajor"
-    if (-not (Test-Path -LiteralPath $jmeterDir -PathType Container)) {
-        Write-PipelineError "Workload=backoffice selected but scenario '$Scenario' has no jmeter/v$jmeterMajor/ folder (looked at $jmeterDir). Add JMeter test plans there or pick a different scenario."
+    if ($runtimeMap.blockedBy) {
+        # Fail here rather than at terraform plan: the provision stage only runs
+        # after ensureHistoryInfra/ensureMonitoringInfra, so "plan fails" still
+        # costs several minutes of agent time and idempotent-infra churn per attempt.
+        # The pinned provider version is read from the lock file so the message
+        # can't go stale on a lock bump.
+        $azurermPinned = 'unknown'
+        $lockPath = Join-Path $WorkspaceRoot 'Terraform/.terraform.lock.hcl'
+        if (Test-Path -LiteralPath $lockPath) {
+            $lock = Get-Content -LiteralPath $lockPath -Raw
+            if ($lock -match 'provider "registry\.terraform\.io/hashicorp/azurerm" \{\s*version\s*=\s*"([^"]+)"') { $azurermPinned = $Matches[1] }
+        }
+        $reason = $runtimeMap.blockedBy.Replace('{azurerm}', $azurermPinned)
+        Write-PipelineError "Umbraco $version (major $umbracoMajor, .NET $dotnetVersion) can't be provisioned yet: $reason. Runnable today: $supportedList."
     }
-    $jmxFiles = @(Get-ChildItem -Path $jmeterDir -Filter '*.jmx' -File -ErrorAction SilentlyContinue)
-    if ($jmxFiles.Count -eq 0) {
-        Write-PipelineError "Workload=backoffice selected but $jmeterDir contains no .jmx files."
+    $sdkVersion = $dotnetVersion -replace '^v(\d+)\.0$', '$1.x'
+    $sdkIncludePreview = if ($runtimeMap.previewSdk) { 'true' } else { 'false' }
+
+    # Confirm the exact requested version is actually published before Terraform
+    # provisions anything. install-umbraco-cms-on-appservice.ps1's first package
+    # pull is `dotnet new install "Umbraco.Templates@$UmbracoVersion"`, so that's
+    # the most direct proxy for "will this install structurally succeed" - a typo'd
+    # or not-yet-published version (a queued RC that hasn't hit any feed yet) would
+    # otherwise fail 10+ minutes into deploy_umbraco, after a full App Service + SQL
+    # DB were already stood up. Same "fail here costs nothing" rationale as below.
+    # Checked against every feed the install restores from, so nightly tags pass.
+    if (-not $SkipNuGetCheck) {
+        if (-not (Test-NuGetPackageVersionExists -PackageId 'Umbraco.Templates' -Version $version)) {
+            Write-PipelineError "Umbraco.Templates $version was not found on nuget.org or the Umbraco prerelease/nightly MyGet feeds (checked $($UmbracoPackageFlatContainerUrls -join ', '); a feed warned about as unreachable above was skipped). Verify the version string and that it's actually published before queuing - this pipeline provisions a full App Service + SQL DB before install-umbraco-cms-on-appservice.ps1 would otherwise discover this."
+        }
     }
-} elseif ($Workload -eq 'client') {
-    # Client workload = the scenario's Playwright project. Fail at queue-time if
-    # absent, mirroring the frontend/backoffice checks above.
-    $clientConfig = Join-Path $scenarioRoot 'client/playwright.config.ts'
-    if (-not (Test-Path -LiteralPath $clientConfig)) {
-        Write-PipelineError "Workload=client selected but scenario '$Scenario' has no client/ project (looked for $clientConfig). Add a Playwright project under loadtests/scenarios/$Scenario/client/ or pick a different workload."
+
+    # Validate that the chosen (scenario, workload) pair has the files the runner
+    # will look for. Failing here costs nothing; failing 15 minutes into the
+    # provision stage when generate-loadtest-config can't find a .jmx wastes
+    # real Azure time and money.
+    $scenarioRoot = Join-Path $WorkspaceRoot "loadtests/scenarios/$Scenario"
+    if (-not (Test-Path -LiteralPath $scenarioRoot -PathType Container)) {
+        Write-PipelineError "Scenario '$Scenario' has no folder under loadtests/scenarios/. Available scenarios are the subfolders of loadtests/scenarios/."
+    }
+    if ($Workload -eq 'frontend') {
+        $locustfilePath = Join-Path $scenarioRoot 'locustfile.py'
+        if (-not (Test-Path -LiteralPath $locustfilePath)) {
+            Write-PipelineError "Workload=frontend selected but scenario '$Scenario' has no locustfile.py. Either add one or pick a different workload."
+        }
+    } elseif ($Workload -eq 'backoffice') {
+        $jmeterMajor = Get-JmeterMajor $umbracoMajor
+        $jmeterDir = Join-Path $scenarioRoot "jmeter/v$jmeterMajor"
+        if (-not (Test-Path -LiteralPath $jmeterDir -PathType Container)) {
+            Write-PipelineError "Workload=backoffice selected but scenario '$Scenario' has no jmeter/v$jmeterMajor/ folder (looked at $jmeterDir). Add JMeter test plans there or pick a different scenario."
+        }
+        $jmxFiles = @(Get-ChildItem -Path $jmeterDir -Filter '*.jmx' -File -ErrorAction SilentlyContinue)
+        if ($jmxFiles.Count -eq 0) {
+            Write-PipelineError "Workload=backoffice selected but $jmeterDir contains no .jmx files."
+        }
+    } elseif ($Workload -eq 'client') {
+        # Client workload = the scenario's Playwright project. Fail at queue-time if
+        # absent, mirroring the frontend/backoffice checks above.
+        $clientConfig = Join-Path $scenarioRoot 'client/playwright.config.ts'
+        if (-not (Test-Path -LiteralPath $clientConfig)) {
+            Write-PipelineError "Workload=client selected but scenario '$Scenario' has no client/ project (looked for $clientConfig). Add a Playwright project under loadtests/scenarios/$Scenario/client/ or pick a different workload."
+        }
+    }
+
+    # Seeder gate (map loaded at the top of this script). Checked here so a major
+    # without a published seeder build fails at validation (minute 0) instead of
+    # install (minute ~10), after Terraform has already stood up a full App Service
+    # + SQL DB.
+    $seederPackageVersion = $seederPackageVersions["$umbracoMajor"]
+    if (-not $seederPackageVersion) {
+        Write-PipelineError "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet (no entry in scripts/seeder-versions.json). Update scripts/seeder-versions.json once the package ships for that major."
+    }
+
+    $resolvedVersions += @{
+        version    = $version
+        major      = $umbracoMajor
+        dotnet     = $dotnetVersion
+        sdk        = $sdkVersion
+        previewSdk = $sdkIncludePreview
     }
 }
 
-# Seeder gate (map loaded at the top of this script). Checked here so a major
-# without a published seeder build fails at validation (minute 0) instead of
-# install (minute ~10), after Terraform has already stood up a full App Service
-# + SQL DB.
-$seederPackageVersion = $seederPackageVersions["$umbracoMajor"]
-if (-not $seederPackageVersion) {
-    Write-PipelineError "Umbraco.Cms.TestDataSeeder hasn't shipped a build for major $umbracoMajor yet (no entry in scripts/seeder-versions.json). Update scripts/seeder-versions.json once the package ships for that major."
+# The build agent installs one SDK per distinct runtime (UseDotNet@2 in
+# provision.yml, a second one only when resolvedSdkVersion2 is set); the
+# install script then pins each site's build to its own SDK.
+$sdks = @($resolvedVersions | ForEach-Object { $_.sdk } | Select-Object -Unique)
+if ($sdks.Count -gt 2) {
+    Write-PipelineError "umbracoVersion '$UmbracoVersion' needs $($sdks.Count) different .NET SDKs ($($sdks -join ', ')); one build installs at most 2."
+}
+$first  = $resolvedVersions[0]
+$second = @($resolvedVersions | Where-Object { $_.sdk -ne $first.sdk })[0]
+$dotnetVersion      = $first.dotnet
+$sdkVersion         = $first.sdk
+$sdkIncludePreview  = $first.previewSdk
+$sdkVersion2        = if ($second) { $second.sdk } else { '' }
+$sdkIncludePreview2 = if ($second) { $second.previewSdk } else { 'false' }
+
+# The load tests run one after the other in a single job on a Microsoft-hosted
+# agent, which stops any job at 360 minutes whatever timeoutInMinutes says
+# (learn.microsoft.com/azure/devops/pipelines/agents/hosted, "Capabilities and
+# limitations"). Estimate the job from the cases and refuse a queue that can't
+# finish, rather than lose the last cases to a cancel after hours of runtime.
+# Per case: settle-in + measured time + ~8 min of warm-up, start/stop and
+# publishing (builds 306400 and 306563: 46.5-46.8 min for two frontend
+# standard cases, i.e. ~23 min each). Backoffice assumes all six plans, each
+# with ~3 min of its own set-up and publishing. Profile durations only; a
+# scenario.yaml duration override isn't known here.
+$caseCount = $versions.Count * $tiers.Count
+$minutesPerCase = switch ($Workload) {
+    'frontend'   { [math]::Ceiling(((Get-SettleInSeconds -LoadProfile $Profile) + $duration) / 60) + 8 }
+    'backoffice' { 6 * ([math]::Ceiling($duration / 60) + 3) + 8 }
+    default      { 0 }
+}
+$estimatedMinutes = $caseCount * $minutesPerCase
+$jobBudgetMinutes = 320
+# Refused only when several versions are listed: a single-version queue keeps
+# today's behaviour (at most four cases) and gets a warning instead, since the
+# estimate is a rough one.
+if ($estimatedMinutes -gt $jobBudgetMinutes) {
+    $budgetMessage = "This build would run about $estimatedMinutes minutes of load tests ($($versions.Count) version(s) x $($tiers.Count) tier(s) x ~$minutesPerCase min), and a Microsoft-hosted job stops at 360. Select fewer versions or tiers, or split them over two builds."
+    if ($versions.Count -gt 1) {
+        Write-PipelineError $budgetMessage
+    }
+    Write-Host "##vso[task.logissue type=warning]$budgetMessage"
 }
 
 # 'Auto' = Terraform's "use the tier's default" sentinel (0 for DTU, '' for SKU).
@@ -219,29 +303,38 @@ $appSkuOverrideValue  = if ($AppSkuOverride  -eq 'Auto') { ''  } else { $AppSkuO
 
 Write-Host "Tiers:           $($tiers -join ', ')"
 Write-Host "Profile '$Profile': preset=$preset users=$users spawn=$spawn duration=${duration}s engines=$engines"
-Write-Host "Umbraco $UmbracoVersion (major $umbracoMajor) -> .NET $dotnetVersion (SDK $sdkVersion, preview SDKs: $sdkIncludePreview)"
+foreach ($v in $resolvedVersions) {
+    Write-Host "Umbraco $($v.version) (major $($v.major)) -> .NET $($v.dotnet) (SDK $($v.sdk), preview SDKs: $($v.previewSdk))"
+}
+if ($minutesPerCase -gt 0) { Write-Host "Load tests:      $caseCount case(s), about $estimatedMinutes min" }
 Write-Host "Pool DTU override: $(if ($poolDtuOverrideValue -ne '0') { "$poolDtuOverrideValue DTUs per DB" } else { 'Auto (per-tier defaults)' })"
 Write-Host "App SKU override:  $(if ($appSkuOverrideValue) { $appSkuOverrideValue } else { 'Auto (per-tier defaults)' })"
 
-$testCases = @(@{
-    umbraco  = $UmbracoVersion
-    dotnet   = $dotnetVersion
-    scenario = $Scenario
-    tiers    = $tiers
+$testCases = @($resolvedVersions | ForEach-Object {
+    @{
+        umbraco  = $_.version
+        dotnet   = $_.dotnet
+        scenario = $Scenario
+        tiers    = $tiers
+    }
 })
-$env:TEST_CASES_JSON = ($testCases | ConvertTo-Json -Compress -Depth 5)
+$env:TEST_CASES_JSON = (ConvertTo-Json -InputObject $testCases -Compress -Depth 5)
 
 # Downstream stages read these via $[stageDependencies.X.Y.outputs['out.NAME']].
 Write-Host "##vso[task.setvariable variable=resolvedDotnetVersion;isOutput=true]$dotnetVersion"
 Write-Host "##vso[task.setvariable variable=resolvedSdkVersion;isOutput=true]$sdkVersion"
 Write-Host "##vso[task.setvariable variable=resolvedSdkIncludePreview;isOutput=true]$sdkIncludePreview"
+# Empty unless the versions need a second SDK; provision.yml skips its second
+# UseDotNet@2 on empty.
+Write-Host "##vso[task.setvariable variable=resolvedSdkVersion2;isOutput=true]$sdkVersion2"
+Write-Host "##vso[task.setvariable variable=resolvedSdkIncludePreview2;isOutput=true]$sdkIncludePreview2"
 Write-Host "##vso[task.setvariable variable=resolvedSeederPreset;isOutput=true]$preset"
 Write-Host "##vso[task.setvariable variable=resolvedEngineInstances;isOutput=true]$engines"
 Write-Host "##vso[task.setvariable variable=resolvedPoolDtuOverride;isOutput=true]$poolDtuOverrideValue"
 Write-Host "##vso[task.setvariable variable=resolvedAppSkuOverride;isOutput=true]$appSkuOverrideValue"
 Write-Host "##vso[task.setvariable variable=resolvedWorkload;isOutput=true]$Workload"
 
-# prepare-test-cases.ps1 expands one entry × N tiers into N test cases and
+# prepare-test-cases.ps1 expands each entry × N tiers into N test cases and
 # emits the final testCasesJson + resolvedTestCases output variables.
 & "$WorkspaceRoot/scripts/prepare-test-cases.ps1" `
     -UserAmount $users `

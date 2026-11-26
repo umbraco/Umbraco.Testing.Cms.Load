@@ -238,7 +238,7 @@ resource "null_resource" "deploy_umbraco" {
     # this file via the same path to surface seeder duration in the published metrics.
     # Module-relative: local-exec's cwd is Terraform's invocation dir, not this
     # module's, so a repo-relative path only works while the layout holds.
-    command     = "${path.module}/../scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\" -SeederResultPath \"${path.root}/../.seeder-results/${var.test_case_id}.json\""
+    command     = "${path.module}/../scripts/install-umbraco-cms-on-appservice.ps1 -ResourceGroupName \"${var.resource_group_name}\" -AppServiceName \"${azurerm_windows_web_app.app_service.name}\" -AppServiceHostname \"${azurerm_windows_web_app.app_service.default_hostname}\" -UmbracoVersion \"${var.umbraco_version}\" -Scenario \"${var.scenario}\" -SeederPreset \"${var.seeder_preset}\" -DotnetVersion \"${var.dotnet_version}\" -SeederResultPath \"${path.root}/../.seeder-results/${var.test_case_id}.json\""
     interpreter = ["pwsh", "-Command"]
   }
 

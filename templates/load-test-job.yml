@@ -66,12 +66,26 @@ steps:
   - task: PowerShell@2
     displayName: 'Reset per-tier state [${{ parameters.testCaseId }}]'
     condition: succeededOrFailed()
+    env:
+      RESOLVED_TEST_CASES: $(resolvedTestCases)
     inputs:
       targetType: 'inline'
       script: |
         foreach ($name in 'activeTestCaseId', 'tierPlanStarted', 'tierConfigFailed', 'loadTestConfigPath', 'appServiceResourceId', 'safeTestCaseId', 'loadTestStartTime', 'loadTestEndTime') {
             Write-Host "##vso[task.setvariable variable=$name]"
         }
+        # This case's own runtime: one build can hold versions on different
+        # runtimes. Set here, in the one step that always runs, because the
+        # placeholder row a failed tier publishes needs it too. Falls back to
+        # the build's first runtime if the case can't be found.
+        $caseDotnet = '$(resolvedDotnetVersion)'
+        try {
+            $mine = ($env:RESOLVED_TEST_CASES | ConvertFrom-Json).'${{ parameters.testCaseId }}'
+            if ($mine.dotnetVersion) { $caseDotnet = $mine.dotnetVersion }
+        } catch {
+            Write-Warning "Could not read this case's runtime from resolvedTestCases: $($_.Exception.Message)"
+        }
+        Write-Host "##vso[task.setvariable variable=caseDotnetVersion]$caseDotnet"
         $dir = "$(System.DefaultWorkingDirectory)/loadTest"
         if (Test-Path -LiteralPath $dir) {
             Remove-Item -LiteralPath $dir -Recurse -Force
@@ -679,7 +693,7 @@ steps:
           -Branch "$(Build.SourceBranchName)"
           -RunStartedAt "$(System.PipelineStartTime)"
           -UmbracoVersion "${{ parameters.umbracoVersion }}"
-          -DotNetVersion "$(resolvedDotnetVersion)"
+          -DotNetVersion "$(caseDotnetVersion)"
           -AppServiceSku "$(appServiceSku)"
           -PoolDtuMax $(poolDtuMax)
           -SeederPreset "$(resolvedSeederPreset)"
@@ -852,7 +866,7 @@ steps:
             -Branch "$(Build.SourceBranchName)"
             -RunStartedAt "$(System.PipelineStartTime)"
             -UmbracoVersion "${{ parameters.umbracoVersion }}"
-            -DotNetVersion "$(resolvedDotnetVersion)"
+            -DotNetVersion "$(caseDotnetVersion)"
             -AppServiceSku "$(appServiceSku)"
             -PoolDtuMax $(poolDtuMax)
             -SeederPreset "$(resolvedSeederPreset)"
@@ -913,7 +927,7 @@ steps:
           -Branch "$(Build.SourceBranchName)"
           -RunStartedAt "$(System.PipelineStartTime)"
           -UmbracoVersion "${{ parameters.umbracoVersion }}"
-          -DotNetVersion "$(resolvedDotnetVersion)"
+          -DotNetVersion "$(caseDotnetVersion)"
           -AppServiceSku "$(appServiceSku)"
           -PoolDtuMax $(poolDtuMax)
           -SeederPreset "$(resolvedSeederPreset)"

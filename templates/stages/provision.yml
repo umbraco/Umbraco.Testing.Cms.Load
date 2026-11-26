@@ -182,6 +182,8 @@ stages:
       resolvedAppSkuOverride:   $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedAppSkuOverride'] ]
       resolvedSdkVersion:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkVersion'] ]
       resolvedSdkIncludePreview: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkIncludePreview'] ]
+      resolvedSdkVersion2:       $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkVersion2'] ]
+      resolvedSdkIncludePreview2: $[ stageDependencies.validateTestCases.prepareTestCases.outputs['out.resolvedSdkIncludePreview2'] ]
     jobs:
       - job: checkResourceGroup
         displayName: Check if resource group exists
@@ -258,6 +260,17 @@ stages:
               # 'true' only for a major whose .NET is still pre-GA. None today: .NET 11
               # (v19) went GA on 10-11-2026 - see previewSdk in resolve-run-config.ps1.
               includePreviewVersions: $(resolvedSdkIncludePreview)
+
+          # Only when one build holds versions on two runtimes (e.g. 17 on .NET 10
+          # and 19 on .NET 11). Both SDKs then sit side by side and the install
+          # script pins each site's build to its own (global.json).
+          - task: UseDotNet@2
+            displayName: 'Install .NET SDK $(resolvedSdkVersion2) (second runtime)'
+            condition: and(succeeded(), ne(variables['resolvedSdkVersion2'], ''))
+            inputs:
+              packageType: sdk
+              version: '$(resolvedSdkVersion2)'
+              includePreviewVersions: $(resolvedSdkIncludePreview2)
 
           - task: PowerShell@2
             displayName: Terraform Init

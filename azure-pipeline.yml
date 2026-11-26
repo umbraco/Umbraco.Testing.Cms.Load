@@ -8,7 +8,7 @@ pool:
 
 parameters:
   - name: umbracoVersion
-    displayName: Umbraco version (e.g. 17.0.0, 17.0.1-rc.1, 17.1.0-beta.2)
+    displayName: 'Umbraco version (e.g. 17.0.0 or 17.1.0-beta.2). Several, comma-separated, to compare in one build: 17.8.2,19.0.0'
     type: string
     default: '17.0.0'
 
@@ -236,71 +236,79 @@ stages:
     jobs:
       - job: runLoadTests
         displayName: Run Load Tests
-        # Each case: warm-up (~5 min) + load test (up to 900s with settle-in) + publish. Up to four
-        # cases per queue (one per selected tier); budget generously.
+        # Each case: warm-up (~5 min) + load test (up to 900s with settle-in) + publish. One
+        # case per selected tier per version (up to 4 x 4); budget generously.
         timeoutInMinutes: 720
         steps:
-          # Tier expansion driven by the runStarter/runStandard/runPro checkboxes.
+          # Tier expansion driven by the runStarter/runStandard/runPro checkboxes;
+          # within a tier, one test per version in umbracoVersion, in the order
+          # given. Versions on one tier share its App Service plan (one machine)
+          # and run one after the other with the others stopped. The split()
+          # must match the one in resolve-run-config.ps1 (commas; plain spaces dropped).
           # Profile is independent and only sets load intensity (resolved via the
           # runtime variables resolvedSeederPreset / resolvedEngineInstances etc.).
           # Keep testCaseId format in sync with the runtime construction in
           # prepare-test-cases.ps1.
           - ${{ if eq(parameters.runStarter, true) }}:
-            - template: templates/load-test-job.yml
-              parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Starter__${{ parameters.scenario }}'
-                tier: 'Starter'
-                scenario: '${{ parameters.scenario }}'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
-                workload: '${{ parameters.workload }}'
-                jmxNames: ${{ parameters.backofficePlans }}
-                skipWarmup: ${{ parameters.skipWarmup }}
-                logAnalyticsDceUri: $(monitoringDceUri)
-                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                logAnalyticsStreamName: $(monitoringStreamName)
-                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+            - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
+              - template: templates/load-test-job.yml
+                parameters:
+                  testCaseId: '${{ version }}__Starter__${{ parameters.scenario }}'
+                  tier: 'Starter'
+                  scenario: '${{ parameters.scenario }}'
+                  umbracoVersion: '${{ version }}'
+                  workload: '${{ parameters.workload }}'
+                  jmxNames: ${{ parameters.backofficePlans }}
+                  skipWarmup: ${{ parameters.skipWarmup }}
+                  logAnalyticsDceUri: $(monitoringDceUri)
+                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                  logAnalyticsStreamName: $(monitoringStreamName)
+                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
           - ${{ if eq(parameters.runStandard, true) }}:
-            - template: templates/load-test-job.yml
-              parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Standard__${{ parameters.scenario }}'
-                tier: 'Standard'
-                scenario: '${{ parameters.scenario }}'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
-                workload: '${{ parameters.workload }}'
-                jmxNames: ${{ parameters.backofficePlans }}
-                skipWarmup: ${{ parameters.skipWarmup }}
-                logAnalyticsDceUri: $(monitoringDceUri)
-                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                logAnalyticsStreamName: $(monitoringStreamName)
-                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+            - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
+              - template: templates/load-test-job.yml
+                parameters:
+                  testCaseId: '${{ version }}__Standard__${{ parameters.scenario }}'
+                  tier: 'Standard'
+                  scenario: '${{ parameters.scenario }}'
+                  umbracoVersion: '${{ version }}'
+                  workload: '${{ parameters.workload }}'
+                  jmxNames: ${{ parameters.backofficePlans }}
+                  skipWarmup: ${{ parameters.skipWarmup }}
+                  logAnalyticsDceUri: $(monitoringDceUri)
+                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                  logAnalyticsStreamName: $(monitoringStreamName)
+                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
           - ${{ if eq(parameters.runPro, true) }}:
-            - template: templates/load-test-job.yml
-              parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Pro__${{ parameters.scenario }}'
-                tier: 'Pro'
-                scenario: '${{ parameters.scenario }}'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
-                workload: '${{ parameters.workload }}'
-                jmxNames: ${{ parameters.backofficePlans }}
-                skipWarmup: ${{ parameters.skipWarmup }}
-                logAnalyticsDceUri: $(monitoringDceUri)
-                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                logAnalyticsStreamName: $(monitoringStreamName)
-                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+            - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
+              - template: templates/load-test-job.yml
+                parameters:
+                  testCaseId: '${{ version }}__Pro__${{ parameters.scenario }}'
+                  tier: 'Pro'
+                  scenario: '${{ parameters.scenario }}'
+                  umbracoVersion: '${{ version }}'
+                  workload: '${{ parameters.workload }}'
+                  jmxNames: ${{ parameters.backofficePlans }}
+                  skipWarmup: ${{ parameters.skipWarmup }}
+                  logAnalyticsDceUri: $(monitoringDceUri)
+                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                  logAnalyticsStreamName: $(monitoringStreamName)
+                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
           - ${{ if eq(parameters.runEnterprise, true) }}:
-            - template: templates/load-test-job.yml
-              parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__${{ parameters.scenario }}'
-                tier: 'Enterprise'
-                scenario: '${{ parameters.scenario }}'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
-                workload: '${{ parameters.workload }}'
-                jmxNames: ${{ parameters.backofficePlans }}
-                skipWarmup: ${{ parameters.skipWarmup }}
-                logAnalyticsDceUri: $(monitoringDceUri)
-                logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                logAnalyticsStreamName: $(monitoringStreamName)
-                logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+            - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
+              - template: templates/load-test-job.yml
+                parameters:
+                  testCaseId: '${{ version }}__Enterprise__${{ parameters.scenario }}'
+                  tier: 'Enterprise'
+                  scenario: '${{ parameters.scenario }}'
+                  umbracoVersion: '${{ version }}'
+                  workload: '${{ parameters.workload }}'
+                  jmxNames: ${{ parameters.backofficePlans }}
+                  skipWarmup: ${{ parameters.skipWarmup }}
+                  logAnalyticsDceUri: $(monitoringDceUri)
+                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+                  logAnalyticsStreamName: $(monitoringStreamName)
+                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
 
           # Stop all apps so none run idle during the manual validation window.
           # always() (not succeededOrFailed) so a cancelled run also stops the
@@ -345,7 +353,11 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
-                $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                # One major when every version in the build shares it; with
+                # several majors the check reads the whole scenario and the
+                # RunId pin below narrows it to this build's rows.
+                $majors = @(('${{ parameters.umbracoVersion }}' -replace ' ', '') -split ',' | ForEach-Object { Get-UmbracoMajor $_ } | Select-Object -Unique)
+                $major = if ($majors.Count -eq 1) { $majors[0] } else { '' }
 
                 # Defaults off because the scenario_name discriminator fix reset
                 # baseline keys, so windows still mix pre-fix runs. Tick the box

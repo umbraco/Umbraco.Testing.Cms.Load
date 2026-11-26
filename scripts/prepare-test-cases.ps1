@@ -342,6 +342,8 @@ foreach ($case in $cases) {
             testDuration = $effDuration
             rampTime     = $effRampTime
             loadProfile  = $LoadProfile
+            # Per case, because one build can hold versions on different runtimes.
+            dotnetVersion = [string]$case.dotnet
             label        = "$($case.umbraco)/${tierName}/$($case.scenario)"
         }
     }
