@@ -39,6 +39,16 @@
 //   jit_n      methods compiled since the previous beat. A burst long after
 //              start-up means code is running for the first time: something
 //              was compiled or loaded at run time, or a job ran its first lap.
+//   Cost lines, once a minute. These are for comparing versions, not for
+//   diagnosing pauses: what an operation costs barely varies between runs,
+//   where its response time does.
+//     "LoadTestHeartbeat cost: class=... n=... ms=... sql_n=... sql_ms=...
+//      commit_ms=..." - one line per kind of request (Home, Section, Category,
+//      Page, Detail, Media, FormPost, SeederApi, Other) with what all requests
+//      of that kind used in the minute: divide by n for the cost of one.
+//     "LoadTestHeartbeat cost total: requests=... cpu_ms=... alloc_mb=...
+//      gen0=... gen1=... gen2=..." - what the whole process used in the same
+//      minute, so CPU and memory allocated per request can be worked out.
 //   asm_n      assemblies loaded since the previous beat; their names follow
 //              on a "LoadTestHeartbeat assemblies loaded" line. An assembly
 //              arriving mid-run is run-time compilation (models, views).
@@ -188,6 +198,10 @@ public static class LoadTestRequestTracker
     private static long _slowDropped;
     private static long _maxRequestMs;
 
+    // What each kind of request used since the last DrainCost:
+    // [0] requests, [1] elapsed ticks, [2] SQL commands, [3] SQL ticks, [4] commit ticks.
+    private static readonly ConcurrentDictionary<string, long[]> Cost = new();
+
     public static long InFlight => Interlocked.Read(ref _inFlight);
 
     public static long Started => Interlocked.Read(ref _started);
@@ -251,6 +265,20 @@ public static class LoadTestRequestTracker
         {
         }
 
+        try
+        {
+            long[] cost = Cost.GetOrAdd(Classify(context.Request.Method, context.Request.Path.Value), _ => new long[5]);
+            Interlocked.Increment(ref cost[0]);
+            Interlocked.Add(ref cost[1], now - stats.StartTimestamp);
+            Interlocked.Add(ref cost[2], Interlocked.Read(ref stats.SqlCommands));
+            Interlocked.Add(ref cost[3], Interlocked.Read(ref stats.SqlTicks));
+            Interlocked.Add(ref cost[4], Interlocked.Read(ref stats.CommitTicks));
+        }
+        catch (Exception)
+        {
+            // A diagnostic must never fail a request.
+        }
+
         if (ms < SlowRequestMs)
         {
             return;
@@ -273,6 +301,65 @@ public static class LoadTestRequestTracker
         catch (Exception)
         {
             // A diagnostic must never fail a request.
+        }
+    }
+
+    // The kind of request, from its path. The seeded tree is section /
+    // category / page / detail, one path segment per level, so the depth names
+    // the kind without knowing the content.
+    public static string Classify(string method, string? path)
+    {
+        if (string.IsNullOrEmpty(path) || path == "/")
+        {
+            return "Home";
+        }
+
+        if (path.StartsWith("/umbraco/api/contactform", StringComparison.OrdinalIgnoreCase))
+        {
+            return HttpMethods.IsPost(method) ? "FormPost" : "SeederApi";
+        }
+
+        if (path.StartsWith("/umbraco/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SeederApi";
+        }
+
+        if (path.StartsWith("/media/", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Media";
+        }
+
+        if (path.StartsWith("/umbraco", StringComparison.OrdinalIgnoreCase) || path.Contains('.'))
+        {
+            return "Other";
+        }
+
+        int segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries).Length;
+        return segments switch
+        {
+            1 => "Section",
+            2 => "Category",
+            3 => "Page",
+            4 => "Detail",
+            _ => "Other",
+        };
+    }
+
+    // What each kind of request used since the previous call, in milliseconds.
+    public static void DrainCost(List<(string Class, long Requests, long Ms, long SqlCommands, long SqlMs, long CommitMs)> costs)
+    {
+        foreach (KeyValuePair<string, long[]> entry in Cost)
+        {
+            long[] cost = entry.Value;
+            long requests = Interlocked.Exchange(ref cost[0], 0);
+            long ticks = Interlocked.Exchange(ref cost[1], 0);
+            long sqlCommands = Interlocked.Exchange(ref cost[2], 0);
+            long sqlTicks = Interlocked.Exchange(ref cost[3], 0);
+            long commitTicks = Interlocked.Exchange(ref cost[4], 0);
+            if (requests > 0)
+            {
+                costs.Add((entry.Key, requests, ToMs(ticks), sqlCommands, ToMs(sqlTicks), ToMs(commitTicks)));
+            }
         }
     }
 
@@ -767,6 +854,10 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         long lastCpuAt = clock.ElapsedMilliseconds;
         TopThreads();   // baseline for the first beat
         long lastJit = System.Runtime.JitInfo.GetCompiledMethodCount();
+        TimeSpan minuteCpu = Environment.CpuUsage.TotalTime;
+        long minuteAllocated = GC.GetTotalAllocatedBytes(false);
+        int minuteGen0 = GC.CollectionCount(0), minuteGen1 = GC.CollectionCount(1), minuteGen2 = GC.CollectionCount(2);
+        var costs = new List<(string Class, long Requests, long Ms, long SqlCommands, long SqlMs, long CommitMs)>();
         var assemblyNames = new List<string>();
         long maxCpu = 0, maxContention = 0, sumStarvation = 0, sumContentions = 0;
         long maxOldest = 0, maxRequest = 0, sumSlowRequests = 0;
@@ -905,6 +996,28 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
                 maxLate = maxPool = maxShare = maxLocal = maxSql = maxGc = maxInFlight = maxStuck = maxGap = maxBlocked = maxBlockedWait = minuteStarted = minuteCompleted = 0;
                 beats = slowBeats = failedProbes = sumGen0 = sumGen1 = sumGen2 = 0;
                 maxCpu = maxContention = sumStarvation = sumContentions = 0;
+                // What the minute cost: per kind of request, and for the process.
+                costs.Clear();
+                LoadTestRequestTracker.DrainCost(costs);
+                long costRequests = 0;
+                foreach ((string costClass, long costCount, long costMs, long costSqlCommands, long costSqlMs, long costCommitMs) in costs.OrderBy(c => c.Class, StringComparer.Ordinal))
+                {
+                    costRequests += costCount;
+                    _logger.LogInformation(
+                        "LoadTestHeartbeat cost: class={Class} n={Requests} ms={Ms} sql_n={SqlCommands} sql_ms={SqlMs} commit_ms={CommitMs}",
+                        costClass, costCount, costMs, costSqlCommands, costSqlMs, costCommitMs);
+                }
+
+                TimeSpan cpuTotal = Environment.CpuUsage.TotalTime;
+                long allocated = GC.GetTotalAllocatedBytes(false);
+                _logger.LogInformation(
+                    "LoadTestHeartbeat cost total: requests={Requests} cpu_ms={CpuMs} alloc_mb={AllocMb} gen0={Gen0} gen1={Gen1} gen2={Gen2}",
+                    costRequests, (long)(cpuTotal - minuteCpu).TotalMilliseconds, (allocated - minuteAllocated) / (1024 * 1024),
+                    gen0 - minuteGen0, gen1 - minuteGen1, gen2 - minuteGen2);
+                minuteGen0 = gen0; minuteGen1 = gen1; minuteGen2 = gen2;
+                minuteCpu = cpuTotal;
+                minuteAllocated = allocated;
+
                 maxOldest = maxRequest = sumSlowRequests = 0;
                 summaryFrom = now;
             }
