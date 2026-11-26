@@ -193,9 +193,14 @@ steps:
         -ResourceGroupName "$(azureResourceGroup)"
         -ExceptAppService "$(appServiceName)"
 
+  # Retried: every later case is skipped once a step fails, so one transient
+  # Resource Manager error here (build 306594: BadGatewayConnection for
+  # 'Microsoft.Web') used to cost every case after it. Starting a started app
+  # is a no-op, so a retry is safe.
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
     condition: succeeded()
+    retryCountOnTaskFailure: 3
     inputs:
       azureSubscription: '$(serviceConnection)'
       scriptType: 'pscore'
@@ -513,6 +518,9 @@ steps:
     - task: AzureCLI@2
       displayName: 'Generate load test config [${{ parameters.testCaseId }}]'
       condition: succeeded()
+      # Its one Azure call (az account show) can hit the same transient errors
+      # as the start above; the rest only writes files, so a rerun is safe.
+      retryCountOnTaskFailure: 2
       inputs:
         azureSubscription: '$(serviceConnection)'
         scriptType: 'pscore'

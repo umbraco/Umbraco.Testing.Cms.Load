@@ -12,12 +12,19 @@
 #      the chain and leave a sibling hot during measurement).
 #
 # Best-effort: a failure on one app continues to the next. Idempotent on
-# already-stopped apps.
+# already-stopped apps. Each stop is tried up to $Attempts times, because Azure
+# Resource Manager answers the odd call with a transient error (build 306594:
+# BadGatewayConnection for 'Microsoft.Web' on a start between two cases). In
+# the pre-test sweep a sibling left running would share the plan with the case
+# being measured, so one transient error is worth a second try.
 
 [CmdletBinding()]
 param (
     [Parameter(Mandatory = $true)] [string]$ResourceGroupName,
-    [string]$ExceptAppService
+    [string]$ExceptAppService,
+    [ValidateRange(1, 10)] [int]$Attempts = 3,
+    # Wait before the second attempt; doubled before each one after that.
+    [ValidateRange(0, 120)] [int]$RetryDelaySeconds = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,8 +54,16 @@ foreach ($name in $names) {
         continue
     }
     Write-Host "Stopping $($c.app_service_name) ($name)"
-    az webapp stop -n $c.app_service_name -g $ResourceGroupName | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "  -> stop failed for $($c.app_service_name) (exit $LASTEXITCODE); continuing."
+    $delay = $RetryDelaySeconds
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        az webapp stop -n $c.app_service_name -g $ResourceGroupName | Out-Null
+        if ($LASTEXITCODE -eq 0) { break }
+        if ($attempt -lt $Attempts) {
+            Write-Warning "  -> stop failed for $($c.app_service_name) (exit $LASTEXITCODE, attempt $attempt of $Attempts); retrying in $delay s."
+            Start-Sleep -Seconds $delay
+            $delay *= 2
+        } else {
+            Write-Warning "  -> stop failed for $($c.app_service_name) (exit $LASTEXITCODE) after $Attempts attempts; continuing."
+        }
     }
 }
