@@ -1,1 +1,1 @@
-description: "Default scenario plus a once-a-second in-process heartbeat (GC pause, thread-pool wait, file-share write, SQL round trip) for diagnosing whole-site pauses. Not for version comparisons."
+description: "Default scenario plus a once-a-second in-process heartbeat (GC pause, thread-pool wait, file-share write, SQL round trip) for diagnosing whole-site pauses, plus once-a-minute cost lines (CPU, memory, SQL per request) for comparing versions. Not for quoting response times."

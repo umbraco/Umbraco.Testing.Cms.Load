@@ -114,6 +114,26 @@ Describe 'Get-RunCost with the process figures added later' {
         $t.CalibrationUs | Should -Be 4100
         $t.JitBefore | Should -Be 20300
     }
+    It 'leaves a minute of one-off compiling out of the steady CPU figure, and keeps it in the plain one' {
+        $lines = @(
+            (New-FullTotal '2026-11-26T10:01:00Z' 1000 2000 0 50 20000 250 80 300),
+            (New-FullTotal '2026-11-26T10:02:00Z' 1000 4000 0 6500 26500 254 80 300),
+            (New-FullTotal '2026-11-26T10:03:00Z' 1000 2200 0 40 26540 254 80 300)
+        )
+        $t = (Get-RunCost -Lines $lines).Total
+        $t.CpuMs | Should -Be 8200
+        $t.BurstMinutes | Should -Be 1
+        $t.SteadyRequests | Should -Be 2000
+        $t.SteadyCpuMs | Should -Be 4200
+        $off = (Get-RunCost -Lines $lines -JitBurst 0).Total
+        $off.BurstMinutes | Should -Be 0
+        $off.SteadyCpuMs | Should -Be 8200
+    }
+    It 'finds no burst in a log without the compile counts' {
+        $t = (Get-RunCost -Lines @((New-TotalLine '2026-11-26T10:01:00Z' 10 500 10))).Total
+        $t.BurstMinutes | Should -Be 0
+        $t.SteadyCpuMs | Should -Be 500
+    }
     It 'reads a log without the new fields as missing, not zero' {
         $old = @((New-TotalLine '2026-11-26T10:01:00Z' 10 500 10))
         $t = (Get-RunCost -Lines $old).Total

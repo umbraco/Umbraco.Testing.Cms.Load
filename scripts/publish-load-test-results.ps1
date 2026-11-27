@@ -159,6 +159,26 @@ try {
     Write-Warning "Couldn't read the seeder build from seeder-versions.json: $($_.Exception.Message). seeder_package_version will be empty."
 }
 
+# The processor the site ran on, from the Heartbeat's start-up line in the
+# Umbraco log the job saved beside the results (umbraco-logs/). The last such
+# line is the process that served the load test. Null for other scenarios,
+# whose sites do not log it. Best-effort, like the seeder build above.
+$processor = $null
+try {
+    $logDir = Join-Path $ResultsDir 'umbraco-logs'
+    if (Test-Path -LiteralPath $logDir) {
+        foreach ($logFile in @(Get-ChildItem -LiteralPath $logDir -Filter 'UmbracoTraceLog*.json' -File | Sort-Object Name)) {
+            foreach ($line in [System.IO.File]::ReadLines($logFile.FullName)) {
+                if (-not $line.Contains('LoadTestHeartbeat started:')) { continue }
+                $p = [string]($line | ConvertFrom-Json).Processor
+                if ($p) { $processor = $p }
+            }
+        }
+    }
+} catch {
+    Write-Warning "Couldn't read the processor from the saved Umbraco log: $($_.Exception.Message). processor will be empty."
+}
+
 # Carried into every row so cross-run queries don't need joins.
 $metadata = [ordered]@{
     run_id               = $BuildId
@@ -173,6 +193,7 @@ $metadata = [ordered]@{
     pool_dtu_max     = $PoolDtuMax
     seeder_preset    = $SeederPreset
     seeder_package_version = $seederPackageVersion
+    processor        = $processor
     # Null when unknown. Anything but 'Completed' means the site may not hold
     # the content the seeded_* counts and the preset suggest.
     seeder_status    = if ([string]::IsNullOrWhiteSpace($SeederStatus)) { $null } else { $SeederStatus }
@@ -362,9 +383,24 @@ function Get-WindowSeconds {
 # Logs Ingestion API mirror. Used for both happy-path rows and the early-exit
 # no_results_dir case below; keeping it as a function avoids duplicating the
 # token/POST/error-handling boilerplate in two places.
+
+# In the pipeline the Log Analytics target is always passed, so an empty one
+# means the monitoring stage failed: the load tests still run (blob history is
+# the record, and provisioning is not thrown away), but the gap must not be
+# silent, or the build is simply missing from the workbook. Run locally without
+# a target, this is expected and only noted.
+function Write-NotSentToLogAnalytics([string]$What) {
+    if ($env:TF_BUILD) {
+        Write-Host "##vso[task.logissue type=warning]$What not sent to Log Analytics: no ingestion endpoint (did 'Ensure monitoring infrastructure' fail?). The run is in blob history; replay it with scripts/backfill-monitoring.ps1 once monitoring is fixed."
+    } else {
+        Write-Host "No Log Analytics target given - $What not sent."
+    }
+}
+
 function Send-RowsToLogAnalytics {
     param([Parameter(Mandatory)] [object[]]$Rows)
     if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsStreamName)) {
+        Write-NotSentToLogAnalytics 'summary rows'
         return
     }
     Write-Host ""
@@ -416,6 +452,7 @@ function Send-SeriesToLogAnalytics {
     # ~2-second unusable window after an ALT validation failure).
     param([Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Points)
     if (-not ($LogAnalyticsDceUri -and $LogAnalyticsDcrImmutableId -and $LogAnalyticsSeriesStreamName)) {
+        Write-NotSentToLogAnalytics 'per-minute series'
         return
     }
     if ($Points.Count -eq 0) { return }
@@ -658,15 +695,21 @@ if ($engineFiles.Count -gt 0) {
     # Sample window across every engine file, for the throughput denominator.
     $spanMinTs = [long]::MaxValue
     $spanMaxTs = [long]::MinValue
+    $parsedEngines = 0
     foreach ($file in $engineFiles) {
         # One unreadable/corrupt engine file (e.g. truncated mid-write) must not
         # abort the whole publish - skip it and keep the other engines' data.
+        # The row is then marked 'partial_engines', not 'ok': its throughput
+        # covers only the engines that were read (half, on a two-engine run),
+        # and baselines take 'ok' rows only.
         try {
             $parsed = Parse-JmeterCsv -Path $file.FullName -OnlyTransactionControllers:$onlyTC -RampCutoffMs $rampCutoffMs -CollectPerMinute -CollectTimeline -TimestampIsEnd:$timestampIsEnd
         } catch {
-            Write-Warning "Couldn't parse $($file.FullName): $($_.Exception.Message) - skipping this file."
+            Write-Host "##vso[task.logissue type=warning]Couldn't parse $($file.Name): $($_.Exception.Message) - skipping it; the row is published as parse_status 'partial_engines' and left out of baselines."
+            $metadata.parse_status = 'partial_engines'
             continue
         }
+        $parsedEngines++
         foreach ($kv in $parsed.ByLabel.GetEnumerator()) {
             $merged = $byLabel[$kv.Key]
             if (-not $merged) {
@@ -734,18 +777,28 @@ if ($engineFiles.Count -gt 0) {
     # numbers leave out - a CPU peak while the site was still compiling would
     # sit on a row whose latencies exclude that period. Recompute them over the
     # measured window only: the per-minute points from the first full minute
-    # after the cutoff. The series table keeps every minute for the drill-down.
-    # Left as they were when no point falls in the window.
-    if ($rampCutoffMs -gt 0 -and $excludeSec -gt $effectiveRampSec) {
-        $measuredFrom = [DateTimeOffset]::FromUnixTimeMilliseconds($rampCutoffMs).UtcDateTime
+    # after the cutoff (or after the first request, for a run with no cutoff)
+    # to the last full minute before the last request. The step also runs on
+    # after the load ends (AzureLoadTest@1 downloads its results first), and
+    # those idle minutes would pull the averages down by a different amount on
+    # every run; before the first request, a backoffice run's step is waiting
+    # for its engines. A point's time is the start of its minute. The series
+    # table keeps every minute for the drill-down. Left as they were when no
+    # point falls in the window.
+    $haveRequests = ($spanMinTs -ne [long]::MaxValue -and $spanMaxTs -ge $spanMinTs)
+    if ($haveRequests) {
+        $measuredFrom = [DateTimeOffset]::FromUnixTimeMilliseconds([math]::Max($rampCutoffMs, $spanMinTs)).UtcDateTime
         $measuredFrom = $measuredFrom.AddTicks(-($measuredFrom.Ticks % [TimeSpan]::TicksPerMinute)).AddMinutes(1)
+        $measuredTo = [DateTimeOffset]::FromUnixTimeMilliseconds($spanMaxTs).UtcDateTime
+        $measuredTo = $measuredTo.AddTicks(-($measuredTo.Ticks % [TimeSpan]::TicksPerMinute))
         $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal
         $recomputed = 0
         foreach ($result in @($planResult, $sqlResult, $appResult)) {
             if ($null -eq $result -or $null -eq $result.Series) { continue }
             foreach ($group in ($result.Series | Group-Object metric_name)) {
                 $values = @($group.Group | Where-Object {
-                        [datetime]::Parse([string]$_.TimeGenerated, [System.Globalization.CultureInfo]::InvariantCulture, $styles) -ge $measuredFrom
+                        $minute = [datetime]::Parse([string]$_.TimeGenerated, [System.Globalization.CultureInfo]::InvariantCulture, $styles)
+                        $minute -ge $measuredFrom -and $minute -lt $measuredTo
                     } | ForEach-Object { [double]$_.value })
                 if ($values.Count -eq 0) { continue }
                 # metric_name is already prefixed ('plan_CpuPercentage'), which
@@ -756,9 +809,9 @@ if ($engineFiles.Count -gt 0) {
             }
         }
         if ($recomputed -gt 0) {
-            Write-Host "Server-side summary columns: $recomputed metric(s) recomputed over the measured window (from $($measuredFrom.ToString('HH:mm')) UTC)."
+            Write-Host "Server-side summary columns: $recomputed metric(s) recomputed over the measured window ($($measuredFrom.ToString('HH:mm')) to $($measuredTo.ToString('HH:mm')) UTC)."
         } else {
-            Write-Host "Server-side summary columns were not recomputed (no per-minute point at or after $($measuredFrom.ToString('HH:mm')) UTC); where present they cover the whole load test step, settle-in included."
+            Write-Host "Server-side summary columns were not recomputed (no whole minute from $($measuredFrom.ToString('HH:mm')) to $($measuredTo.ToString('HH:mm')) UTC); where present they cover the whole load test step, settle-in included."
         }
     }
 
@@ -859,10 +912,10 @@ if ($engineFiles.Count -gt 0) {
         # the same URLs with different bytes are not serving the same content.
         $merged.avg_bytes        = if ($bucket.OkSamples.Count -gt 0 -and $bucket.OkBytes -gt 0) { [math]::Round($bucket.OkBytes / [double]$bucket.OkSamples.Count, 0) } else { $null }
         $merged.requests_per_sec = $rps
-        $merged.engine_count     = $engineFiles.Count
+        $merged.engine_count     = $parsedEngines
         $rows += [pscustomobject]$merged
     }
-    Write-Host "Parsed $($rows.Count) sampler row(s) from $($engineFiles.Count) engine file(s)."
+    Write-Host "Parsed $($rows.Count) sampler row(s) from $parsedEngines of $($engineFiles.Count) engine file(s)."
 
     # Client-side latency per minute, into the same series table as the server
     # metrics so the drill-down can show both on one time axis.

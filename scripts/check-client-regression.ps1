@@ -69,9 +69,22 @@ function Test-ClientRegression {
 }
 
 # The earlier runs a candidate may be compared with: same App Service SKU, pool
-# DTU cap and seeder preset, newest $Window of them. $Ordered is oldest first
-# and ends with the candidate. A run on an overridden SKU is a different
-# machine, not a baseline for this one.
+# DTU cap, seeder preset and seeder build (Get-SetupKey, the key the load-test
+# checks use), newest $Window of them. $Ordered is oldest first and ends with
+# the candidate. A run on an overridden SKU is a different machine, and a run
+# on another seeder build has different content: neither is a baseline here.
+# Client rows carry their start as TimeGenerated, which Get-SetupKey's legacy
+# rule for v18 reads as run_started_at.
+function Get-ClientSetupKey($Row) {
+    Get-SetupKey ([pscustomobject]@{
+            app_service_sku        = $Row.app_service_sku
+            pool_dtu_max           = $Row.pool_dtu_max
+            seeder_preset          = $Row.seeder_preset
+            seeder_package_version = $Row.seeder_package_version
+            umbraco_version        = $Row.umbraco_version
+            run_started_at         = $Row.TimeGenerated
+        })
+}
 function Select-ClientBaseline {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]]$Ordered,
@@ -80,11 +93,8 @@ function Select-ClientBaseline {
     if ($Ordered.Count -lt 2) { return [pscustomobject]@{ Rows = @(); Excluded = 0 } }
     $candidate = $Ordered[-1]
     $earlier = @($Ordered[0..($Ordered.Count - 2)])
-    $same = @($earlier | Where-Object {
-        [string]$_.app_service_sku -eq [string]$candidate.app_service_sku -and
-        [string]$_.pool_dtu_max -eq [string]$candidate.pool_dtu_max -and
-        [string]$_.seeder_preset -eq [string]$candidate.seeder_preset
-    })
+    $candidateKey = Get-ClientSetupKey $candidate
+    $same = @($earlier | Where-Object { (Get-ClientSetupKey $_) -eq $candidateKey })
     [pscustomobject]@{ Rows = @($same | Select-Object -Last $Window); Excluded = $earlier.Count - $same.Count }
 }
 

@@ -118,6 +118,17 @@ Assert-Equal (Get-SetupKey (New-LegacyRow '18.3.2' '18.0.0-beta.1')) (Get-SetupK
 Assert-Equal $false ((Get-SetupKey (New-LegacyRow '18.3.2' '18.0.0-beta.2')) -eq (Get-SetupKey (New-LegacyRow '18.3.2' ''))) "...and does not match a later seeder build"
 Assert-Equal 'SKU P0v3, 20 DTU, preset Medium, seeder build not recorded' (Format-SetupKey (Get-SetupKey (New-LegacyRow '19.0.0-rc1' ''))) "a major with no legacy mapping keeps its own bucket"
 
+# The processor: kept apart where both rows record it, unknown matches.
+function New-CpuRow($Id, $Processor) { $r = New-SetupRow $Id; $r | Add-Member processor $Processor; $r }
+$intel = 'Intel64 Family 6 Model 85 Stepping 7, GenuineIntel'
+$amd   = 'AMD64 Family 25 Model 1 Stepping 1, AuthenticAMD'
+Assert-Equal 'AMD64 Family 25 Model 1' (Get-ProcessorKey (New-CpuRow '1' $amd)) "processor key drops stepping and vendor"
+Assert-Equal $true  (Test-SameProcessor (New-CpuRow '1' $intel) (New-CpuRow '2' 'Intel64 Family 6 Model 85 Stepping 4, GenuineIntel')) "another stepping of the same model matches"
+Assert-Equal $false (Test-SameProcessor (New-CpuRow '1' $intel) (New-CpuRow '2' $amd)) "another processor family does not match"
+Assert-Equal $true  (Test-SameProcessor (New-CpuRow '1' $amd) (New-SetupRow '2')) "a row that does not record the processor matches either"
+$cpuRows = @((New-CpuRow '30' $amd), (New-CpuRow '29' $intel), (New-SetupRow '28'), (New-CpuRow '27' $amd))
+Assert-Seq @('r30', 'r28', 'r27') (@(Select-LikeForLikeRuns -Runs $cpuRows) | ForEach-Object { $_.run_id }) "a run on another processor is left out of the newest run's median"
+
 Write-Host "Get-RunDate (always UTC, whatever the machine's time zone)"
 # Silent-wrong-numbers risk: a run time shifted by the local offset moves the
 # -Since cut, dropping (or admitting) runs near it with nothing to flag it.

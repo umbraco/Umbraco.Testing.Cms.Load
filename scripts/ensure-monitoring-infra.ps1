@@ -82,6 +82,10 @@ $columns = @(
     # scripts/seeder-versions.json). Part of the "same setup" key that medians
     # and regression baselines group by - majors have changed seeder build.
     @{ name = "seeder_package_version";                 type = "string"   }
+    # The processor the site ran on (Heartbeat runs only; empty otherwise).
+    # Medians and baselines keep runs on different processors apart where both
+    # record it (Test-SameProcessor in _history-helpers.ps1).
+    @{ name = "processor";                              type = "string"   }
     # What the seeder actually created, from /umbraco/api/seederstatus/inventory
     # at warm-up. Lets a cross-version comparison check the sites held the same
     # content instead of assuming each major's seeder build produced it. Null
@@ -202,6 +206,7 @@ $clientColumns = @(
     @{ name = "app_service_sku";        type = "string"   }
     @{ name = "pool_dtu_max";           type = "int"      }
     @{ name = "seeder_preset";          type = "string"   }
+    @{ name = "seeder_package_version"; type = "string"   }
     @{ name = "infra_tier";             type = "string"   }
     @{ name = "scenario";               type = "string"   }
     @{ name = "metric";                 type = "string"   }

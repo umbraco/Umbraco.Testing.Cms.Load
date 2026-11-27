@@ -26,6 +26,13 @@
 #               measured window here rather than counting minutes to skip.
 # -MinRequests  kinds of request with fewer requests than this are left out of
 #               the tables: a cost per request over a handful is noise.
+# -JitBurst     a minute that compiled at least this many methods is one-off
+#               work, not the cost of the traffic: an hourly Umbraco job that
+#               uses Entity Framework Core first runs about 61 minutes after
+#               the site first started and compiles some 6,500 methods in one
+#               minute, and whether that lands in a run's window depends on
+#               the case order. CPU per request is shown with and without such
+#               minutes. Default 3000; 0 turns it off.
 # -OutCsv       also write every figure, one row per run and kind of request,
 #               as CSV (invariant culture, comma-separated).
 
@@ -36,6 +43,7 @@ param(
     [string]$From,
     [string]$To,
     [int]$MinRequests = 20,
+    [int]$JitBurst = 3000,
     [string]$OutCsv,
     [string]$OutputPath,
     [switch]$DotSourceForTest
@@ -51,7 +59,8 @@ function Get-RunCost {
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]]$Lines,
         [int]$SkipMinutes = 0,
         [Nullable[datetime]]$From = $null,
-        [Nullable[datetime]]$To = $null
+        [Nullable[datetime]]$To = $null,
+        [int]$JitBurst = 3000
     )
     $classRows = [System.Collections.Generic.List[object]]::new()
     $totalRows = [System.Collections.Generic.List[object]]::new()
@@ -103,6 +112,10 @@ function Get-RunCost {
     $first = $keptTotals | Select-Object -First 1
     # Calibration lines are cut by the same window, and by the minutes skipped.
     $keptCalibration = @($calibration | Where-Object { $_.When -gt $cutoff } | ForEach-Object { $_.WorkUs })
+    # Minutes of one-off compiling (see -JitBurst), and the process totals
+    # without them. A log without jit_n has no such minutes to find.
+    $isBurst = { param($m) $JitBurst -gt 0 -and $null -ne $m.JitMethods -and $m.JitMethods -ge $JitBurst }
+    $steady = @($keptTotals | Where-Object { -not (& $isBurst $_) })
     [pscustomobject]@{
         Minutes = $keptTotals.Count
         Classes = @($classes)
@@ -117,6 +130,9 @@ function Get-RunCost {
             # The fastest timing in the window: the one least disturbed by the
             # requests sharing the machine. A median follows the load instead.
             CalibrationUs = $(if ($keptCalibration.Count) { [double]($keptCalibration | Measure-Object -Minimum).Minimum } else { $null })
+            BurstMinutes = ($keptTotals.Count - $steady.Count)
+            SteadyRequests = [long](($steady | Measure-Object Requests -Sum).Sum ?? 0)
+            SteadyCpuMs = [long](($steady | Measure-Object CpuMs -Sum).Sum ?? 0)
         }
     }
 }
@@ -162,7 +178,7 @@ $runs = foreach ($spec in $Run) {
         $stream = [System.IO.FileStream]::new($file.FullName, 'Open', 'Read', 'ReadWrite')
         try { $reader = [System.IO.StreamReader]::new($stream); while ($null -ne ($l = $reader.ReadLine())) { if ($l.Contains('LoadTestHeartbeat cost') -or $l.Contains('LoadTestHeartbeat calibration')) { $lines.Add($l) } } } finally { $stream.Dispose() }
     }
-    $cost = Get-RunCost -Lines $lines.ToArray() -SkipMinutes $SkipMinutes -From $fromUtc -To $toUtc
+    $cost = Get-RunCost -Lines $lines.ToArray() -SkipMinutes $SkipMinutes -From $fromUtc -To $toUtc -JitBurst $JitBurst
     if ($cost.Minutes -eq 0) { Write-Warning "Run '$label': no cost lines after skipping $SkipMinutes minute(s). Was it a Heartbeat run on a commit that records cost?" }
     [pscustomobject]@{ Label = $label; Cost = $cost }
 }
@@ -195,7 +211,7 @@ foreach ($measure in $measures) {
 }
 
 [void]$report.AppendLine("## Whole process, per request`n")
-[void]$report.AppendLine("All requests together, background work included, so compare runs with the same traffic mix. CPU and time depend on the processor a run landed on; CPU per request in calibration units divides by a fixed workload timed on the same machine, so it can be compared across builds far better than CPU per request alone. Counts and memory do not depend on the processor.`n")
+[void]$report.AppendLine("All requests together, background work included, so compare runs with the same traffic mix. CPU and time depend on the processor a run landed on; CPU per request in calibration units divides by a fixed workload timed on the same machine, so it can be compared across builds far better than CPU per request alone. Counts and memory do not depend on the processor.$(if ($JitBurst -gt 0) { " A minute that compiled $JitBurst or more methods is one-off work (an hourly Umbraco job's first run lands in some windows and not others), so CPU per request is also given without those minutes: compare runs on that line." })`n")
 $header = '| Measure | ' + (($runs | ForEach-Object { $_.Label }) -join ' | ')
 $rule = '|---|' + ('---:|' * $runs.Count)
 if ($runs.Count -gt 1) { $header += ' | ' + (($runs | Select-Object -Skip 1 | ForEach-Object { "$($_.Label) vs $($baseline.Label)" }) -join ' | '); $rule += ('---:|' * ($runs.Count - 1)) }
@@ -215,6 +231,13 @@ $processMeasures = @(
     @{ Title = 'Calibration workload, fastest (µs)'; Value = { param($t) $t.CalibrationUs }; Decimals = 0; Change = $true },
     @{ Title = 'CPU per request in calibration units'; Value = { param($t) if ($null -eq $t.CalibrationUs -or $t.CalibrationUs -le 0) { $null } else { $c = Get-PerRequest $t.CpuMs $t.Requests; if ($null -eq $c) { $null } else { $c * 1000 / $t.CalibrationUs } } }; Decimals = 3; Change = $true }
 )
+if ($JitBurst -gt 0) {
+    $processMeasures += @(
+        @{ Title = "Minutes left out below ($JitBurst+ methods compiled)"; Value = { param($t) $t.BurstMinutes }; Decimals = 0; Change = $false },
+        @{ Title = 'CPU per request without those minutes (ms)'; Value = { param($t) Get-PerRequest $t.SteadyCpuMs $t.SteadyRequests }; Decimals = 2; Change = $true },
+        @{ Title = 'The same in calibration units'; Value = { param($t) if ($null -eq $t.CalibrationUs -or $t.CalibrationUs -le 0) { $null } else { $c = Get-PerRequest $t.SteadyCpuMs $t.SteadyRequests; if ($null -eq $c) { $null } else { $c * 1000 / $t.CalibrationUs } } }; Decimals = 3; Change = $true }
+    )
+}
 foreach ($pm in $processMeasures) {
     $values = @($runs | ForEach-Object { & $pm.Value $_.Cost.Total })
     $row = "| $($pm.Title) | " + (($values | ForEach-Object { Format-Num $_ $pm.Decimals }) -join ' | ')
@@ -237,6 +260,7 @@ if ($OutCsv) {
                 app_ms_per_request       = (Format-Num (Get-PerRequest $c.Ms $c.Requests) 4)
                 cpu_ms_per_request = ''; alloc_kb_per_request = ''; gen0_per_1000 = ''; gen2_per_1000 = ''
                 exceptions_per_1000 = ''; jit_before_window = ''; jit_in_window = ''; assemblies = ''; heap_mb = ''; working_set_mb = ''; calibration_us = ''; cpu_per_request_calibrated = ''
+                jit_burst_minutes = ''; cpu_ms_per_request_without_bursts = ''
             }
         }
         $t = $r.Cost.Total
@@ -255,6 +279,8 @@ if ($OutCsv) {
             working_set_mb       = $(if ($null -eq $t.WorkingSetMb) { '' } else { Format-Num $t.WorkingSetMb 1 })
             calibration_us       = $(if ($null -eq $t.CalibrationUs) { '' } else { Format-Num $t.CalibrationUs 0 })
             cpu_per_request_calibrated = $(if ($null -eq $t.CalibrationUs -or $t.CalibrationUs -le 0 -or $t.Requests -le 0) { '' } else { Format-Num ((Get-PerRequest $t.CpuMs $t.Requests) * 1000 / $t.CalibrationUs) 4 })
+            jit_burst_minutes    = $t.BurstMinutes
+            cpu_ms_per_request_without_bursts = $(if ($t.SteadyRequests -le 0) { '' } else { Format-Num (Get-PerRequest $t.SteadyCpuMs $t.SteadyRequests) 4 })
         }
     }
     $rows | Export-Csv -Path $OutCsv -Encoding utf8

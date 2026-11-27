@@ -260,10 +260,12 @@ foreach ($cellKey in $cells.Keys) {
     # against runs older than itself.
     # Get-ComparisonKey = load + methodology + setup (SKU, DTU cap, seeder
     # preset and build): an override run is a different test, not a data point.
+    # And the processor where both rows record it (Test-SameProcessor): a run
+    # that landed on another processor family is not a regression of the code.
     $candKey       = Get-ComparisonKey $candidate
     $older         = @($sorted | Select-Object -Skip ($candIndex + 1))
     $priorRuns     = @($older |
-        Where-Object { (Get-ComparisonKey $_) -eq $candKey } |
+        Where-Object { (Get-ComparisonKey $_) -eq $candKey -and (Test-SameProcessor $_ $candidate) } |
         Select-Object -First $BaselineWindow)
     $priorRunCount = $priorRuns.Count
 

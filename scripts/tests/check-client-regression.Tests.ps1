@@ -34,6 +34,21 @@ Describe 'Select-ClientBaseline' {
         $rows = @('a','b','c','d','cand' | ForEach-Object { New-Row $_ })
         (Select-ClientBaseline -Ordered $rows -Window 2).Rows.run_id -join ',' | Should -Be 'c,d'
     }
+    It 'leaves out runs on another seeder build' {
+        $rows = @((New-Row 'a'), (New-Row 'b'), (New-Row 'cand')) | ForEach-Object {
+            $_ | Add-Member -NotePropertyName umbraco_version -NotePropertyValue '17.8.2' -PassThru |
+                Add-Member -NotePropertyName seeder_package_version -NotePropertyValue $(if ($_.run_id -eq 'a') { '17.0.0-beta.2' } else { '17.0.0-beta.3' }) -PassThru
+        }
+        $b = Select-ClientBaseline -Ordered $rows -Window 5
+        ($b.Rows.run_id -join ',') | Should -Be 'b'
+        $b.Excluded | Should -Be 1
+    }
+    It 'reads a run from before the seeder build was recorded as its major''s first build' {
+        $old = New-Row 'old' | Add-Member -NotePropertyName umbraco_version -NotePropertyValue '17.3.2' -PassThru
+        $cand = New-Row 'cand' | Add-Member -NotePropertyName umbraco_version -NotePropertyValue '17.8.2' -PassThru |
+            Add-Member -NotePropertyName seeder_package_version -NotePropertyValue '17.0.0-beta.2' -PassThru
+        (Select-ClientBaseline -Ordered @($old, $cand)).Rows.run_id | Should -Be 'old'
+    }
     It 'has no baseline for a single run' {
         (Select-ClientBaseline -Ordered @((New-Row 'cand'))).Rows.Count | Should -Be 0
     }

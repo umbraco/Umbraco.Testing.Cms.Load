@@ -11,8 +11,10 @@
 #      every case emitting its terraform output (a partial apply could break
 #      the chain and leave a sibling hot during measurement).
 #
-# Best-effort: a failure on one app continues to the next. Idempotent on
-# already-stopped apps. Each stop is tried up to $Attempts times, because Azure
+# A failure on one app continues to the next, and is only a warning, except
+# for a sibling on the same plan as the case about to start: that fails the
+# step once every app has been tried, so the case is not measured alongside
+# it. Idempotent on already-stopped apps. Each stop is tried up to $Attempts times, because Azure
 # Resource Manager answers the odd call with a transient error (build 306594:
 # BadGatewayConnection for 'Microsoft.Web' on a start between two cases). In
 # the pre-test sweep a sibling left running would share the plan with the case
@@ -47,6 +49,16 @@ if ($names.Count -eq 0) {
     exit 0
 }
 
+# The plan the current case runs on. A sibling on that plan that will not stop
+# would be measured along with the case, so that one fails the step; a sibling
+# on another plan cannot affect the measurement and only gets a warning.
+$currentPlan = $null
+if ($ExceptAppService) {
+    $current = @($names | ForEach-Object { $cases.$_ } | Where-Object { $_.app_service_name -eq $ExceptAppService })
+    if ($current.Count -gt 0) { $currentPlan = [string]$current[0].app_service_plan_id }
+}
+
+$samePlanFailures = [System.Collections.Generic.List[string]]::new()
 foreach ($name in $names) {
     $c = $cases.$name
     if ($ExceptAppService -and $c.app_service_name -eq $ExceptAppService) {
@@ -62,8 +74,18 @@ foreach ($name in $names) {
             Write-Warning "  -> stop failed for $($c.app_service_name) (exit $LASTEXITCODE, attempt $attempt of $Attempts); retrying in $delay s."
             Start-Sleep -Seconds $delay
             $delay *= 2
+        } elseif ($currentPlan -and [string]$c.app_service_plan_id -eq $currentPlan) {
+            Write-Warning "  -> stop failed for $($c.app_service_name) (exit $LASTEXITCODE) after $Attempts attempts; it shares the plan of the case about to be measured."
+            $samePlanFailures.Add("$($c.app_service_name) ($name)")
         } else {
-            Write-Warning "  -> stop failed for $($c.app_service_name) (exit $LASTEXITCODE) after $Attempts attempts; continuing."
+            Write-Warning "  -> stop failed for $($c.app_service_name) (exit $LASTEXITCODE) after $Attempts attempts; on another plan, continuing."
         }
     }
 }
+
+if ($samePlanFailures.Count -gt 0) {
+    Write-PipelineError "Could not stop $($samePlanFailures -join ', ') on the plan $ExceptAppService runs on; measuring now would count its work as well. Not starting the case."
+}
+# Explicit: otherwise the step's exit code is that of the last az call, which
+# is non-zero when the last app in the list failed to stop.
+exit 0

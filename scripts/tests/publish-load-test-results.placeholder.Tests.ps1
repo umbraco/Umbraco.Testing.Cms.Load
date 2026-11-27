@@ -7,6 +7,11 @@
 Describe 'publish-load-test-results: tier that failed before its load test' {
     BeforeAll {
         $script:work = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid()))
+        # The publish below has no Log Analytics target on purpose. Inside the
+        # pipeline (the validate stage runs these tests) TF_BUILD would turn
+        # that into a build warning about failed monitoring; hide it here.
+        $script:tfBuild = $env:TF_BUILD
+        $env:TF_BUILD = $null
         $global:PublishTestUploaded = Join-Path $work 'uploaded.ndjson'
         $global:PublishTestAzCalls  = [System.Collections.Generic.List[string]]::new()
 
@@ -40,6 +45,7 @@ Describe 'publish-load-test-results: tier that failed before its load test' {
         try { & $publish } catch { $script:publishError = $_ }
     }
     AfterAll {
+        $env:TF_BUILD = $script:tfBuild
         Remove-Item -Path Function:\az -ErrorAction SilentlyContinue
         Remove-Variable -Name PublishTestUploaded, PublishTestAzCalls -Scope Global -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $script:work -Recurse -Force -ErrorAction SilentlyContinue

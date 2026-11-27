@@ -140,6 +140,29 @@ function Get-SetupKey {
     "$($Row.app_service_sku)|$($Row.pool_dtu_max)|$($Row.seeder_preset)|$seeder"
 }
 
+# The processor a row's site ran on, as "<arch> Family <n> Model <n>" (the
+# stepping and vendor left out), or '' when the row does not say. App Service
+# hands one SKU different processors from build to build (Starter moved from an
+# Intel Family 6 Model 85 to an AMD Family 25 Model 1 between 26-11-2026 and
+# 27-11-2026), and both CPU and response times follow the processor.
+function Get-ProcessorKey {
+    param([Parameter(Mandatory)] $Row)
+    $p = [string]$Row.processor
+    if ($p -match '^(.*?Family \d+ Model \d+)') { return $Matches[1] }
+    $p.Trim()
+}
+
+# Whether two rows may share a median or a baseline as far as the processor
+# goes. Not part of Get-SetupKey because it is only known for some rows (the
+# Heartbeat scenario's start-up line records it; other scenarios and runs from
+# before 27-11-2026 do not): unknown on either side matches, two known
+# processors must be the same family and model.
+function Test-SameProcessor {
+    param([Parameter(Mandatory)] $A, [Parameter(Mandatory)] $B)
+    $a = Get-ProcessorKey $A; $b = Get-ProcessorKey $B
+    (-not $a) -or (-not $b) -or ($a -eq $b)
+}
+
 function Format-SetupKey([string] $SetupKey) {
     $p = $SetupKey -split '\|'
     $seeder = if ($p.Count -gt 3 -and $p[3]) { "seeder $($p[3])" } else { 'seeder build not recorded' }
@@ -174,8 +197,10 @@ function Select-LikeForLikeRuns {
     # Load AND setup (Get-ComparisonKey): a run on an overridden SKU/DTU cap or
     # another seeder build drove the same load on different conditions, and
     # folding it in would move the median with nothing in the report to say so.
+    # The processor too, where both rows record it (Test-SameProcessor).
     $key  = Get-ComparisonKey $sorted[0]
-    $same = @($sorted | Where-Object { (Get-ComparisonKey $_) -eq $key })
+    $newest = $sorted[0]
+    $same = @($sorted | Where-Object { (Get-ComparisonKey $_) -eq $key -and (Test-SameProcessor $_ $newest) })
     if ($First -gt 0) { $same = @($same | Select-Object -First $First) }
     $same
 }

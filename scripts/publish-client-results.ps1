@@ -49,7 +49,9 @@ function Build-ClientRows {
         [Parameter(Mandatory)] [string]$BuildId,
         [Parameter(Mandatory)] [string]$Commit,
         [Parameter(Mandatory)] [string]$Branch,
-        [Parameter(Mandatory)] [string]$RunStartedAt
+        [Parameter(Mandatory)] [string]$RunStartedAt,
+        # The seeder build installed; part of what makes two runs comparable.
+        [string]$SeederPackageVersion = ''
     )
     # LA's Logs Ingestion API rejects the space-separated $(System.PipelineStartTime)
     # on a datetime column with a 400 — normalize once to ISO-8601 for every row.
@@ -75,6 +77,7 @@ function Build-ClientRows {
                 app_service_sku     = $AppServiceSku
                 pool_dtu_max        = $PoolDtuMax
                 seeder_preset       = $SeederPreset
+                seeder_package_version = $SeederPackageVersion
                 infra_tier          = $Tier
                 scenario            = $Scenario
                 metric              = $m.metric
@@ -138,7 +141,18 @@ if (-not (Test-Path $ResultsDir)) {
     exit 0
 }
 
-$rows = Build-ClientRows -ResultsDir $ResultsDir -UmbracoVersion $UmbracoVersion -Tier $Tier `
+# The seeder build this run installed, from the same map the install script
+# read at provision time (as publish-load-test-results.ps1 does). Best-effort:
+# a missing map leaves it empty rather than losing the run's rows.
+$seederPackageVersion = ''
+try {
+    $seederMap = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'seeder-versions.json') -Raw | ConvertFrom-Json -AsHashtable
+    $seederPackageVersion = [string]$seederMap[($UmbracoVersion -split '\.')[0]]
+} catch {
+    Write-Warning "Couldn't read the seeder build from seeder-versions.json: $($_.Exception.Message). seeder_package_version will be empty."
+}
+
+$rows = Build-ClientRows -SeederPackageVersion $seederPackageVersion -ResultsDir $ResultsDir -UmbracoVersion $UmbracoVersion -Tier $Tier `
     -Scenario $Scenario -AppServiceSku $AppServiceSku -PoolDtuMax $PoolDtuMax -SeederPreset $SeederPreset `
     -BuildId $BuildId -Commit $Commit -Branch $Branch -RunStartedAt $RunStartedAt
 if ($rows.Count -eq 0) { Write-Warning "No client metric rows parsed from $ResultsDir." }

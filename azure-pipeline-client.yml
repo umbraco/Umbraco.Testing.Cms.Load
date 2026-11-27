@@ -141,7 +141,7 @@ variables:
 stages:
   - template: templates/stages/provision.yml
     parameters:
-      umbracoVersion: '${{ parameters.umbracoVersion }}'
+      umbracoVersion: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
       scenario: 'Default'
       workload: 'client'
       loadProfile: 'smoke'
@@ -178,10 +178,10 @@ stages:
           - ${{ if eq(parameters.runStarter, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Starter__Default'
+                testCaseId: "${{ replace(parameters.umbracoVersion, ' ', '') }}__Starter__Default"
                 tier: 'Starter'
                 scenario: 'Default'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                umbracoVersion: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -189,10 +189,10 @@ stages:
           - ${{ if eq(parameters.runStandard, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Standard__Default'
+                testCaseId: "${{ replace(parameters.umbracoVersion, ' ', '') }}__Standard__Default"
                 tier: 'Standard'
                 scenario: 'Default'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                umbracoVersion: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -200,10 +200,10 @@ stages:
           - ${{ if eq(parameters.runPro, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Pro__Default'
+                testCaseId: "${{ replace(parameters.umbracoVersion, ' ', '') }}__Pro__Default"
                 tier: 'Pro'
                 scenario: 'Default'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                umbracoVersion: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -211,10 +211,10 @@ stages:
           - ${{ if eq(parameters.runEnterprise, true) }}:
             - template: templates/jobs/client-measure-job.yml
               parameters:
-                testCaseId: '${{ parameters.umbracoVersion }}__Enterprise__Default'
+                testCaseId: "${{ replace(parameters.umbracoVersion, ' ', '') }}__Enterprise__Default"
                 tier: 'Enterprise'
                 scenario: 'Default'
-                umbracoVersion: '${{ parameters.umbracoVersion }}'
+                umbracoVersion: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
                 skipWarmup: ${{ parameters.skipWarmup }}
                 logAnalyticsDceUri: $(monitoringDceUri)
                 logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
@@ -253,7 +253,7 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 . "$(System.DefaultWorkingDirectory)/scripts/_helpers.ps1"
-                $major = Get-UmbracoMajor '${{ parameters.umbracoVersion }}'
+                $major = Get-UmbracoMajor '${{ replace(parameters.umbracoVersion, ' ', '') }}'
                 # Report-only unless failOnRegression is ticked at queue time,
                 # same reasoning as azure-pipeline.yml's regressionCheck stage.
                 $splat = @{

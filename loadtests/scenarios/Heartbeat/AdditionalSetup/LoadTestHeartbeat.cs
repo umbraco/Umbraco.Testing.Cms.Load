@@ -127,7 +127,8 @@
 //
 // Uses only BCL, Microsoft.Extensions.*, Umbraco's IComposer and
 // Microsoft.Data.SqlClient (a dependency of Umbraco's SQL Server provider).
-// Compiled against Umbraco 17.8.2 (net10.0) and 19.0.0-rc1 (net11.0).
+// Compiled against Umbraco 13.13.1 (net8.0), 17.8.2 (net10.0) and 19.0.0-rc2
+// (net11.0).
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -683,6 +684,18 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
     private static readonly int[] CalibrationWork = new int[CalibrationSource.Length];
     private static readonly Dictionary<int, int> CalibrationMap = new(capacity: 20_000);
 
+    // CPU time the whole process has used (user + kernel), read only from the
+    // beat thread. Process.TotalProcessorTime rather than Environment.CpuUsage,
+    // which only exists from .NET 9: this file also builds for Umbraco 13 on
+    // .NET 8. Both give the same quantity.
+    private static readonly Process Self = Process.GetCurrentProcess();
+
+    private static TimeSpan ProcessCpu()
+    {
+        Self.Refresh();
+        return Self.TotalProcessorTime;
+    }
+
     // Thread-pool probe state. _poolQueuedAt != 0 means a probe is still waiting.
     private long _poolQueuedAt;
     private long _poolLastDelayMs;
@@ -959,11 +972,11 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
         long lastStarted = LoadTestRequestTracker.Started, lastCompleted = LoadTestRequestTracker.Completed, minuteStarted = 0, minuteCompleted = 0;
         int beats = 0, slowBeats = 0, failedProbes = 0, sumGen0 = 0, sumGen1 = 0, sumGen2 = 0;
         long lastBeatAt = clock.ElapsedMilliseconds, summaryFrom = clock.ElapsedMilliseconds;
-        TimeSpan lastCpu = Environment.CpuUsage.TotalTime;
+        TimeSpan lastCpu = ProcessCpu();
         long lastCpuAt = clock.ElapsedMilliseconds;
         TopThreads();   // baseline for the first beat
         long lastJit = System.Runtime.JitInfo.GetCompiledMethodCount();
-        TimeSpan minuteCpu = Environment.CpuUsage.TotalTime;
+        TimeSpan minuteCpu = ProcessCpu();
         long minuteAllocated = GC.GetTotalAllocatedBytes(false);
         int minuteGen0 = GC.CollectionCount(0), minuteGen1 = GC.CollectionCount(1), minuteGen2 = GC.CollectionCount(2);
         long minuteExceptions = Interlocked.Read(ref _exceptions);
@@ -1012,7 +1025,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
             long poolPending = ThreadPool.PendingWorkItemCount;
 
             // Also read before the probes, for the same reason.
-            TimeSpan cpuNow = Environment.CpuUsage.TotalTime;
+            TimeSpan cpuNow = ProcessCpu();
             // The reading covers the time since the previous reading, which is
             // longer than a second when a probe of the previous beat hung.
             // Scaled to one second, so "near cores x 1000" keeps its meaning;
@@ -1119,7 +1132,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
                         costClass, costCount, costMs, costSqlCommands, costSqlMs, costCommitMs);
                 }
 
-                TimeSpan cpuTotal = Environment.CpuUsage.TotalTime;
+                TimeSpan cpuTotal = ProcessCpu();
                 long allocated = GC.GetTotalAllocatedBytes(false);
                 long exceptionsNow = Interlocked.Read(ref _exceptions);
                 long jitTotal = System.Runtime.JitInfo.GetCompiledMethodCount();
@@ -1137,7 +1150,7 @@ public sealed class LoadTestHeartbeat : IHostedService, IDisposable
                 // After the minute is logged, so its CPU is not counted in it;
                 // the minute that follows starts after it, so not there either.
                 _logger.LogInformation("LoadTestHeartbeat calibration: work_us={WorkUs} runs={Runs}", Calibrate(3), 3);
-                minuteCpu = Environment.CpuUsage.TotalTime;
+                minuteCpu = ProcessCpu();
 
                 maxOldest = maxRequest = sumSlowRequests = 0;
                 summaryFrom = now;

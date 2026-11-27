@@ -550,7 +550,10 @@ if ($isHistoryMode -and $isVersionList) {
         @{ Label = 'seeder preset'; Field = 'seeder_preset' },
         @{ Label = 'app SKU';       Field = 'app_service_sku' },
         @{ Label = 'DTU cap';       Field = 'pool_dtu_max' },
-        @{ Label = 'seeder build';  Field = 'seeder_package_version' }
+        @{ Label = 'seeder build';  Field = 'seeder_package_version' },
+        # Recorded by Heartbeat runs only. A different processor between the
+        # versions compared moves CPU and response times on its own.
+        @{ Label = 'processor';     Field = 'processor' }
     )
     $infraSeen = @{}
     foreach ($f in $infraFields) { $infraSeen[$f.Field] = @() }

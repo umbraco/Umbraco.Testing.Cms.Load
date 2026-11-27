@@ -192,7 +192,10 @@ if ($displayName.Length -gt 50) {
 # overwrite iteration N-1's outputs in the same agent workspace).
 $safeKey = (($TestCaseId.ToLowerInvariant() -replace '[^a-z0-9]', '-') -replace '-+', '-').Trim('-')
 if ($JmxName) { $safeKey = "$safeKey-$jmxSafe" }
-if ($safeKey.Length -gt 50) { $safeKey = $safeKey.Substring(0, 50) }
+# Bounded with a hash of the whole key, not cut: a long nightly version can
+# fill the 50 characters on its own, and a plain cut then gives every .jmx of
+# the case the same key (the same artifact name and config file).
+$safeKey = Get-BoundedLabel $safeKey 50
 
 # Effective ramp-up + whether this is a ramp run. Keyed on the profile name — the
 # only ramp signal scenario.yaml can't override (it can override users/spawn/

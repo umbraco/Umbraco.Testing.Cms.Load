@@ -90,7 +90,10 @@ if (-not $Force) {
     }
     # Referencing a column the table lacks is a KQL error, not an empty result.
     $dedupQuery = if ($isClientTable) {
-        "$TableName | where isnotempty(run_id) | distinct run_id, umbraco_version, infra_tier"
+        # Not the regression_check rows check-client-regression.ps1 posts
+        # (marked by metric; this table has no parse_status): they carry a
+        # run's id, version and tier and would mark its blob as ingested.
+        "$TableName | where isnotempty(run_id) and metric != 'regression_check' | distinct run_id, umbraco_version, infra_tier"
     } else {
         # Not the regression_check status rows check-regression.ps1 posts: they
         # carry a run's id, version and tier without being one of its blobs,
