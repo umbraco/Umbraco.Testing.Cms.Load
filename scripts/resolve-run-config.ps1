@@ -268,11 +268,12 @@ $sdkIncludePreview  = $first.previewSdk
 $sdkVersion2        = if ($second) { $second.sdk } else { '' }
 $sdkIncludePreview2 = if ($second) { $second.previewSdk } else { 'false' }
 
-# The load tests run one after the other in a single job on a Microsoft-hosted
-# agent, which stops any job at 360 minutes whatever timeoutInMinutes says
+# Each case runs in its own job on a Microsoft-hosted agent, which stops any
+# job at 360 minutes whatever timeoutInMinutes says
 # (learn.microsoft.com/azure/devops/pipelines/agents/hosted, "Capabilities and
-# limitations"). Estimate the job from the cases and refuse a queue that can't
-# finish, rather than lose the last cases to a cancel after hours of runtime.
+# limitations"). Estimate one case and refuse a queue whose cases can't
+# finish, rather than lose them to a cancel; the whole build only gets a
+# warning when it is long, since the cases run one after the other.
 # Per case: settle-in + measured time + ~8 min of warm-up, start/stop and
 # publishing (builds 306400 and 306563: 46.5-46.8 min for two frontend
 # standard cases, i.e. ~23 min each). Backoffice assumes all six plans, each
@@ -286,15 +287,13 @@ $minutesPerCase = switch ($Workload) {
 }
 $estimatedMinutes = $caseCount * $minutesPerCase
 $jobBudgetMinutes = 320
-# Refused only when several versions are listed: a single-version queue keeps
-# today's behaviour (at most four cases) and gets a warning instead, since the
-# estimate is a rough one.
+if ($minutesPerCase -gt $jobBudgetMinutes) {
+    Write-PipelineError "One case would run about $minutesPerCase minutes of load tests, and a Microsoft-hosted job stops at 360. Use a shorter load profile."
+}
+# Not refused: the cases are separate jobs. A long build holds the resource
+# group (and its bill) for longer, and the manual validation waits for all of it.
 if ($estimatedMinutes -gt $jobBudgetMinutes) {
-    $budgetMessage = "This build would run about $estimatedMinutes minutes of load tests ($($versions.Count) version(s) x $($tiers.Count) tier(s) x ~$minutesPerCase min), and a Microsoft-hosted job stops at 360. Select fewer versions or tiers, or split them over two builds."
-    if ($versions.Count -gt 1) {
-        Write-PipelineError $budgetMessage
-    }
-    Write-Host "##vso[task.logissue type=warning]$budgetMessage"
+    Write-Host "##vso[task.logissue type=warning]This build will run about $estimatedMinutes minutes of load tests ($($versions.Count) version(s) x $($tiers.Count) tier(s) x ~$minutesPerCase min), one case after the other."
 }
 
 # 'Auto' = Terraform's "use the tier's default" sentinel (0 for DTU, '' for SKU).

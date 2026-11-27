@@ -234,88 +234,105 @@ stages:
       monitoringStreamName:       $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringStreamName'] ]
       monitoringSeriesStreamName: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringSeriesStreamName'] ]
     jobs:
-      - job: runLoadTests
-        displayName: Run Load Tests
-        # Each case: warm-up (~5 min) + load test (up to 900s with settle-in) + publish. One
-        # case per selected tier per version (up to 4 x 4); budget generously.
-        timeoutInMinutes: 720
-        steps:
-          # Tier expansion driven by the runStarter/runStandard/runPro checkboxes;
-          # within a tier, one test per version in umbracoVersion, in the order
-          # given. Versions on one tier share its App Service plan (one machine)
-          # and run one after the other with the others stopped. The split()
-          # must match the one in resolve-run-config.ps1 (commas; plain spaces dropped).
-          # Profile is independent and only sets load intensity (resolved via the
-          # runtime variables resolvedSeederPreset / resolvedEngineInstances etc.).
-          # Keep testCaseId format in sync with the runtime construction in
-          # prepare-test-cases.ps1.
+      # One job per case (templates/jobs/load-test-case-jobs.yml), run one
+      # after the other: Starter's versions in the order given, then
+      # Standard's, then Pro's, then Enterprise's. A failed case ends only
+      # its own job; the next one still runs. Versions on one tier share its
+      # App Service plan (one machine) and run with the others stopped. The
+      # split() must match the one in resolve-run-config.ps1 (commas; plain
+      # spaces dropped). Profile is independent and only sets load intensity
+      # (resolved via the runtime variables resolvedSeederPreset /
+      # resolvedEngineInstances etc.). Keep the testCaseId format in
+      # load-test-case-jobs.yml in sync with prepare-test-cases.ps1.
+      - ${{ if eq(parameters.runStarter, true) }}:
+        - template: templates/jobs/load-test-case-jobs.yml
+          parameters:
+            tier: 'Starter'
+            versions: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
+            scenario: '${{ parameters.scenario }}'
+            workload: '${{ parameters.workload }}'
+            jmxNames: ${{ parameters.backofficePlans }}
+            skipWarmup: ${{ parameters.skipWarmup }}
+            logAnalyticsDceUri: $(monitoringDceUri)
+            logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+            logAnalyticsStreamName: $(monitoringStreamName)
+            logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+      - ${{ if eq(parameters.runStandard, true) }}:
+        - template: templates/jobs/load-test-case-jobs.yml
+          parameters:
+            tier: 'Standard'
+            ${{ if eq(parameters.runStarter, true) }}:
+              previousTier: 'Starter'
+            versions: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
+            scenario: '${{ parameters.scenario }}'
+            workload: '${{ parameters.workload }}'
+            jmxNames: ${{ parameters.backofficePlans }}
+            skipWarmup: ${{ parameters.skipWarmup }}
+            logAnalyticsDceUri: $(monitoringDceUri)
+            logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+            logAnalyticsStreamName: $(monitoringStreamName)
+            logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+      - ${{ if eq(parameters.runPro, true) }}:
+        - template: templates/jobs/load-test-case-jobs.yml
+          parameters:
+            tier: 'Pro'
+            ${{ if eq(parameters.runStandard, true) }}:
+              previousTier: 'Standard'
+            ${{ elseif eq(parameters.runStarter, true) }}:
+              previousTier: 'Starter'
+            versions: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
+            scenario: '${{ parameters.scenario }}'
+            workload: '${{ parameters.workload }}'
+            jmxNames: ${{ parameters.backofficePlans }}
+            skipWarmup: ${{ parameters.skipWarmup }}
+            logAnalyticsDceUri: $(monitoringDceUri)
+            logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+            logAnalyticsStreamName: $(monitoringStreamName)
+            logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+      - ${{ if eq(parameters.runEnterprise, true) }}:
+        - template: templates/jobs/load-test-case-jobs.yml
+          parameters:
+            tier: 'Enterprise'
+            ${{ if eq(parameters.runPro, true) }}:
+              previousTier: 'Pro'
+            ${{ elseif eq(parameters.runStandard, true) }}:
+              previousTier: 'Standard'
+            ${{ elseif eq(parameters.runStarter, true) }}:
+              previousTier: 'Starter'
+            versions: "${{ replace(parameters.umbracoVersion, ' ', '') }}"
+            scenario: '${{ parameters.scenario }}'
+            workload: '${{ parameters.workload }}'
+            jmxNames: ${{ parameters.backofficePlans }}
+            skipWarmup: ${{ parameters.skipWarmup }}
+            logAnalyticsDceUri: $(monitoringDceUri)
+            logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
+            logAnalyticsStreamName: $(monitoringStreamName)
+            logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+
+      # Stop all apps so none run idle during the manual validation window.
+      # After every case (the job names are load-test-case-jobs.yml's), and
+      # always() rather than succeededOrFailed() so a cancelled run also stops
+      # the apps — otherwise they bill idle until the cleanup stage deletes the RG.
+      - job: stopAllAppServices
+        displayName: Stop all App Services
+        dependsOn:
           - ${{ if eq(parameters.runStarter, true) }}:
             - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
-              - template: templates/load-test-job.yml
-                parameters:
-                  testCaseId: '${{ version }}__Starter__${{ parameters.scenario }}'
-                  tier: 'Starter'
-                  scenario: '${{ parameters.scenario }}'
-                  umbracoVersion: '${{ version }}'
-                  workload: '${{ parameters.workload }}'
-                  jmxNames: ${{ parameters.backofficePlans }}
-                  skipWarmup: ${{ parameters.skipWarmup }}
-                  logAnalyticsDceUri: $(monitoringDceUri)
-                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                  logAnalyticsStreamName: $(monitoringStreamName)
-                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+              - ${{ format('lt_Starter_{0}', replace(replace(version, '.', '_'), '-', '_')) }}
           - ${{ if eq(parameters.runStandard, true) }}:
             - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
-              - template: templates/load-test-job.yml
-                parameters:
-                  testCaseId: '${{ version }}__Standard__${{ parameters.scenario }}'
-                  tier: 'Standard'
-                  scenario: '${{ parameters.scenario }}'
-                  umbracoVersion: '${{ version }}'
-                  workload: '${{ parameters.workload }}'
-                  jmxNames: ${{ parameters.backofficePlans }}
-                  skipWarmup: ${{ parameters.skipWarmup }}
-                  logAnalyticsDceUri: $(monitoringDceUri)
-                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                  logAnalyticsStreamName: $(monitoringStreamName)
-                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+              - ${{ format('lt_Standard_{0}', replace(replace(version, '.', '_'), '-', '_')) }}
           - ${{ if eq(parameters.runPro, true) }}:
             - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
-              - template: templates/load-test-job.yml
-                parameters:
-                  testCaseId: '${{ version }}__Pro__${{ parameters.scenario }}'
-                  tier: 'Pro'
-                  scenario: '${{ parameters.scenario }}'
-                  umbracoVersion: '${{ version }}'
-                  workload: '${{ parameters.workload }}'
-                  jmxNames: ${{ parameters.backofficePlans }}
-                  skipWarmup: ${{ parameters.skipWarmup }}
-                  logAnalyticsDceUri: $(monitoringDceUri)
-                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                  logAnalyticsStreamName: $(monitoringStreamName)
-                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+              - ${{ format('lt_Pro_{0}', replace(replace(version, '.', '_'), '-', '_')) }}
           - ${{ if eq(parameters.runEnterprise, true) }}:
             - ${{ each version in split(replace(parameters.umbracoVersion, ' ', ''), ',') }}:
-              - template: templates/load-test-job.yml
-                parameters:
-                  testCaseId: '${{ version }}__Enterprise__${{ parameters.scenario }}'
-                  tier: 'Enterprise'
-                  scenario: '${{ parameters.scenario }}'
-                  umbracoVersion: '${{ version }}'
-                  workload: '${{ parameters.workload }}'
-                  jmxNames: ${{ parameters.backofficePlans }}
-                  skipWarmup: ${{ parameters.skipWarmup }}
-                  logAnalyticsDceUri: $(monitoringDceUri)
-                  logAnalyticsDcrImmutableId: $(monitoringDcrImmutableId)
-                  logAnalyticsStreamName: $(monitoringStreamName)
-                  logAnalyticsSeriesStreamName: $(monitoringSeriesStreamName)
+              - ${{ format('lt_Enterprise_{0}', replace(replace(version, '.', '_'), '-', '_')) }}
 
-          # Stop all apps so none run idle during the manual validation window.
-          # always() (not succeededOrFailed) so a cancelled run also stops the
-          # apps — otherwise they bill idle until the cleanup stage deletes the RG.
+        condition: always()
+        steps:
           - task: AzureCLI@2
             displayName: 'Stop all App Services'
-            condition: always()
             env:
               TEST_CASE_OUTPUTS: $(testCaseOutputs)
             inputs:
@@ -336,7 +353,10 @@ stages:
     dependsOn:
       - ensureMonitoringInfra
       - loadTest
-    condition: succeeded('loadTest')
+    # Also after a failed case: the other cases published, and the check
+    # reports a failed tier from its placeholder row. Not after a cancel or
+    # when the load test stage never ran (provision failed).
+    condition: and(succeeded('ensureMonitoringInfra'), in(dependencies.loadTest.result, 'Succeeded', 'SucceededWithIssues', 'Failed'))
     variables:
       monitoringDceUri:         $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDceUri'] ]
       monitoringDcrImmutableId: $[ stageDependencies.ensureMonitoringInfra.ensure.outputs['ensureMon.MonitoringDcrImmutableId'] ]

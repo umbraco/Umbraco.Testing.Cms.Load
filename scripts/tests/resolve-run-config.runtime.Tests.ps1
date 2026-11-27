@@ -104,7 +104,7 @@ Describe 'resolve-run-config Umbraco major -> .NET runtime map' {
         $LASTEXITCODE | Should -Not -Be 0
         $out | Should -Match 'at most 4'
     }
-    It 'refuses several versions whose load tests would outlast a hosted job, and only warns for one' {
+    It 'only warns when the whole build is long, since each case is its own job' {
         $all = {
             param($Version, $Workload = 'frontend')
             pwsh -NoProfile -File "$PSScriptRoot/../resolve-run-config.ps1" `
@@ -115,8 +115,8 @@ Describe 'resolve-run-config Umbraco major -> .NET runtime map' {
         }
         # 4 versions x 4 tiers x ~23 min frontend standard = ~368 min.
         $out = (& $all '13.0.0,13.0.1,13.0.2,13.0.3') -join "`n"
-        $LASTEXITCODE | Should -Not -Be 0
-        $out | Should -Match 'stops at 360'
+        $LASTEXITCODE | Should -Be 0
+        $out | Should -Match 'about 368 minutes of load tests'
         # 2 x 4 x 23 = 184 min fits.
         $out = (& $all '13.0.0,17.0.0') -join "`n"
         $LASTEXITCODE | Should -Be 0

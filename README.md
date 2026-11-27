@@ -229,7 +229,7 @@ What to know:
 
 - The second version on a tier always runs later than the first. To rule out an order effect, queue a second build with the versions swapped.
 - Versions on different runtimes (17 on .NET 10, 19 on .NET 11) work: the agent installs both SDKs and each site's build is pinned to its own. At most two different SDKs per build.
-- Each version adds an install and a full test per tier, so two versions take about twice as long. The load tests run in one job, which a Microsoft-hosted agent stops at 360 minutes, so validation refuses a build estimated at more than 320 minutes of load tests (about 13 frontend standard cases, or 5 backoffice standard cases). Split larger comparisons over two builds.
+- Each version adds an install and a full test per tier, so two versions take about twice as long. Each case runs in its own job, one after the other, and a case that fails does not stop the ones after it. A Microsoft-hosted agent stops a job at 360 minutes, so validation refuses a load profile whose single case is estimated above 320 minutes, and only warns when the whole build is long (the resource group, and its bill, lives until the end).
 - The regression check reads the whole scenario when the versions span several majors; each version is still compared with its own history.
 - The browser pipeline (`azure-pipeline-client.yml`) takes one version per build.
 
@@ -465,7 +465,7 @@ Each `.jmx` gets its own ALT testId (`umbraco-lt-{scenario}-bo-{jmxStem}`), its 
 
 **Seeder member discovery.** Before the backoffice loop, the pipeline queries `GET /umbraco/api/seederstatus/inventory?includeMemberPassword=true` and extracts the actual seeded member count + password. These are written to the per-iteration `.properties` file as `totalOfMember` and `member_password` so MemberLogin.jmx's Groovy preprocessor picks an existing seeded member rather than guessing. Discovery falls back to defaults (`TestMember_`, count=30, `Test1234!`) if the endpoint is unreachable, so the loop still runs — just with degraded MemberLogin hit-rate. The discovered prefix is emitted as a pipeline variable (`seededMemberPrefix`) for log visibility but isn't consumed by the .properties file (the .jmx Groovy hardcodes the prefix; documented limitation below).
 
-**Run cost / timing.** Each `.jmx` iteration ≈ test duration + ~3 minutes ALT overhead (engine provisioning + result download). At `standard` profile (5-min tests) × 6 .jmx files, the backoffice loop is ~50 minutes per tier. **Tiers do not run in parallel** — `load-test-job.yml` is a *steps* template and every selected tier is inserted into the single `runLoadTests` job, so they execute sequentially on one agent (by design: only one App Service is hot at a time, so each measurement gets the full plan capacity — see "Cases on the same tier…" above). Budget roughly `tiers × per-tier time`: four tiers at `standard` is ~3.5 hours, which is why the job's `timeoutInMinutes` is 720. At `smoke` (1-min tests), ~25 min per tier.
+**Run cost / timing.** Each `.jmx` iteration ≈ test duration + ~3 minutes ALT overhead (engine provisioning + result download). At `standard` profile (5-min tests) × 6 .jmx files, the backoffice loop is ~50 minutes per tier. **Cases do not run in parallel** — each case is its own job (`templates/jobs/load-test-case-jobs.yml`, which runs the `load-test-job.yml` steps), and each job waits for the case before it, whatever that case's result (by design: only one App Service is hot at a time, so each measurement gets the full plan capacity — see "Cases on the same tier…" above). Budget roughly `tiers × per-tier time`: four tiers at `standard` is ~3.5 hours; each case's job has its own 360-minute limit. At `smoke` (1-min tests), ~25 min per tier.
 
 #### Known backoffice limitations
 
@@ -769,7 +769,7 @@ Cells with fewer than `-MinBaselineRuns` prior runs are reported as "insufficien
 
 Pass `-NoFailOnRegression` to render the report without failing (useful for "show me what would break if I turned this on").
 
-The script is wired into the pipeline as the `regressionCheck` job after `runLoadTests`. **It is report-only unless you tick the `failOnRegression` queue parameter** (default off) — the stage passes `-NoFailOnRegression` for you when the box is unticked, and prints which mode it used. The reason it ships off: baseline keys were reset by the `scenario_name` discriminator fix, so windows still mix in pre-fix runs and would flag bookkeeping noise as regressions. Tick the box once each cell has ≥3 clean post-fix runs.
+The script is wired into the pipeline as the `regressionCheck` job after the load test jobs. It runs when some cases failed too (a failed tier is reported from its placeholder row), but not after a cancel. **It is report-only unless you tick the `failOnRegression` queue parameter** (default off) — the stage passes `-NoFailOnRegression` for you when the box is unticked, and prints which mode it used. The reason it ships off: baseline keys were reset by the `scenario_name` discriminator fix, so windows still mix in pre-fix runs and would flag bookkeeping noise as regressions. Tick the box once each cell has ≥3 clean post-fix runs.
 
 Arming it is safe whenever you're ready: cells with < `MinBaselineRuns` prior runs report "insufficient baseline" and never trigger a fail, so the gate activates per-cell as baselines accrue rather than all at once.
 
@@ -806,8 +806,10 @@ provision            checkResourceGroup → setup (init + validate + plan) → a
                      Provisions one App Service Plan per used tier, plus per-case App Services
                      and SQL DBs. Emits test_case_outputs map.
 
-loadTest             runLoadTests: each case warms up, runs Locust on ALT, publishes results
-                     to history storage, the build artifact, and Log Analytics.
+loadTest             One job per case (lt_<tier>_<version>), one after the other; a failed
+                     case does not stop the next. Each warms up, runs Locust on ALT, publishes
+                     results to history storage, the build artifact, and Log Analytics.
+                     stopAllAppServices then stops every app.
 
 regression           Compare THIS run (pinned by run_id) against baseline-median. Report-only
                      by default; tick the `failOnRegression` queue parameter to make it fail

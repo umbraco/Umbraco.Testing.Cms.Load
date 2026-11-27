@@ -1,0 +1,81 @@
+# One job per test case on one tier: the cases of a build run one after the
+# other, each in its own job, and a case that fails ends only its own job.
+#
+# In one shared job every step after a failure was skipped, so a case that
+# failed (or one transient Azure error) cost every case after it. Here each
+# job waits for the case just before it and then runs whatever that case's
+# result, unless the build was cancelled. Sequential still matters: versions
+# on one tier share its App Service plan (one machine), every case stops the
+# others' apps before it starts, and the measured order is the order given.
+#
+# Template expressions cannot index a list, so "the case just before" is
+# found by text: version w is just before v when ",<versions>," contains
+# ",w,v,". The first case of a tier waits for the last case of previousTier
+# (the tier queued before it; '' for the first tier).
+#
+# Job names: lt_<tier>_<version with . and - as _>. resolve-run-config.ps1
+# allows only letters, digits, dots and hyphens in a version and rejects
+# repeats, so the names are valid and unique. azure-pipeline.yml builds the
+# same names for its final stop-all job; keep the two in sync.
+
+parameters:
+  - name: tier
+    type: string
+  # Comma-separated, spaces already removed, in the order to run.
+  - name: versions
+    type: string
+  - name: previousTier
+    type: string
+    default: ''
+  - name: scenario
+    type: string
+  - name: workload
+    type: string
+  - name: jmxNames
+    type: object
+  - name: skipWarmup
+    type: boolean
+  - name: logAnalyticsDceUri
+    type: string
+  - name: logAnalyticsDcrImmutableId
+    type: string
+  - name: logAnalyticsStreamName
+    type: string
+  - name: logAnalyticsSeriesStreamName
+    type: string
+
+jobs:
+  - ${{ each version in split(parameters.versions, ',') }}:
+    - job: ${{ format('lt_{0}_{1}', parameters.tier, replace(replace(version, '.', '_'), '-', '_')) }}
+      displayName: 'Load test ${{ version }} on ${{ parameters.tier }}'
+      dependsOn:
+        # The version just before this one on the same tier.
+        - ${{ each previous in split(parameters.versions, ',') }}:
+          - ${{ if contains(format(',{0},', parameters.versions), format(',{0},{1},', previous, version)) }}:
+            - ${{ format('lt_{0}_{1}', parameters.tier, replace(replace(previous, '.', '_'), '-', '_')) }}
+        # The first version on this tier waits for the last one on the tier before.
+        - ${{ if and(ne(parameters.previousTier, ''), startsWith(format('{0},', parameters.versions), format('{0},', version))) }}:
+          - ${{ each last in split(parameters.versions, ',') }}:
+            - ${{ if endsWith(format(',{0}', parameters.versions), format(',{0}', last)) }}:
+              - ${{ format('lt_{0}_{1}', parameters.previousTier, replace(replace(last, '.', '_'), '-', '_')) }}
+      # Runs after the case before it whatever its result; only a cancel stops it.
+      condition: not(canceled())
+      # One case: warm-up, settle-in, the measured time and publishing
+      # (~23 min frontend standard, ~56 min backoffice standard). A
+      # Microsoft-hosted agent stops a job at 360 minutes regardless;
+      # resolve-run-config.ps1 refuses a case estimated above 320.
+      timeoutInMinutes: 360
+      steps:
+        - template: ../load-test-job.yml
+          parameters:
+            testCaseId: '${{ version }}__${{ parameters.tier }}__${{ parameters.scenario }}'
+            tier: '${{ parameters.tier }}'
+            scenario: '${{ parameters.scenario }}'
+            umbracoVersion: '${{ version }}'
+            workload: '${{ parameters.workload }}'
+            jmxNames: ${{ parameters.jmxNames }}
+            skipWarmup: ${{ parameters.skipWarmup }}
+            logAnalyticsDceUri: '${{ parameters.logAnalyticsDceUri }}'
+            logAnalyticsDcrImmutableId: '${{ parameters.logAnalyticsDcrImmutableId }}'
+            logAnalyticsStreamName: '${{ parameters.logAnalyticsStreamName }}'
+            logAnalyticsSeriesStreamName: '${{ parameters.logAnalyticsSeriesStreamName }}'

@@ -1,4 +1,5 @@
 # Per-case load test step group: read terraform outputs -> start -> warm-up -> load test -> publish.
+# Each case runs these steps in its own job (templates/jobs/load-test-case-jobs.yml).
 #
 # Only the per-tier values are template parameters. Everything else (service
 # connection, history-RG/SA/container/loadtest names) is pipeline-variable scope
@@ -56,13 +57,13 @@ parameters:
     default: ''
 
 steps:
-  # Every tier of a run shares this job, its variables and its working
-  # directory. The publish steps below run on succeededOrFailed(), so without
-  # this a tier that never reached its own load test (warm-up failed, or an
-  # earlier tier failed and this one was skipped) would publish the PREVIOUS
-  # tier's results.zip and window under this tier's name, as parse_status=ok -
-  # a wrong row that then sits in every median and regression baseline.
-  # Runs even after a failure so it always clears what the last tier left.
+  # Each case has its own job (templates/jobs/load-test-case-jobs.yml), so it
+  # starts with none of another case's variables or files. This reset stays as
+  # a guard in case cases ever share a job again: the publish steps below run
+  # on succeededOrFailed(), and a case that never reached its own load test
+  # would then publish the PREVIOUS case's results.zip and window under its
+  # own name, as parse_status=ok - a wrong row that then sits in every median
+  # and regression baseline.
   - task: PowerShell@2
     displayName: 'Reset per-tier state [${{ parameters.testCaseId }}]'
     condition: succeededOrFailed()
@@ -193,10 +194,9 @@ steps:
         -ResourceGroupName "$(azureResourceGroup)"
         -ExceptAppService "$(appServiceName)"
 
-  # Retried: every later case is skipped once a step fails, so one transient
-  # Resource Manager error here (build 306594: BadGatewayConnection for
-  # 'Microsoft.Web') used to cost every case after it. Starting a started app
-  # is a no-op, so a retry is safe.
+  # Retried: a transient Resource Manager error here (build 306594:
+  # BadGatewayConnection for 'Microsoft.Web') would otherwise fail the whole
+  # case. Starting a started app is a no-op, so a retry is safe.
   - task: AzureCLI@2
     displayName: 'Start App Service [${{ parameters.testCaseId }}]'
     condition: succeeded()
